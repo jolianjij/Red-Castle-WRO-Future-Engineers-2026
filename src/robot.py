@@ -275,16 +275,17 @@ class LapTracker:
 # STEERING
 # ==========================================================================
 class WallFollower:
-    """PD wall-following. Follows the OUTER (continuous) wall:
-       clockwise (dir>=0) -> left wall,  ccw (dir<0) -> right wall.
+    """PD wall-following that keeps the car CENTERED between the two side walls.
+       error = left_wall - right_wall  (>0 => left wall closer => steer right).
+       Centering keeps it off BOTH walls (fixes the inner-wall hugging).
        Hard-steers away if either wall gets dangerously close."""
 
-    def __init__(self, kp=140.0, kd=60.0):
+    def __init__(self, kp=60.0, kd=25.0):
         self.kp = kp
         self.kd = kd
         self._prev = 0.0
 
-    def steer(self, left, right, direction):
+    def steer(self, left, right, direction=0):
         # emergency: whichever wall is very close wins
         if left > WALL_EMERGENCY:
             self._prev = 0.0
@@ -293,14 +294,7 @@ class WallFollower:
             self._prev = 0.0
             return -STEER_MAX           # right close -> hard left
 
-        if direction >= 0:              # follow left/outer wall
-            err = left - WALL_TARGET
-        elif direction < 0:             # follow right/outer wall
-            err = WALL_TARGET - right
-        # (before direction is known, err uses left-right centring)
-        if direction == 0:
-            err = left - right
-
+        err = left - right              # center between the two side walls
         out = self.kp * err + self.kd * (err - self._prev)
         self._prev = err
         return max(-STEER_MAX, min(STEER_MAX, out))

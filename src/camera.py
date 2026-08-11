@@ -1,37 +1,32 @@
 #!/usr/bin/env python3
 """
-camera.py - reusable camera setup for the WRO 2026 car (imx708 Wide).
+camera.py - camera setup for the WRO 2026 car.
 
-Locks everything that must stay constant so HSV thresholds are stable and the
-image is sharp and motion-frozen:
-  - FULL 120 deg FOV (2304x1296 sensor mode), scaled to the processing size
-  - 180 flip (camera is mounted upside-down)
-  - MANUAL focus at the mat distance (no autofocus hunting mid-run)
-  - LOCKED exposure / gain / white balance
+Sensor: OV5647 Wide (FIXED FOCUS). Because it is fixed-focus with a small sensor
+it has a large depth of field - the whole mat and the walls stay sharp, and there
+is NO autofocus / LensPosition to set (unlike the Camera Module 3).
 
-Usage in the challenge code:
+Locks exposure / gain / white balance so HSV thresholds stay stable, uses the full
+120 deg FOV sensor mode, and rotates 180 deg (the camera is mounted upside-down).
+
     from camera import open_camera
-    cam = open_camera()          # started, ready
-    frame = cam.capture_array()  # RGB888 -> use cv2.cvtColor(frame, COLOR_BGR2HSV)
-
-All values were measured on the field (12.5 cm height, 15 deg down tilt, ~100 lux).
-Re-tune EXPOSURE_US / GAIN if you change the field lighting.
+    cam = open_camera()
+    frame = cam.capture_array()   # RGB888, upright -> cv2.cvtColor(frame, COLOR_BGR2HSV)
 """
 import time
 from picamera2 import Picamera2
-from libcamera import Transform, controls
+from libcamera import Transform
 
-PROC_SIZE    = (640, 480)     # what the pipeline processes
-FULL_FOV     = (2304, 1296)   # full-width sensor mode = full 120 deg FOV
-LENS_POS     = 3.0            # manual focus ~0.33 m (sharp across the mat)
-EXPOSURE_US  = 9000           # short shutter to freeze motion (~1/110 s)
+PROC_SIZE    = (640, 480)     # processing resolution
+FULL_FOV     = (1296, 972)    # OV5647 full-FOV sensor mode (no crop) = full 120 deg
+EXPOSURE_US  = 12000          # short shutter to limit motion blur (room is dim ~100 lux)
 GAIN         = 8.0            # analogue gain to compensate the short shutter
-COLOUR_GAINS = (1.94, 2.17)   # locked white balance (R, B)
-FLIP_180     = True
+COLOUR_GAINS = (1.6, 1.6)     # locked white balance (R, B) - re-tune if colours look off
+FLIP_180     = True           # camera mounted upside-down
 
 
 def open_camera(size=PROC_SIZE, exposure_us=EXPOSURE_US, gain=GAIN,
-                lens=LENS_POS, colour_gains=COLOUR_GAINS):
+                colour_gains=COLOUR_GAINS):
     p = Picamera2()
     tf = Transform(hflip=1, vflip=1) if FLIP_180 else Transform()
     cfg = p.create_video_configuration(
@@ -42,23 +37,22 @@ def open_camera(size=PROC_SIZE, exposure_us=EXPOSURE_US, gain=GAIN,
     )
     p.configure(cfg)
     p.start()
+    # OV5647: no AfMode / LensPosition (fixed focus). Only lock AE + AWB.
     p.set_controls({
-        "AfMode": controls.AfModeEnum.Manual, "LensPosition": lens,
         "AeEnable": False, "ExposureTime": exposure_us, "AnalogueGain": gain,
         "AwbEnable": False, "ColourGains": colour_gains,
     })
-    time.sleep(0.5)   # let the locked controls take effect
+    time.sleep(0.5)
     return p
 
 
 if __name__ == "__main__":
-    # quick self-test: open, grab one frame, report
     import cv2
     cam = open_camera()
     md = cam.capture_metadata()
     frame = cam.capture_array()
     cam.close()
-    cv2.imwrite("camera_selftest.jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    cv2.imwrite("camera_selftest.jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
     print("frame", frame.shape, "exp", md.get("ExposureTime"),
-          "gain", md.get("AnalogueGain"), "lens", md.get("LensPosition"))
+          "gain", md.get("AnalogueGain"), "colourgains", md.get("ColourGains"))
     print("saved camera_selftest.jpg")
