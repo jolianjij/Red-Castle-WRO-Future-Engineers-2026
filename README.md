@@ -1,187 +1,270 @@
-# WRO 2026 Future Engineers — Autonomous Vehicle
+# 🏰 Team The Red Castle — WRO 2026 Future Engineers
 
-Self-driving 1:X model car for the **WRO Future Engineers 2026** season. The car
-completes the **Open Challenge** (three laps, random wall layout) and the
-**Obstacle Challenge** (three laps avoiding red/green traffic signs, then parks)
-using a **single camera** as its only sensor — no LiDAR, no ultrasonic, no
-encoders.
+An autonomous, self-driving model car for the **World Robot Olympiad 2026,
+Future Engineers** category. It completes the **Open Challenge** (three laps of a
+track with a randomised wall layout) and the **Obstacle Challenge** (three laps
+avoiding red and green traffic signs, then parallel-parks) using a **single
+camera as its only sensor** — no LiDAR, no ultrasonic rangefinders, no wheel
+encoders, no IMU.
+
+> **Design thesis:** everything the car needs to know — where the walls are, which
+> way to lap, where the traffic signs are, and where the parking lot is — is
+> visible. A well-tuned camera plus disciplined image processing can do the whole
+> job, so we spent our engineering effort on making that one sensor reliable
+> rather than fusing many.
 
 ---
 
-## 1. Overview
+## Table of contents
+1. [The challenge](#1-the-challenge)
+2. [Vehicle at a glance](#2-vehicle-at-a-glance)
+3. [Mobility management](#3-mobility-management)
+4. [Power & sense management](#4-power--sense-management)
+5. [Software & obstacle management](#5-software--obstacle-management)
+6. [Calibration workflow](#6-calibration-workflow)
+7. [Build & run](#7-build--run)
+8. [Bill of materials & cost](#8-bill-of-materials--cost)
+9. [Engineering process](#9-engineering-process)
+10. [Results & future work](#10-results--future-work)
+11. [Repository map](#11-repository-map)
+12. [Team](#12-team)
 
-| | |
+---
+
+## 1. The challenge
+
+WRO Future Engineers asks for a fully autonomous vehicle that drives a track
+bounded by walls:
+
+- **Open Challenge** — 3 laps; the inner walls are placed at random distances each
+  round, so the path width changes and cannot be hard-coded.
+- **Obstacle Challenge** — 3 laps with red/green **traffic signs** on the track:
+  the car must pass **red signs on their right** and **green signs on their left**,
+  then finish by **parking** in the magenta parking lot.
+
+Scoring rewards completing laps without touching walls or signs, correct sign
+handling, a clean park, and — importantly — **thorough engineering documentation**
+(this repository).
+
+## 2. Vehicle at a glance
+
+| Subsystem | Choice |
 |---|---|
-| **Compute** | Raspberry Pi 4 (Raspberry Pi OS *Bookworm*, 64-bit) |
-| **Sensor** | Raspberry Pi Camera Module 3 **Wide** (Sony IMX708, 120° FOV) — the *only* sensor |
-| **Steering** | Servo on **GPIO13** (hardware PWM), Ackermann-style front steering |
-| **Drive** | Single DC motor via **L9110S** H-bridge on **GPIO23 / GPIO24** |
+| **Compute** | Raspberry Pi 4 Model B (Raspberry Pi OS *Bookworm*, 64-bit) |
+| **Sensor** | Raspberry Pi Camera Module 3 **Wide** (Sony IMX708, 120° FOV) — sole sensor |
+| **Steering** | Ackermann front steering, one servo on **GPIO13** (hardware PWM) |
+| **Drive** | Single DC gear motor via an **L9110S** H-bridge on **GPIO23 / GPIO24** |
 | **Power** | Battery → motor driver directly; separate 5 V regulator → Pi; common ground |
-| **Language** | Python 3 (OpenCV + Picamera2) |
+| **Software** | Python 3, OpenCV, Picamera2 |
+| **Reference** | Studied Team KyivRoboMagic (Ukraine, WRO 2024 International Final) |
 
-The software philosophy: keep the **proven camera-only wall-following** approach
-(HSV masks + a proportional/PD steering loop) and make it robust with locked
-camera settings, a shared hardware library, and a clean per-challenge state machine.
+_Vehicle photos: [`v-photos/`](v-photos) · driving video: [`video/video.md`](video/video.md)_
 
----
+## 3. Mobility management
 
-## 2. Mobility management
+### 3.1 Chassis
+A custom 3D-printed chassis (files in [`models/`](models)) carries the Pi, battery,
+motor driver, drive motor, steering servo and the camera mast. Design priorities:
+low and central mass, a rigid camera mast, and easy access to the wiring.
 
-**Chassis & steering.** Front-wheel Ackermann steering driven by one servo
-(GPIO13). The drivetrain has **no differential**, so large steering angles cause
-the driven wheels to scrub. To avoid traction loss and binding, the steering
-deviation is **software-limited to a small maximum** (`STEER_MAX` in `robot.py`,
-currently ±8°). This single constant caps every steering output (wall-follow,
-obstacle-pass, emergency).
+### 3.2 Steering
+Front-wheel **Ackermann steering** driven by a single servo (GPIO13, which is a
+hardware-PWM pin for a smooth, low-jitter signal). Steering is **software-limited**
+to a small maximum deviation (`STEER_MAX` in `src/robot.py`). One constant caps
+every steering command — wall-following, obstacle-passing and emergency turns.
 
-**Drive motor.** A single DC gear motor drives the rear axle through an **L9110S**
-dual H-bridge:
+> **Engineering decision — the steering limit.** Our current drivetrain has **no
+> differential**, so both driven wheels are forced to the same speed. At large
+> steering angles the inner and outer wheels must travel different distances, so
+> they *scrub*, losing traction and pushing the car wide (or stalling it in the
+> turn). We reduced `STEER_MAX` step by step on the field until the scrub
+> disappeared. **Planned upgrade:** fit a small differential (a WLtoys 1/28 micro
+> metal differential, as used in spirit by top teams who favour low-backlash
+> gearing) so we can raise the steering limit and corner harder. See
+> [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md).
 
-| L9110S pin | Connection |
+### 3.3 Drivetrain
+A single DC gear motor drives the rear axle through an **L9110S** dual H-bridge:
+
+| L9110S | Connection |
 |---|---|
-| `A-IA` | GPIO23 (PWM = forward) |
-| `A-IB` | GPIO24 (PWM = reverse) |
-| `VCC` | Battery + (motor supply, 2.5–12 V) |
-| `GND` | Common ground (battery − **and** Pi GND) |
-| MOTOR-A | DC motor terminals |
+| `A-IA` | GPIO23 — PWM here = **forward** |
+| `A-IB` | GPIO24 — PWM here = **reverse** |
+| `VCC` | Battery + (motor supply) |
+| `GND` | Common ground |
+| MOTOR-A | Drive motor |
 
-Speed is set by PWM on one input while the other is held LOW. A safety rule in
-software (`motor()`): the car **never switches forward↔reverse directly** — it
-coasts to a stop and waits (`STOP_FLIP_DELAY`) before reversing, because the
-motor's back-EMF spike on a hard reversal can destroy the Pi's voltage regulator.
+Speed = PWM duty on one input, the other held LOW. The L9110S was chosen for its
+tiny size and simple two-pin-per-motor interface.
 
-## 3. Power & sense management
+> **Safety rule in software.** `motor()` **never switches forward↔reverse
+> directly**: it first coasts to a stop and waits (`STOP_FLIP_DELAY`) before
+> driving the other way. A hard reversal while the motor is still spinning dumps
+> the motor's back-EMF onto the supply and can destroy the Pi's regulator — we
+> learned this the hard way (see the journal).
 
-**Power topology (critical).** Early testing showed the Pi rebooting whenever the
-motor drew current. Two fixes were required and are now standard on the car:
+## 4. Power & sense management
 
-1. **Separate rails.** The motor is powered **straight from the battery** to the
-   L9110S `VCC`; the Raspberry Pi has its **own regulator**. The motor's current
-   spikes never pass through the Pi's supply.
-2. **Common ground.** Pi GND, driver GND and battery − are tied together, giving
-   the GPIO control signals a shared reference. (Without it, the only link between
-   Pi and driver is the signal wire, and motor current back-feeds the GPIO pin.)
+### 4.1 Power topology
+Early on, the Pi rebooted every time the motor drew current. The fix defines our
+power design and is now standard on the car:
 
-**Sensing.** All perception comes from the camera. See §4.
+```
+Battery + ─┬─────────────────────────► L9110S VCC   (motor power, direct)
+           └─► 5V / ≥3A regulator ────► Raspberry Pi 5V
+Battery − ──── common ground ── L9110S GND ── Pi GND
+```
 
-## 4. Camera & vision
+1. **Separate rails** — the motor draws straight from the battery; the Pi has its
+   **own regulator**. Motor current spikes never pass through the Pi's supply.
+2. **Common ground** — Pi, driver and battery negatives are tied together so the
+   GPIO control signals share a reference. (Without it, the only link between Pi
+   and driver is the signal wire, and motor return current back-feeds the GPIO pin
+   — which browns out or damages the Pi.)
 
-**Mounting.** Camera Module 3 Wide, mounted **12.5 cm above the mat**, tilted
-**~15° downward**, centered laterally and facing straight ahead on a rigid mast.
-It is physically **upside-down**, so frames are rotated 180° in software.
+### 4.2 Sensing — the camera
+The camera is the entire perception system, so most of our tuning went here.
 
-**Locked settings** (`camera.py`) — chosen from on-field capture tests so the
-image is sharp, motion-frozen, and colour-stable:
+**Mount.** Camera Module 3 Wide, **12.5 cm above the mat**, tilted **~15°
+downward**, centred laterally and facing straight ahead on a rigid mast. It is
+physically mounted **upside-down**, so frames are rotated 180° in software.
 
-| Setting | Value | Reason |
+**Locked settings** (`src/camera.py`), chosen from on-field capture tests:
+
+| Setting | Value | Why |
 |---|---|---|
-| Sensor mode | 2304×1296 (full 120° FOV) → scaled to 640×480 | keep the wide FOV, avoid the cropped mode |
+| Sensor mode | 2304×1296 (full 120° FOV) → scaled to 640×480 | keep the wide FOV; the high-fps mode is cropped and would lose it |
 | Orientation | `hflip + vflip` (180°) | camera mounted upside-down |
-| Focus | **Manual**, `LensPosition ≈ 3.0` (~0.33 m) | sharp across the whole mat; no AF hunting mid-run |
-| Exposure | fixed ~9 ms | freeze motion (long auto-exposure blurred when moving) |
-| White balance | locked `ColourGains` | keep HSV thresholds stable as the car turns |
+| Focus | **manual**, `LensPosition` fixed | no autofocus hunting mid-run; tuned for depth of field across the mat |
+| Exposure | fixed (~9 ms) | freeze motion — auto-exposure ran ~60 ms and smeared when moving |
+| White balance | locked `ColourGains` | keep HSV thresholds stable as the car turns toward/away from lights |
 
-**Pipeline.** `capture → 180° flip → crop mat ROI → resize 320×160 → HSV`. HSV is
-computed with `cv2.COLOR_BGR2HSV` on the RGB888 frame everywhere, so thresholds
-transfer between tools and challenge code.
+> **Why camera-only?** A single well-configured camera sees walls, the orange/blue
+> corner lines, the coloured signs and the parking lot — everything the rules
+> reference. Removing LiDAR/ultrasonic cut cost, weight, wiring and failure modes,
+> and let us focus on making the vision robust (locked exposure/AWB, fixed focus,
+> field-tuned HSV).
 
-**Colour thresholds** live in `colors.json`, produced by the interactive
-`color_tuner.py`. Six colours are tuned one-by-one: **black** (walls), **blue**
-and **orange** (corner lines), **green** and **red** (traffic signs), **magenta**
-(parking gate). Red uses a hue-wrap range.
+## 5. Software & obstacle management
 
-## 5. Software architecture
-
-All runtime modules live together (on the Pi: `~/wro2026/`):
+All control software is in [`src/`](src). Four core modules import each other and
+run together; the calibration and test utilities live in [`src/tools/`](src/tools).
 
 ```
-camera.py               # locked camera setup (open_camera())
-robot.py                # shared hardware + vision library (imported by both challenges)
-open_challenge.py       # Open Challenge main
-obstacle_challenge.py   # Obstacle Challenge main
-colors.json             # tuned HSV thresholds (from color_tuner.py)
-servo_center.txt        # steering center trim (from servo_center.py)
+src/robot.py               shared library — pins, servo()/motor(), HSV masks, wall/line/pillar analysis
+src/camera.py              locked camera setup
+src/open_challenge.py      Open Challenge main
+src/obstacle_challenge.py  Obstacle Challenge main
 ```
 
-**`robot.py`** is the single source of truth for pins, the `servo()`/`motor()`
-helpers (with the reverse-guard and steering clamp), the HSV `mask()` helper, and
-the vision analysers: `wall_readings()`, `line_counts()`, `find_pillars()`,
-`magenta_area()`, plus `LapTracker` and `WallFollower`.
+### 5.1 Vision pipeline
+`capture → 180° flip → crop the mat ROI → resize 320×160 → HSV`. HSV is computed
+with `cv2.COLOR_BGR2HSV` everywhere so thresholds transfer between the tuner and
+the challenge code. Six colours are thresholded from `colors.json` (produced by
+`tools/color_tuner.py`):
 
-### Open Challenge algorithm
-1. **Wall-follow** the *outer* (continuous) wall with a PD controller — clockwise
-   follows the left wall, counter-clockwise the right. Either wall getting
-   dangerously close triggers a hard steer away.
-2. **Direction** is set by the first corner line seen: **orange → clockwise**,
-   **blue → counter-clockwise**.
-3. **Lap counting**: a debounced falling-edge on the driving-direction line counts
-   one *quadrant*; **12 quadrants = 3 laps**, then the car coasts briefly and stops.
+- **black** → walls (dark-pixel density per image half → `left_wall`, `right_wall`)
+- **blue / orange** → corner lines (driving direction + lap counting)
+- **green / red** → traffic signs
+- **magenta** → parking lot
 
-### Obstacle Challenge algorithm
-A strict per-frame **priority** decides steering:
-1. **Wall emergency** — never crash a wall, even while dodging.
-2. **Park** (after 3 laps) — hunt the **magenta** gate, aim at it, stop when close.
-3. **Pillar** — pass **red on the right**, **green on the left** (steer to push the
-   pillar toward the correct frame edge; react harder as it nears).
+### 5.2 Open Challenge algorithm
+1. **Wall-follow** the continuous *outer* wall with a **PD** controller — clockwise
+   follows the left wall, counter-clockwise the right; either wall getting
+   dangerously close forces a hard steer away.
+2. **Direction** from the first corner line seen: **orange → clockwise**, **blue →
+   counter-clockwise**.
+3. **Lap counting** — a debounced falling edge on the driving-direction line counts
+   one *quadrant*; **12 quadrants = 3 laps**, then the car coasts and stops.
+
+### 5.3 Obstacle Challenge algorithm
+A strict **per-frame priority** decides steering:
+
+1. **Wall emergency** — never crash a wall, even mid-dodge.
+2. **Park** (after 3 laps) — find the **magenta** lot, aim at it, stop when close.
+3. **Sign** — pass **red on the right**, **green on the left** (steer to push the
+   sign toward the correct frame edge; react harder as it nears).
 4. **Wall-follow** — the Open-Challenge behaviour otherwise.
 
-### Speed
-Base speed is `CRUISE` (per challenge). `cruise_speed()` automatically **slows in
-proportion to steering effort** — full speed on straights, easing off in corners.
+### 5.4 Speed
+Base speed is `CRUISE`; `cruise_speed()` **eases off in proportion to steering
+effort**, so the car runs fast on straights and slows automatically for corners.
 
-## 6. Tools (in `src/`)
+## 6. Calibration workflow
 
-| Script | Purpose |
-|---|---|
-| `test.py` | Menu-driven hardware bring-up: servo, motor, camera |
-| `driver_on.py` | Bare L9110S on/off test |
-| `motor_debug.py` | Direct-drive vs PWM comparison (stall diagnosis) |
-| `motor_speed_steps.py` | Speed staircase 100→50 % to find the stall point |
-| `servo_center.py` | Find & save the steering center trim → `servo_center.txt` |
-| `color_tuner.py` | Interactive HSV tuner → `colors.json` |
-| `cam_capture.py` | Field capture / focus & exposure testing |
+Two field calibrations, saved to files that `robot.py` loads at start:
 
-## 7. Setup & run (Raspberry Pi, Bookworm)
+| Tool | Produces | Purpose |
+|---|---|---|
+| `tools/color_tuner.py` | `colors.json` | tune each colour with the real object in view |
+| `tools/servo_center.py` | `servo_center.txt` | trim the steering so 0° = straight |
+| `tools/motor_speed_steps.py` | — | find the motor's usable speed range |
+| `tools/preview.py` | — | live camera view over VNC |
+
+## 7. Build & run
+
+**Raspberry Pi OS Bookworm** — Picamera2/OpenCV come from `apt`, **not** pip
+(mixing a pip numpy breaks Picamera2):
 
 ```bash
-# system packages (Bookworm ships these via apt, NOT pip)
 sudo apt update
 sudo apt install -y python3-picamera2 python3-libcamera python3-opencv python3-rpi-lgpio python3-venv
-
-# project venv that can see the system camera/GPIO packages
 python3 -m venv --system-site-packages ~/wro2026/.venv
 source ~/wro2026/.venv/bin/activate
-# NOTE: do NOT pip install numpy/opencv — the apt builds must match picamera2
 ```
 
-Calibrate, then run:
+Run (always from `~/wro2026` so `colors.json` / `servo_center.txt` resolve):
 ```bash
 cd ~/wro2026 && source .venv/bin/activate
-python color_tuner.py        # tune colours (each object in view) -> colors.json
-python servo_center.py       # center the steering        -> servo_center.txt
-python open_challenge.py     # Open Challenge
-python obstacle_challenge.py # Obstacle Challenge
+python tools/color_tuner.py     # tune colours
+python tools/servo_center.py    # center steering
+python open_challenge.py        # Open Challenge
+python obstacle_challenge.py    # Obstacle Challenge
 ```
 
-## 8. Repository structure (official WRO Future Engineers layout)
+## 8. Bill of materials & cost
+
+Full component list: [`other/bill-of-materials.md`](other/bill-of-materials.md).
+Wiring: [`schemes/`](schemes). _(Total cost: to fill.)_
+
+## 9. Engineering process
+
+The interesting part of this project was making one camera and a cheap drivetrain
+reliable. The full design log — sensor choice, the power-brownout debugging, the
+motor stall, the no-differential steering decision, and the camera focus/exposure
+tuning — is in **[`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md)**.
+
+## 10. Results & future work
+
+**Results.** _(To fill: best Open lap time, Obstacle completion, parking success
+rate.)_
+
+**Future work.**
+- Fit a small differential and raise `STEER_MAX` for tighter cornering.
+- Extend camera depth of field (or a fixed-focus wide module) so distant signs
+  stay sharp and detectable earlier.
+- Upgrade wall-following to a heading + offset controller; add sign tracking across
+  frames.
+
+## 11. Repository map
 
 ```
-README.md      # this engineering document
-src/           # all control software (robot.py, camera.py, challenges, tools)
-models/        # 3D-printable parts (printing/) and source CAD (3d-parts/)
-schemes/       # wiring / electromechanical diagrams
-t-photos/      # team photos (official + fun)
-v-photos/      # vehicle photos (6 angles)
-video/         # video.md — link to the driving demonstration
-other/         # datasheets, rulebook, strategy notes
+README.md                 # this engineering document
+ENGINEERING-JOURNAL.md     # design process & problem-solving log
+CHECKLIST.md               # submission checklist
+src/                       # control software (core + tools/)
+models/                    # 3D-printable parts + source CAD
+schemes/                   # wiring / electromechanical diagrams
+t-photos/                  # team photos
+v-photos/                  # vehicle photos (6 angles)
+video/                     # link to the driving demonstration
+other/                     # BOM, rulebook, misc
 ```
 
-## 9. Photos & video
+## 12. Team
 
-- Vehicle photos → `v-photos/` (6 angles). Team photos → `t-photos/`.
-- Wiring diagram → `schemes/` (Pi ↔ L9110S ↔ servo ↔ power).
-- Driving video → `video/video.md`.
+**Team The Red Castle** — _(to fill: member names + roles, e.g. mechanical,
+electronics, software.)_
 
----
-
-*Team: (add names/roles). Built on Raspberry Pi 4 + Camera Module 3 Wide.*
+Built on a Raspberry Pi 4 with a Camera Module 3 Wide. Reference study: Team
+KyivRoboMagic (Ukraine, WRO 2024).
