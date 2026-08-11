@@ -129,7 +129,7 @@ A strict per-frame **priority** decides steering:
 Base speed is `CRUISE` (per challenge). `cruise_speed()` automatically **slows in
 proportion to steering effort** — full speed on straights, easing off in corners.
 
-## 6. Tools (in `2 Software/General Tools and Hardware Test/`)
+## 6. Tools (in `src/`)
 
 | Script | Purpose |
 |---|---|
@@ -163,25 +163,24 @@ python open_challenge.py     # Open Challenge
 python obstacle_challenge.py # Obstacle Challenge
 ```
 
-## 8. Repository structure
+## 8. Repository structure (official WRO Future Engineers layout)
 
 ```
-1 CAD/                         # 3D-printable parts and source CAD
-  Printing/                    # STL / gcode + slicer settings
-  3D Parts/                    # STEP / F3D / SLDPRT source
-2 Software/                    # all robot code
-  Open Challenge/              # open_challenge.py
-  Obstacle Challenge/          # obstacle_challenge.py
-  General Tools and Hardware Test/  # robot.py, camera.py, tools, calibration
-3 Documentation/               # engineering journal, photos, wiring diagrams
-4 Rules and Mission/           # WRO rulebook + strategy notes
+README.md      # this engineering document
+src/           # all control software (robot.py, camera.py, challenges, tools)
+models/        # 3D-printable parts (printing/) and source CAD (3d-parts/)
+schemes/       # wiring / electromechanical diagrams
+t-photos/      # team photos (official + fun)
+v-photos/      # vehicle photos (6 angles)
+video/         # video.md — link to the driving demonstration
+other/         # datasheets, rulebook, strategy notes
 ```
 
 ## 9. Photos & video
 
-- Vehicle photos: `3 Documentation/` (add 6 angles).
-- Wiring diagram: `3 Documentation/` (Pi ↔ L9110S ↔ servo ↔ power).
-- Driving video: add a link here.
+- Vehicle photos → `v-photos/` (6 angles). Team photos → `t-photos/`.
+- Wiring diagram → `schemes/` (Pi ↔ L9110S ↔ servo ↔ power).
+- Driving video → `video/video.md`.
 
 ---
 
