@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# capture / debug artefacts (regenerated on the Pi)
+val_*.png
+dbg_*.png
+*_selftest.jpg
+field_*.jpg
+test_capture.png
+camera_selftest.jpg
+
+# OS
+.DS_Store
+Thumbs.db
