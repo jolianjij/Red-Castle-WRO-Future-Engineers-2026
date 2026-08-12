@@ -108,6 +108,7 @@ def shutdown():
 # VISION   (all thresholds come from config.py)
 # ==========================================================================
 _K = np.ones((3, 3), np.uint8)
+_esc = {"dir": 0}   # latched escape direction for emergency-both
 
 # ---- colours ----
 _DEFAULT_COLORS = {
@@ -653,40 +654,35 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
       3. otherwise          -> PD wall-density controller (proven fallback)
     """
     # ---- PRIORITY 1: WALL EMERGENCY - applies in EVERY mode, no exceptions ----
-    # This used to live only inside the density controller, so in "gap" mode the
-    # car had NO wall avoidance at all and drove along touching the inner wall.
+    # An emergency must never steer LESS than the normal controller would. The
+    # first version ramped from zero, so just past the threshold it produced
+    # -0.8 deg while the wall follower wanted -17 deg: the override seized
+    # control and drove the car INTO the wall (log t=1.05s, right=0.285).
+    # It now ramps from HALF lock and is floored by the normal command.
     if left > WALL_EMERGENCY or right > WALL_EMERGENCY:
-        if left > WALL_EMERGENCY and right > WALL_EMERGENCY:
-            # BOTH walls close - e.g. jammed facing a corner. Adding the two
-            # pushes made them CANCEL: a log showed L=0.993 R=0.993 producing
-            # -4 deg, so the car just sat against the wall. Instead commit FULL
-            # lock toward whichever side actually has more room; if the locked
-            # driving direction is known, prefer that (it is where the track goes).
-            # Steer away from whichever wall is CLOSER. Using the drive
-            # direction here was a bug: jammed against the INNER wall in CCW it
-            # steered LEFT into that wall for 10 s straight (log-confirmed).
-            esc = STEER_MAX * (1.0 if left > right else -1.0)
-            return esc, "emergency-both"
-        push = 0.0
+        both = left > WALL_EMERGENCY and right > WALL_EMERGENCY
+        if both:
+            # Jammed (e.g. facing a corner). Latch the escape direction: L and R
+            # crossing each other made this flip -20/+20 between frames.
+            if _esc.get("dir", 0) == 0:
+                _esc["dir"] = 1 if left > right else -1
+            return STEER_MAX * _esc["dir"], "emergency-both"
+        _esc["dir"] = 0
+        # ramp from 50% to 100% of lock across the danger band
         if left > WALL_EMERGENCY:
-            push += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.12)
-        if right > WALL_EMERGENCY:
-            push -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.12)
+            frac = min(1.0, (left - WALL_EMERGENCY) / 0.12)
+            push = STEER_MAX * (0.5 + 0.5 * frac)
+        else:
+            frac = min(1.0, (right - WALL_EMERGENCY) / 0.12)
+            push = -STEER_MAX * (0.5 + 0.5 * frac)
+        # never weaker than what the normal controller wanted in the same sense
+        if outer is not None and laps.direction != 0:
+            normal = outer.steer(left, right, laps.direction)
+            if push > 0:
+                push = max(push, normal)
+            else:
+                push = min(push, normal)
         return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
-
-    # ---- NAV_METHOD "outer": scripted line-triggered turn, else outer-wall PD --
-    if NAV_METHOD == "outer":
-        turner.update(front if front is not None else front_reading(hsv))
-        if turner.active:
-            return turner.steer(), "turn"
-        # SAFETY NET: the scripted turn normally fires on the corner LINE. If a
-        # line is ever missed the car would drive straight into the wall, so a
-        # very close wall AHEAD forces the turn anyway. Geometry is the backup,
-        # the line is the primary - the opposite of the old design.
-        if front_close and laps.direction != 0:
-            turner.trigger(laps.direction)
-            return turner.steer(), "turn-geom"
-        return _apply_bias(outer.steer(left, right, laps.direction)), "outer"
 
     if laps.in_corner:
         bias = laps.turn_bias()
