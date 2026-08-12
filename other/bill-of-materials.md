@@ -5,7 +5,7 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 ## Electronics — compute & sensing
 | # | Component | Spec / notes | Qty |
 |---|---|---|---|
-| 1 | Raspberry Pi 4 Model B | 2 GB+; runs Raspberry Pi OS Bookworm 64-bit | 1 |
+| 1 | Raspberry Pi 4 Model B | **2 GB RAM**; Raspberry Pi OS Bookworm 64-bit | 1 |
 | 2 | microSD card | 16–32 GB, A1/A2, with Bookworm flashed | 1 |
 | 3 | **OV5647 wide-angle camera** | 5 MP, ~120° FOV, **fixed focus** (deep depth of field) — the only sensor | 1 |
 | 4 | CSI camera ribbon cable | Pi 4 CSI port → camera on the mast (~15 cm); carries data **and** power | 1 |
@@ -14,9 +14,11 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 | # | Component | Spec / notes | Qty |
 |---|---|---|---|
 | 5 | **L9110S** dual H-bridge module | drives the DC motor; `A-IA`→GPIO24, `A-IB`→GPIO23; rated 2.5–12 V, ~0.8 A | 1 |
-| 6 | DC drive motor | brushed DC gear motor on the rear axle **(CONFIRM exact model/voltage)** | 1 |
+| 6 | **N20 gear motor** | 12 V, **200 rpm**, brushed micro gear motor — rear-axle drive | 1 |
+| 6a | **Differential** | rear axle differential — lets the driven wheels turn at different speeds | 1 |
+| 6b | Transmission gears | **25:20** spur pair (1.25:1 reduction), motor pinion → differential | 1 set |
 | 7 | **SG90** steering servo | 9 g micro servo; signal → GPIO13, powered from the Pi's 5 V | 1 |
-| 8 | Drive wheels + tires | **(CONFIRM)** size | 2 |
+| 8 | Drive wheels + tires | rear, on the differential axle **(diameter to measure)** | 2 |
 | 9 | Steering wheels (front) + Ackermann linkage | 3D-printed knuckles + tie-rod + servo horn | 1 set |
 
 ## Power
@@ -53,10 +55,20 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 - The WRO game mat + field walls for testing
 
 ---
+## Manufacturing
+| Item | Detail |
+|---|---|
+| CAD | **Fusion 360** — full assembly + parts in [`../models/`](../models) |
+| 3D printer | **Bambu Lab A1** |
+| Material | **PLA+ Silk Silver** |
+| Sliced plates | print-ready plates with settings in [`../models/printing/`](../models/printing) |
+
 ### Still to confirm
-1. **Drive motor** — exact model / rated voltage (affects L9110S headroom).
-2. **Wheel/tire** diameter.
-3. **Total cost** of the build.
+1. **Wheel/tire** diameter.
+2. **Wheelbase** (front↔rear axle) and **track** (rear wheel↔wheel).
+3. **Robot mass** and **measured max speed**.
+4. **Camera height / tilt** — currently documented as 12.5 cm / ~15° down.
+5. **Total cost** of the build.
 
 ### Power note
 Three 18650 cells in series give ~11.1 V nominal (12.6 V fully charged). The

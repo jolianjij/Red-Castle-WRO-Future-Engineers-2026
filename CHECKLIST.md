@@ -14,7 +14,8 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [ ] 📷 `t-photos/` — 2 group photos (`team-official.jpg`, `team-fun.jpg`)
 - [ ] 🎥 `video/video.md` — driving video links (Open + Obstacle, one take each)
 - [x] 🖼️ `schemes/` — wiring diagram image (Pi ↔ L9110S ↔ servo ↔ power, common ground)
-- [ ] 🧩 `models/` — actual CAD/STL files of the printed parts
+- [ ] 🧩 `models/3d-parts/` — full Fusion 360 robot assembly + part files
+- [ ] 🧩 `models/printing/` — STL files + sliced plates with print settings
 - [x] ✍️ Team names + roles in `README.md`
 - [ ] 📷 Member photos → `t-photos/` (ahmad-kalthom.jpg, jolian-wassof.jpg, omar-shammout.jpg, louay-rashwan.jpg)
 - [ ] ✍️ Bio + email for each member (placeholders are in README §12)
@@ -24,7 +25,9 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [ ] 🤖 Assembly / build-steps section
 - [ ] 🤖 Engineering journal (design process: brownout fix, no-diff steering, focus/exposure)
 - [x] 🤖 BOM: battery (3×18650), buck converter, SG90 servo confirmed from the wiring diagram
-- [ ] 🤖 BOM: drive motor model + wheel diameter + total cost still needed
+- [x] 🤖 BOM: N20 motor (12 V 200 rpm), differential, 25:20 gears, PLA+ Silk Silver / Bambu A1 / Fusion 360, Pi 2 GB
+- [ ] 📏 Measurements: mass, max speed, wheel diameter, wheelbase, track, camera height/tilt
+- [ ] 🤖 BOM: total cost
 - [ ] 🤖 Commit reference `colors.json` + `servo_center.txt` (pull from Pi once tuning is final)
 
 ## ⚙️ To actually compete (not GitHub, but required)
@@ -37,6 +40,6 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [x] ~~Team members' names + roles~~ — done
 - [x] ~~Battery voltage & type~~ — 3×18650 in series
 - [x] ~~Steering servo model~~ — SG90
-- [ ] Drive motor model/voltage
-- [ ] Wheel/tire diameter
+- [x] ~~Drive motor model/voltage~~ — N20, 12 V, 200 rpm
+- [ ] Wheel diameter, wheelbase, track, mass, max speed
 - [ ] Each member's bio + email

@@ -124,23 +124,35 @@ direction flip, **coasts to a stop and waits (`STOP_FLIP_DELAY`)** before drivin
 the other way. The protection lives inside `motor()` so *every* caller — including
 the parking reverse — is safe automatically.
 
-## 6. The no-differential steering problem
+## 6. The steering-scrub problem, and the differential that fixed it
 
 **Problem.** In turns the car **scrubbed and pushed wide**, sometimes stalling in
 the corner.
 
-**Investigation.** The drivetrain has **no differential**, so both driven wheels
-are locked to the same speed. At larger steering angles the wheels must roll
-different distances, so they scrub — wasting traction.
+**Investigation.** The first drivetrain used a **solid rear axle**, locking both
+driven wheels to the same speed. In a corner the outer wheel must cover a longer
+arc than the inner one; with a solid axle one of them has to slip. That slip
+wasted traction, pushed the car wide, and loaded the motor enough to stall it
+mid-turn.
 
-**Solution (interim).** We reduced the steering limit (`STEER_MAX`) step by step on
-the field until the scrub disappeared, trading turning radius for traction.
+**Interim workaround.** We cut the steering limit (`STEER_MAX`) down step by step
+on the field until the scrub disappeared — roughly **8°**. It kept traction, but
+the car then could not corner tightly enough to follow the track properly. We were
+treating the symptom.
 
-**Solution (planned).** Fit a **small differential**. We surveyed how strong WRO
-teams solve this and found most avoid *printed* differentials (too much backlash),
-using compact **LEGO** or **micro RC** differentials instead. Our pick is a
-**WLtoys 1/28 micro metal differential** — tiny, low-backlash, low-cost — after
-which we can raise `STEER_MAX` and corner harder.
+**Real solution — fit a differential.** We surveyed how strong WRO teams solve
+this and found most avoid *printed* differentials (too much backlash), preferring
+compact **LEGO** or **micro RC** units. We fitted a **differential on the rear
+axle**, driven from the **N20 motor (12 V, 200 rpm)** through a **25:20 spur pair
+(1.25:1 reduction)**.
+
+**Result.** The driven wheels can now turn at different speeds, so the scrub is
+gone at its source. We raised `STEER_MAX` from ~8° to the linkage's full
+**±35°**, and the car corners tightly without losing traction or stalling.
+
+**Lesson.** The software limit was a workaround for a mechanical flaw. Capping the
+steering hid the symptom but cost cornering ability; fixing the drivetrain removed
+the constraint entirely and let the controller use the full mechanical range.
 
 ## 7. Vision tuning
 

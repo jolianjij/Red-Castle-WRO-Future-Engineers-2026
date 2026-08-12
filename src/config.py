@@ -22,7 +22,11 @@ SERVO_HZ = 50
 MOTOR_HZ = 1000
 
 STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
-STEER_MAX = 20          # deg - max steering deviation from centre
+STEER_MAX = 35          # deg - max steering deviation from centre.
+                        # 35 deg is the MECHANICAL limit of the Ackermann linkage.
+                        # We can use the full range because the rear axle has a
+                        # DIFFERENTIAL - without one, large angles scrubbed the
+                        # driven wheels and we had to cap this near 8 deg.
 SERVO_MIN_DUTY = 2.5    # duty at 0 deg
 SERVO_MAX_DUTY = 12.5   # duty at 180 deg
 

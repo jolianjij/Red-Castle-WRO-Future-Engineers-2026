@@ -54,41 +54,74 @@ handling, a clean park, and — importantly — **thorough engineering documenta
 
 | Subsystem | Choice |
 |---|---|
-| **Compute** | Raspberry Pi 4 Model B (Raspberry Pi OS *Bookworm*, 64-bit) |
+| **Compute** | Raspberry Pi 4 Model B, **2 GB RAM** (Raspberry Pi OS *Bookworm*, 64-bit) |
 | **Sensor** | **OV5647 Wide-angle** camera (5 MP, ~120° FOV, **fixed focus**) — sole sensor |
-| **Steering** | Ackermann front steering, one servo on **GPIO13** (hardware PWM) |
-| **Drive** | Single DC gear motor via an **L9110S** H-bridge on **GPIO24 / GPIO23** |
-| **Power** | Battery → motor driver directly; separate 5 V regulator → Pi; common ground |
+| **Steering** | **Ackermann** front steering, SG90 servo on **GPIO13**, **±35° max** |
+| **Drive** | **N20 gear motor** (12 V, 200 rpm) → **25:20 gear pair** → **differential** on the rear axle |
+| **Driver** | **L9110S** H-bridge on **GPIO24 / GPIO23** |
+| **Power** | 3 × 18650 (series) → motor driver directly; separate buck converter → Pi; common ground |
+| **Chassis** | 3D printed in **PLA+ Silk Silver** on a **Bambu Lab A1**, designed in **Fusion 360** |
 | **Software** | Python 3, OpenCV, Picamera2 |
 | **Reference** | Studied Team KyivRoboMagic (Ukraine, WRO 2024 International Final) |
 
 _Vehicle photos: [`v-photos/`](v-photos) · driving video: [`video/video.md`](video/video.md)_
 
+### Specifications
+
+| Property | Value |
+|---|---|
+| Drive motor | N20 gear motor, 12 V, 200 rpm |
+| Transmission | 25:20 spur pair (1.25:1) → differential, rear axle |
+| Steering | Ackermann, ±35° max |
+| Camera height / tilt | 12.5 cm above the mat / ~15° down _(to re-confirm)_ |
+| Mass | _to measure_ |
+| Max speed | _to measure_ |
+| Wheel diameter | _to measure_ |
+| Wheelbase (front↔rear) | _to measure_ |
+| Track (rear wheel↔wheel) | _to measure_ |
+| Print material | PLA+ Silk Silver |
+| Printer / CAD | Bambu Lab A1 / Fusion 360 |
+
 ## 3. Mobility management
 
 ### 3.1 Chassis
-A custom 3D-printed chassis (files in [`models/`](models)) carries the Pi, battery,
-motor driver, drive motor, steering servo and the camera mast. Design priorities:
-low and central mass, a rigid camera mast, and easy access to the wiring.
+A custom chassis designed in **Fusion 360** and 3D printed in **PLA+ Silk Silver**
+on a **Bambu Lab A1** (source CAD, STLs and sliced plates in [`models/`](models)).
+It carries the Pi, battery, motor driver, drive motor, steering servo and the
+camera mast. Design priorities: low and central mass, a rigid camera mast, and
+easy access to the wiring.
 
-### 3.2 Steering
-Front-wheel **Ackermann steering** driven by a single servo (GPIO13, which is a
-hardware-PWM pin for a smooth, low-jitter signal). Steering is **software-limited**
-to a small maximum deviation (`STEER_MAX` in `src/robot.py`). One constant caps
-every steering command — wall-following, obstacle-passing and emergency turns.
+<p align="center">
+  <img src="models/renders/chassis-top-steering-centered.png" width="290" alt="Chassis, steering centred">
+  <img src="models/renders/chassis-top-steering-left.png" width="290" alt="Chassis, steering turned">
+</p>
 
-> **Engineering decision — the steering limit.** Our current drivetrain has **no
-> differential**, so both driven wheels are forced to the same speed. At large
-> steering angles the inner and outer wheels must travel different distances, so
-> they *scrub*, losing traction and pushing the car wide (or stalling it in the
-> turn). We reduced `STEER_MAX` step by step on the field until the scrub
-> disappeared. **Planned upgrade:** fit a small differential (a WLtoys 1/28 micro
-> metal differential, as used in spirit by top teams who favour low-backlash
-> gearing) so we can raise the steering limit and corner harder. See
-> [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md).
+### 3.2 Steering — Ackermann
+Front-wheel **Ackermann steering** driven by a single SG90 servo (GPIO13, a
+hardware-PWM pin for a smooth, low-jitter signal). The servo drives a central
+bell-crank and tie-rod to both steering knuckles, so the **inner wheel turns more
+sharply than the outer one** through a corner — each wheel follows its own turning
+radius instead of fighting the other.
 
-### 3.3 Drivetrain
-A single DC gear motor drives the rear axle through an **L9110S** dual H-bridge:
+**Maximum steering angle: ±35°**, the mechanical limit of the linkage. `STEER_MAX`
+in [`src/config.py`](src/config.py) caps *every* steering command — wall-following,
+obstacle-passing and emergency turns — from one constant.
+
+### 3.3 Drivetrain — differential
+An **N20 gear motor (12 V, 200 rpm)** drives the rear axle through a **25:20 gear
+pair (1.25:1 reduction)** into a **differential**.
+
+> **Engineering decision — why a differential mattered.** Our first drivetrain
+> used a *solid* rear axle, forcing both driven wheels to the same speed. In a
+> corner the outer wheel must travel further than the inner one, so with a solid
+> axle they *scrub* — losing traction, pushing the car wide, and sometimes
+> stalling it mid-turn. We worked around it by cutting the steering limit down to
+> roughly **8°**, which kept traction but left the car unable to corner properly.
+> Fitting a **differential** removed the constraint at its source: the wheels can
+> now rotate at different speeds, so we run the **full ±35°** of the linkage and
+> corner tightly without scrub. See [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md).
+
+The motor is driven by an **L9110S** dual H-bridge:
 
 | L9110S | Connection |
 |---|---|

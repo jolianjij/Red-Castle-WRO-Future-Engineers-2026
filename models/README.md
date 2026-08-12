@@ -16,25 +16,33 @@
 | [`chassis-rear-axle.png`](renders/chassis-rear-axle.png) | Rear axle assembly — drive gear and axle supports |
 
 ### Design notes visible in the renders
-- **Ackermann front steering**: a single servo drives a central bell-crank through
-  a tie-rod to both steering knuckles, so the inner wheel turns more sharply than
-  the outer one through a corner.
-- **Rear axle**: one drive motor turns a spur gear on a solid rear axle. This is
-  the drivetrain that currently has **no differential**, which is why the steering
-  deviation is software-limited (`STEER_MAX`) to avoid wheel scrub — see
-  [`../ENGINEERING-JOURNAL.md`](../ENGINEERING-JOURNAL.md).
+- **Ackermann front steering**: a single SG90 servo drives a central bell-crank
+  through a tie-rod to both steering knuckles, so the inner wheel turns more
+  sharply than the outer one through a corner. Mechanical limit **±35°**.
+- **Rear axle with a differential**: an **N20 gear motor (12 V, 200 rpm)** drives
+  the axle through a **25:20 spur pair (1.25:1)** into a **differential**, letting
+  the driven wheels turn at different speeds. This is what allows the full ±35° of
+  steering — an earlier solid axle scrubbed and forced the software limit down to
+  ~8°. See [`../ENGINEERING-JOURNAL.md`](../ENGINEERING-JOURNAL.md).
 - The base plate's hole grid carries the Raspberry Pi, the L9110S driver, the
   buck converter and the battery holder; the camera mast bolts to the front.
+
+## Manufacturing
+
+| | |
+|---|---|
+| **CAD** | Fusion 360 |
+| **Printer** | Bambu Lab A1 |
+| **Material** | PLA+ Silk Silver |
 
 ## Folder contents
 
 ```
 models/
 ├── renders/       # CAD renders (above)
-├── printing/      # print-ready files (STL / gcode) + slicer settings
-└── 3d-parts/      # source CAD (STEP / F3D / SLDPRT ...)
+├── 3d-parts/      # source CAD — full robot assembly (F3D / STEP) + individual parts
+└── printing/      # STL files + sliced plates, ready to print, with slicer settings
 ```
 
-> **To add:** the actual source CAD and STL files go in `3d-parts/` and
-> `printing/`. The renders alone document the design, but judges should be able to
-> re-print the parts.
+> **To add:** the full Fusion 360 assembly, the individual part STLs, and the
+> sliced print plates with their settings — so judges can reproduce the whole car.
