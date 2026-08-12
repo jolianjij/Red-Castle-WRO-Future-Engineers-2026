@@ -103,10 +103,23 @@ GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
 #   counter-clockwise-> the outer wall is on the RIGHT
 # The inner walls are randomised each round, so they are never referenced at all.
 # There is no gap threshold and no front-wall threshold to tune.
+# This IS the KyivRoboMagic control law (read from their actual source):
+#     if (direction == 1)       dir = (left_wall  - 0.5) * 75;
+#     else if (direction == -1) dir = (0.5 - right_wall) * 75;
+#
+# SCALING, done properly. Their half-image is 160x120 = 19200 px but they divide
+# by 160*80 = 12800, so their "wall" value maxes at 1.5, not 1.0, and their 0.5
+# setpoint is really 33% dark. In terms of the TRUE dark fraction f:
+#     dir = (1.5f - 0.5) * 75 = 112.5f - 37.5
+#     sensitivity 112.5 per unit f against a +-45 clamp  =  2.5 x clamp
+# Matching that shape on our +-20 clamp gives  OUTER_KP = 20 * 2.5 = 50.
+# (We previously ran 160 - over 3x more aggressive than the proven design, which
+# saturated at err 0.125 where theirs saturates at 0.4. That is bang-bang.)
 OUTER_TARGET = 0.14     # desired outer-wall fill. Bigger = hug the outer wall
                         # closer. This is the ONLY position setpoint.
-OUTER_KP = 160.0        # proportional gain on (outer - OUTER_TARGET)
-OUTER_KD = 45.0         # derivative gain, damps the weave
+OUTER_KP = 50.0         # proportional gain, scaled from their 75 (see above)
+OUTER_KD = 15.0         # OUR IMPROVEMENT: they used pure P, which oscillates and
+                        # saturates. The derivative term damps the weave.
 OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
 
 # CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
