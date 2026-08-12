@@ -257,7 +257,8 @@ NAV_METHOD = "outer"    # "outer"   = outer-wall PD + line-triggered turn (PROVE
                         # "density" = KyivRoboMagic wall-density fallback
                         # "density" = KyivRoboMagic wall-density (proven fallback)
 
-FORCE_DIRECTION = 0     # 0 = auto-detect from the first line seen (+ geometry)
+FORCE_DIRECTION = 0     # 0 = auto-detect from the first corner line seen.
+                        # Set +1 (CW) or -1 (CCW) only to override at a venue.
                         # +1 = force clockwise, -1 = force counter-clockwise
                         # Use this if the judges tell you the run direction.
 

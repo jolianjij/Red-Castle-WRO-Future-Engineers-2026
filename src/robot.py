@@ -114,8 +114,11 @@ _esc = {"dir": 0}   # latched escape direction for emergency-both
 _DEFAULT_COLORS = {
     "black":   [0, 179, 0, 255, 0, 70],
     "blue":    [90, 135, 60, 255, 70, 200],
-    "orange":  [3, 22, 50, 165, 70, 255],   # MEASURED hue~5-8, S~90.  S ceiling
-                                            # 165 is what keeps red out of orange.
+    "orange":  [2, 13, 72, 170, 70, 255],   # MEASURED: the LINE is H5-8 S86-94,
+                                            # but the MAT ITSELF is H17-19 S42-53
+                                            # (a warm cream). H<=13 and S>=72 are
+                                            # what separate the line from the mat;
+                                            # S<=170 keeps the red pillar out.
     "green":   [45, 90, 120, 255, 60, 240],
     "red":     [170, 5, 150, 255, 60, 255], # MEASURED hue~178, S~252. High S
                                             # floor separates it from the line.
