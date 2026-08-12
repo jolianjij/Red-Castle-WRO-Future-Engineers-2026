@@ -22,7 +22,8 @@ import robot as R
 # ---- tunables ----
 CRUISE = 100           # max speed
 FINISH_EXTRA_CYCLES = 60  # keep going a bit after the 12th quadrant, then stop
-MAX_RUNTIME_S = 45      # SAFETY: hard stop after this many seconds
+MAX_RUNTIME_S = 150     # SAFETY net only. 3 laps measured ~5s/quadrant = ~60s,
+                        # so this is generous headroom, not a lap limit.
 DEBUG = True            # print a status line every 15 cycles
 
 

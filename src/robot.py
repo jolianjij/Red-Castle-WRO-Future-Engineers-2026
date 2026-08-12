@@ -84,8 +84,22 @@ def motor(speed):
 
 
 def shutdown():
+    """Stop everything cleanly.
+
+    The PWM objects must be stopped and dropped BEFORE GPIO.cleanup(); otherwise
+    rpi-lgpio garbage-collects them afterwards and PWM.__del__ throws
+    'unsupported operand type(s) for &: NoneType and int'. Harmless, but noisy.
+    """
+    global _servo_pwm, _m1, _m2
     try:
         motor(0); servo(0); time.sleep(0.1)
+        for p in (_m1, _m2, _servo_pwm):
+            if p is not None:
+                try:
+                    p.stop()
+                except Exception:
+                    pass
+        _servo_pwm = _m1 = _m2 = None
     finally:
         GPIO.cleanup()
 
