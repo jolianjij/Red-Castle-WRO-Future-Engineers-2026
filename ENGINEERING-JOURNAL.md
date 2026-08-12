@@ -49,11 +49,38 @@ car moved.
 **Mount.** 12.5 cm above the mat, ~15° down, centred and facing straight — a
 lateral offset would bias the left/right wall comparison permanently.
 
-**Open issue.** Because the Module 3 has a large sensor and shallow depth of field,
-**distant signs still blur** at the near focus setting. Mitigations in progress:
-refocus for greater depth of field, loosen the sign-detection thresholds for small
-blobs, and only *commit* to a pass once the sign is in the sharp zone. A
-fixed-focus wide module (huge depth of field) is the fallback.
+## 2b. Changing the camera: autofocus was the wrong tool
+
+**Problem.** Even with focus locked, **distant traffic signs were blurry**. Blur
+desaturates colour, so the HSV masks lost far-away signs entirely — the car only
+"saw" an obstacle once it was already close.
+
+**Investigation.** This was not a tuning fault but a property of the sensor. The
+Camera Module 3 has a comparatively large sensor and an autofocus lens, giving a
+**shallow depth of field**: focused on the mat, anything far is soft; focused far,
+the near mat is soft. A focus sweep confirmed we could have one or the other, not
+both. Autofocus itself was also a liability — it hunted, and it locked to the
+distant background rather than the track.
+
+**Solution.** We replaced it with an **OV5647 wide-angle module** — a small sensor
+with a **fixed-focus** lens. Small sensors have a much larger depth of field, so
+the near mat and the far wall are sharp *at the same time*, and there is no
+autofocus to hunt or mis-lock. A ground robot never needs to refocus, so losing
+autofocus cost us nothing and removed a whole class of failure.
+
+**Consequences.**
+- `camera.py` was rewritten: the OV5647 has no `LensPosition`/`AfMode`, so those
+  controls had to go (they raise an error on this sensor). Full-FOV mode is now
+  1296×972.
+- All colour thresholds had to be **re-tuned** — a different sensor renders colour
+  differently, so the old `colors.json` was invalid.
+- We also began raising **Saturation** in the ISP (~1.4), which separates
+  red/orange/green/magenta in HSV at no CPU cost.
+
+**Trade-off accepted.** The OV5647 is lower resolution and noisier in dim light
+than the Module 3. For our task that does not matter: we process at 320×160 and
+care about *where* colour regions are, not fine detail. Reliable focus everywhere
+beat higher resolution somewhere.
 
 ## 3. The power brownout
 

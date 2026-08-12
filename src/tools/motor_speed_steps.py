@@ -12,7 +12,7 @@ Keep the wheels off the ground.
 import time
 import RPi.GPIO as GPIO
 
-IN1, IN2 = 23, 24            # L9110S A-IA / A-IB
+IN1, IN2 = 24, 23            # L9110S A-IA / A-IB
 MOTOR_FORWARD_PIN = IN1      # <-- PWM on this pin = forward. Swap to IN2 if reversed.
 MOTOR_REVERSE_PIN = IN2 if MOTOR_FORWARD_PIN == IN1 else IN1
 

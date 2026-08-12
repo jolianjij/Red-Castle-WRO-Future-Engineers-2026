@@ -5,7 +5,7 @@ test.py - Hardware bring-up test for the WRO 2026 Future Engineers car.
 Runs on the Raspberry Pi 4 (Bookworm), inside the --system-site-packages venv.
 Menu:
     1. Steering servo   (GPIO13)
-    2. Drive motor      (GPIO23 = IN1 / GPIO24 = IN2, one pin PWM, other LOW)
+    2. Drive motor      (GPIO24 = IN1 / GPIO23 = IN2, one pin PWM, other LOW)
     3. Pi Camera        (capture + save + report HSV; frame rotated 180)
     4. Button           (GPIO9, optional - disabled)
     5. NeoPixel LED     (board.D10, optional - disabled)
@@ -20,8 +20,8 @@ import time
 # PIN CONFIG (BCM numbering)
 # --------------------------------------------------------------------------
 SERVO_PIN = 13          # steering servo (GPIO13, phys pin 33, hardware PWM1)
-MOTOR_IN1 = 23          # PWM here = FORWARD (IN2 held LOW)
-MOTOR_IN2 = 24          # PWM here = REVERSE (IN1 held LOW)
+MOTOR_IN1 = 24          # PWM here = FORWARD (IN2 held LOW)
+MOTOR_IN2 = 23          # PWM here = REVERSE (IN1 held LOW)
 BUTTON_PIN = 9          # optional
 LED_COUNT = 4           # optional NeoPixel on board.D10
 

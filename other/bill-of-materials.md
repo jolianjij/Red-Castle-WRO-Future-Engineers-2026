@@ -7,13 +7,13 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 |---|---|---|---|
 | 1 | Raspberry Pi 4 Model B | 2 GB+; runs Raspberry Pi OS Bookworm 64-bit | 1 |
 | 2 | microSD card | 16–32 GB, A1/A2, with Bookworm flashed | 1 |
-| 3 | Raspberry Pi Camera Module 3 **Wide** | Sony IMX708, 120° FOV — the only sensor | 1 |
+| 3 | **OV5647 wide-angle camera** | 5 MP, ~120° FOV, **fixed focus** (deep depth of field) — the only sensor | 1 |
 | 4 | CSI camera ribbon cable | fits Pi 4 CSI port (length to reach the mast) | 1 |
 
 ## Electronics — actuation & motor driver
 | # | Component | Spec / notes | Qty |
 |---|---|---|---|
-| 5 | **L9110S** dual H-bridge module | drives the DC motor; `A-IA`→GPIO23, `A-IB`→GPIO24 | 1 |
+| 5 | **L9110S** dual H-bridge module | drives the DC motor; `A-IA`→GPIO24, `A-IB`→GPIO23 | 1 |
 | 6 | DC drive motor | **(CONFIRM)** type/voltage/gear ratio (e.g. TT 3–6 V / N20) | 1 |
 | 7 | Steering servo | **(CONFIRM)** model (e.g. SG90 / MG90S); signal → GPIO13 | 1 |
 | 8 | Drive wheels + tires | **(CONFIRM)** size | 2 |

@@ -5,7 +5,7 @@
 import time
 import RPi.GPIO as GPIO
 
-IN1, IN2 = 23, 24   # A-IA, A-IB on the L9110S
+IN1, IN2 = 24, 23   # A-IA, A-IB on the L9110S
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)

@@ -16,8 +16,8 @@ Sign conventions used everywhere:
 # HARDWARE PINS (BCM)
 # ==========================================================================
 SERVO_PIN = 13          # steering servo
-MOTOR_IN1 = 23          # L9110S A-IA : PWM here = FORWARD
-MOTOR_IN2 = 24          # L9110S A-IB : PWM here = REVERSE
+MOTOR_IN1 = 24          # L9110S A-IA : PWM here = FORWARD
+MOTOR_IN2 = 23          # L9110S A-IB : PWM here = REVERSE
 SERVO_HZ = 50
 MOTOR_HZ = 1000
 

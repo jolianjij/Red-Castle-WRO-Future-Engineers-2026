@@ -55,9 +55,9 @@ handling, a clean park, and — importantly — **thorough engineering documenta
 | Subsystem | Choice |
 |---|---|
 | **Compute** | Raspberry Pi 4 Model B (Raspberry Pi OS *Bookworm*, 64-bit) |
-| **Sensor** | Raspberry Pi Camera Module 3 **Wide** (Sony IMX708, 120° FOV) — sole sensor |
+| **Sensor** | **OV5647 Wide-angle** camera (5 MP, ~120° FOV, **fixed focus**) — sole sensor |
 | **Steering** | Ackermann front steering, one servo on **GPIO13** (hardware PWM) |
-| **Drive** | Single DC gear motor via an **L9110S** H-bridge on **GPIO23 / GPIO24** |
+| **Drive** | Single DC gear motor via an **L9110S** H-bridge on **GPIO24 / GPIO23** |
 | **Power** | Battery → motor driver directly; separate 5 V regulator → Pi; common ground |
 | **Software** | Python 3, OpenCV, Picamera2 |
 | **Reference** | Studied Team KyivRoboMagic (Ukraine, WRO 2024 International Final) |
@@ -92,8 +92,8 @@ A single DC gear motor drives the rear axle through an **L9110S** dual H-bridge:
 
 | L9110S | Connection |
 |---|---|
-| `A-IA` | GPIO23 — PWM here = **forward** |
-| `A-IB` | GPIO24 — PWM here = **reverse** |
+| `A-IA` | GPIO24 — PWM here = **forward** |
+| `A-IB` | GPIO23 — PWM here = **reverse** |
 | `VCC` | Battery + (motor supply) |
 | `GND` | Common ground |
 | MOTOR-A | Drive motor |
@@ -129,19 +129,29 @@ Battery − ──── common ground ── L9110S GND ── Pi GND
 ### 4.2 Sensing — the camera
 The camera is the entire perception system, so most of our tuning went here.
 
-**Mount.** Camera Module 3 Wide, **12.5 cm above the mat**, tilted **~15°
-downward**, centred laterally and facing straight ahead on a rigid mast. It is
-physically mounted **upside-down**, so frames are rotated 180° in software.
+**Sensor choice.** We began with a Raspberry Pi Camera Module 3 Wide (IMX708) but
+switched to an **OV5647 wide-angle module**. The Module 3's large sensor and
+autofocus lens gave a *shallow depth of field*: focus it on the mat and distant
+traffic signs blurred, which desaturated their colour and made them undetectable.
+The OV5647 is a **small-sensor, fixed-focus** module, so its depth of field covers
+the whole track — near mat and far walls are sharp simultaneously — and there is
+no autofocus to hunt mid-run. Losing autofocus cost us nothing; a ground robot
+never needs to refocus.
+
+**Mount.** **12.5 cm above the mat**, tilted **~15° downward**, centred laterally
+and facing straight ahead on a rigid mast. It is physically mounted
+**upside-down**, so frames are rotated 180° in software.
 
 **Locked settings** (`src/camera.py`), chosen from on-field capture tests:
 
 | Setting | Value | Why |
 |---|---|---|
-| Sensor mode | 2304×1296 (full 120° FOV) → scaled to 640×480 | keep the wide FOV; the high-fps mode is cropped and would lose it |
+| Sensor mode | 1296×972 (full ~120° FOV) → scaled to 640×480 | keep the wide FOV; cropped modes would lose it |
 | Orientation | `hflip + vflip` (180°) | camera mounted upside-down |
-| Focus | **manual**, `LensPosition` fixed | no autofocus hunting mid-run; tuned for depth of field across the mat |
-| Exposure | fixed (~9 ms) | freeze motion — auto-exposure ran ~60 ms and smeared when moving |
+| Focus | **fixed** (no AF hardware) | deep depth of field — sharp from the near mat to the far wall |
+| Exposure | fixed (~9–12 ms) | freeze motion — auto-exposure ran ~60 ms and smeared when moving |
 | White balance | locked `ColourGains` | keep HSV thresholds stable as the car turns toward/away from lights |
+| Saturation | raised (~1.4) | separates red / orange / green / magenta in HSV, free in the ISP |
 
 > **Why camera-only?** A single well-configured camera sees walls, the orange/blue
 > corner lines, the coloured signs and the parking lot — everything the rules
@@ -277,5 +287,5 @@ other/                     # BOM, rulebook, misc
 
 _(to fill: member names + roles, e.g. mechanical, electronics, software.)_
 
-Built on a Raspberry Pi 4 with a Camera Module 3 Wide. Reference study: Team
+Built on a Raspberry Pi 4 with an OV5647 wide-angle camera. Reference study: Team
 KyivRoboMagic (Ukraine, WRO 2024).
