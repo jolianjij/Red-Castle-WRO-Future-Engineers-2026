@@ -708,6 +708,19 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
                 push = min(push, normal)
         return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
 
+    # ---- NAV_METHOD "outer": the KyivRoboMagic law + a scripted corner turn ----
+    if NAV_METHOD == "outer":
+        turner.update(front if front is not None else front_reading(hsv))
+        if turner.active:
+            return turner.steer(), "turn"
+        # SAFETY NET: the turn normally fires on the corner LINE. If a line is
+        # ever missed the car would drive straight on, so a very close wall
+        # AHEAD forces the turn anyway. Line is primary, geometry is the backup.
+        if front_close and laps.direction != 0:
+            turner.trigger(laps.direction)
+            return turner.steer(), "turn-geom"
+        return _apply_bias(outer.steer(left, right, laps.direction)), "outer"
+
     if laps.in_corner:
         bias = laps.turn_bias()
         if bias == 0.0:
