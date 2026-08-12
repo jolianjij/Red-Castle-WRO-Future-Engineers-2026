@@ -22,18 +22,8 @@ import cv2
 import numpy as np
 import RPi.GPIO as GPIO
 
-from camera import open_camera   # locked focus / exposure / AWB / 180 flip / full FOV
-
-# ==========================================================================
-# HARDWARE
-# ==========================================================================
-SERVO_PIN = 13
-MOTOR_IN1 = 23          # PWM here = forward (IN2 low)
-MOTOR_IN2 = 24          # PWM here = reverse (IN1 low)
-SERVO_HZ = 50
-MOTOR_HZ = 1000
-STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protect the regulator)
-STEER_MAX = 8           # deg (max steering deviation; kept low - no differential, avoids wheel scrub)
+from camera import open_camera   # locked exposure / AWB / 180 flip / full FOV
+from config import *             # ALL tunable numbers live in config.py
 
 # center trim: written by servo_center.py; 0 if not calibrated yet
 SERVO_CENTER_TRIM = 0.0
@@ -62,10 +52,12 @@ def setup_hardware():
 
 def servo(angle):
     """0 = straight (after trim), + right, - left, clamped +-STEER_MAX."""
+    if INVERT_STEERING:
+        angle = -angle
     angle = max(-STEER_MAX, min(STEER_MAX, angle))
     a = angle + SERVO_CENTER_TRIM + 90.0
     a = max(45.0, min(135.0, a))
-    duty = 2.5 + (a / 180.0) * 10.0
+    duty = SERVO_MIN_DUTY + (a / 180.0) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY)
     _servo_pwm.ChangeDutyCycle(duty)
     # note: we do NOT sleep here - the control loop runs continuously
 
@@ -73,6 +65,8 @@ def servo(angle):
 def motor(speed):
     """-100..100. Never flips fwd<->rev directly (back-EMF kills the regulator)."""
     global _last_dir
+    if INVERT_MOTOR:
+        speed = -speed
     speed = max(-100, min(100, speed))
     new_dir = 1 if speed > 0 else (-1 if speed < 0 else 0)
     if new_dir != 0 and _last_dir != 0 and new_dir != _last_dir:
@@ -97,28 +91,8 @@ def shutdown():
 
 
 # ==========================================================================
-# VISION
+# VISION   (all thresholds come from config.py)
 # ==========================================================================
-# Processing ROI: camera gives 640x480 (upright). We take the bottom part
-# (the mat) and resize to a small buffer. PROC_H rows, PROC_W cols.
-ROI_TOP = 160          # crop away the top (background clutter) - rows above this ignored
-PROC_W, PROC_H = 320, 160
-
-# fraction of a half-ROI that must be 'black' to call it wall-touching-close
-WALL_TARGET = 0.14     # desired outer-wall fill when nicely centered   (TUNE)
-WALL_EMERGENCY = 0.34  # wall this close -> hard steer away             (TUNE)
-
-# line detection: a line is 'present' when its pixel fraction in the ROI exceeds
-LINE_FRACTION = 0.055  # of the whole ROI                              (TUNE)
-LINE_DEBOUNCE = 10     # cycles to wait before counting the same line again
-
-# pillars
-PILLAR_MIN_AREA = 120  # px in the PROC buffer                          (TUNE)
-PILLAR_SIDE_MARGIN = 0.18   # red -> aim pillar to x=0.18W, green -> 0.82W
-
-# parking gate (magenta)
-PARK_STOP_AREA = 9000  # magenta contour area at which we are parked     (TUNE)
-
 _K = np.ones((3, 3), np.uint8)
 
 # ---- colours ----
@@ -138,22 +112,99 @@ else:
     COLORS = dict(_DEFAULT_COLORS)
 
 
-def mask(hsv, name):
+def mask(hsv, name, clean=True):
+    """Binary mask for a tuned colour. clean=True removes speckle (open) and
+    fills small holes (close) - this is what makes far/blurry objects survive."""
     lo_h, hi_h, lo_s, hi_s, lo_v, hi_v = COLORS[name]
     if lo_h <= hi_h:
-        return cv2.inRange(hsv, (lo_h, lo_s, lo_v), (hi_h, hi_s, hi_v))
-    m1 = cv2.inRange(hsv, (0, lo_s, lo_v), (hi_h, hi_s, hi_v))       # red wrap
-    m2 = cv2.inRange(hsv, (lo_h, lo_s, lo_v), (179, hi_s, hi_v))
-    return cv2.bitwise_or(m1, m2)
+        m = cv2.inRange(hsv, (lo_h, lo_s, lo_v), (hi_h, hi_s, hi_v))
+    else:                                                            # red wrap
+        m1 = cv2.inRange(hsv, (0, lo_s, lo_v), (hi_h, hi_s, hi_v))
+        m2 = cv2.inRange(hsv, (lo_h, lo_s, lo_v), (179, hi_s, hi_v))
+        m = cv2.bitwise_or(m1, m2)
+    if clean:
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, _K)    # kill isolated noise px
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, _K)   # reconnect broken blobs
+    return m
 
 
 def read_hsv(cam):
-    """Grab a frame, crop the mat ROI, return (proc_bgr, hsv)."""
+    """Grab a frame, crop the mat ROI, return (proc_bgr, hsv).
+    A median blur is applied first - the short exposure + high gain makes the
+    image noisy, and noise breaks both the colour masks and the wall scan."""
     frame = cam.capture_array()              # 640x480 RGB888, upright
-    roi = frame[ROI_TOP:480, :, :]
+    roi = frame[ROI_TOP:CAM_H, :, :]
     proc = cv2.resize(roi, (PROC_W, PROC_H))
+    if BLUR_KSIZE and BLUR_KSIZE > 1:
+        proc = cv2.medianBlur(proc, BLUR_KSIZE)
     hsv = cv2.cvtColor(proc, cv2.COLOR_BGR2HSV)
     return proc, hsv
+
+
+# --------------------------------------------------------------------------
+# FREE-SPACE / FOLLOW-THE-GAP  (method "B")
+# --------------------------------------------------------------------------
+def wall_base_rows(hsv, min_run=None):
+    """For every column, the image row where the mat meets the wall.
+
+    Scans each column from the BOTTOM up and returns the lowest row that starts
+    a run of >= min_run consecutive wall pixels. Requiring a RUN is what stops
+    the mat's dotted lines / printed marks being mistaken for a wall.
+    Returns 0 for a column with no wall at all (open to the horizon).
+    """
+    if min_run is None:
+        min_run = FREE_MIN_RUN
+    m = mask(hsv, "black") > 0
+    H, W = m.shape
+    cs = np.cumsum(m.astype(np.int32), axis=0)
+    win = np.zeros((H, W), dtype=np.int32)
+    # win[y] = number of wall pixels in rows (y-min_run+1 .. y)
+    win[min_run - 1:] = cs[min_run - 1:] - np.vstack(
+        [np.zeros((1, W), np.int32), cs[:H - min_run]])
+    full = win >= min_run
+    has = full.any(axis=0)
+    # lowest (largest y) row that completes a full run = the wall's base edge
+    ys = np.where(has, H - 1 - np.argmax(full[::-1], axis=0), 0)
+    return ys.astype(np.int32)
+
+
+def freespace_profile(hsv, min_run=None):
+    """free[x] in 0..PROC_H. BIG = open road ahead in that direction,
+    SMALL = a wall is close. This is the camera's 'pseudo-LiDAR' scan."""
+    base = wall_base_rows(hsv, min_run)
+    free = (PROC_H - base).astype(np.float32)
+    if FREE_SMOOTH > 1:
+        k = np.ones(FREE_SMOOTH, np.float32) / FREE_SMOOTH
+        free = np.convolve(free, k, mode="same")
+    return free
+
+
+def find_gap(free):
+    """Widest contiguous run of 'open' columns.
+    Returns (center_x, width, best_free) or None if nothing is drivable."""
+    thr = GAP_OPEN_FRAC * PROC_H
+    lo, hi = FREE_EDGE_IGNORE, len(free) - FREE_EDGE_IGNORE
+    open_cols = free >= thr
+    best_len, best_start, start = 0, 0, None
+    for x in range(lo, hi):
+        if open_cols[x]:
+            if start is None:
+                start = x
+        elif start is not None:
+            if x - start > best_len:
+                best_len, best_start = x - start, start
+            start = None
+    if start is not None and hi - start > best_len:
+        best_len, best_start = hi - start, start
+    if best_len < GAP_MIN_WIDTH:
+        return None
+    return best_start + best_len / 2.0, best_len, float(free[lo:hi].max())
+
+
+def gap_steer(center_x):
+    """Steer toward the centre of the widest gap."""
+    err = (center_x - PROC_W / 2.0) / (PROC_W / 2.0)     # -1 .. +1
+    return max(-STEER_MAX, min(STEER_MAX, GAP_KP * err))
 
 
 def wall_readings(hsv):
@@ -164,6 +215,17 @@ def wall_readings(hsv):
     left = int(np.count_nonzero(m[:, :half])) / area
     right = int(np.count_nonzero(m[:, half:])) / area
     return left, right
+
+
+def front_reading(hsv):
+    """Black fill fraction straight AHEAD (centre columns, upper rows).
+    High = a wall is close in front = we are at a corner."""
+    m = mask(hsv, "black")
+    c0 = int(PROC_W * (1 - FRONT_COLS) / 2)
+    c1 = PROC_W - c0
+    r1 = int(PROC_H * FRONT_ROWS)
+    band = m[:r1, c0:c1]
+    return int(np.count_nonzero(band)) / max(1, band.size)
 
 
 def line_counts(hsv):
@@ -212,28 +274,38 @@ def magenta_area(hsv):
 # LINE / LAP TRACKING (hysteresis, faithful to the proven previous code)
 # ==========================================================================
 class LapTracker:
-    """Sets driving direction from the first line seen and counts quadrants.
-    direction:  +1 = orange first (clockwise),  -1 = blue first (ccw).
-    12 quadrants = 3 laps."""
+    """Counts corners (quadrants) from WALL GEOMETRY - no colour needed.
+
+    Why: the coloured corner lines proved unreliable on this camera (orange never
+    detected, blue peaked below threshold), so direction/laps never worked. A
+    corner is instead detected when a wall appears AHEAD (left+right dark fraction
+    both high) - that happens once per corner, 12 corners = 3 laps.
+
+    Turn direction is decided at the FIRST corner by which side has more free
+    space, then LOCKED for the whole run (the track never changes direction), so
+    the car can't flip direction mid-run.
+
+    Colour lines are still tracked (if tuned) purely as a cross-check.
+    """
 
     def __init__(self):
-        self.direction = 0
+        self.direction = FORCE_DIRECTION   # 0 = auto-detect, else forced in config
         self.quadrant = 0
         self.cycle = 0
+        self.in_corner = False
+        self._next_ok = 0
+        # TIME-based guards (frame-rate independent - the reliable ones)
+        self._last_corner_t = 0.0          # 0 = no corner counted yet
+        self.last_gap_s = 0.0              # seconds between the last two corners
+        # optional colour cross-check
+        self.blue_state = 0
+        self.orange_state = 0
         self._blue_det = False
         self._orange_det = False
         self._blue_next = 0
         self._orange_next = 0
-        self.blue_state = 0     # 0 none, 1 present, 2 falling edge (just ended)
-        self.orange_state = 0
 
-    def _edge(self, present, detected, next_ok, state_attr):
-        pass  # (inlined below for clarity)
-
-    def update(self, blue_frac, orange_frac):
-        self.cycle += 1
-
-        # blue
+    def _line_edges(self, blue_frac, orange_frac):
         if blue_frac > LINE_FRACTION:
             self.blue_state = 1
             if self.cycle >= self._blue_next:
@@ -245,7 +317,6 @@ class LapTracker:
                 self._blue_next = self.cycle + LINE_DEBOUNCE
             self._blue_det = False
 
-        # orange
         if orange_frac > LINE_FRACTION:
             self.orange_state = 1
             if self.cycle >= self._orange_next:
@@ -257,18 +328,59 @@ class LapTracker:
                 self._orange_next = self.cycle + LINE_DEBOUNCE
             self._orange_det = False
 
-        # first line sets direction
-        if self.direction == 0:
-            if self.orange_state != 0:
-                self.direction = 1
-            elif self.blue_state != 0:
-                self.direction = -1
+    def update(self, blue_frac, orange_frac, left=0.0, right=0.0):
+        self.cycle += 1
+        self._line_edges(blue_frac, orange_frac)
 
-        # count a quadrant on the driving-direction line's falling edge
-        if self.direction >= 0 and self.orange_state == 2:
-            self.quadrant += 1
-        elif self.direction < 0 and self.blue_state == 2:
-            self.quadrant += 1
+        # direction hint from the coloured lines (only before it is locked)
+        if self.direction == 0 and USE_LINES_FOR_DIRECTION:
+            if self.orange_state != 0:
+                self._lock_direction(1, "orange line")
+            elif self.blue_state != 0:
+                self._lock_direction(-1, "blue line")
+
+        now = time.monotonic()
+        total = left + right
+        if not self.in_corner:
+            # a wall has appeared ahead -> we are entering a corner.
+            # TWO guards so one physical corner can never be counted twice:
+            #   1. cycle debounce  2. minimum SECONDS since the last corner
+            since = now - self._last_corner_t if self._last_corner_t else 1e9
+            if (total > CORNER_TOTAL
+                    and self.cycle >= self._next_ok
+                    and since >= CORNER_MIN_INTERVAL_S):
+                self.in_corner = True
+                self.quadrant += 1
+                self._next_ok = self.cycle + CORNER_DEBOUNCE
+                self.last_gap_s = 0.0 if since > 1e8 else since
+                self._last_corner_t = now
+                # lock the turn direction at the FIRST corner: turn toward open space
+                if self.direction == 0:
+                    self._lock_direction(-1 if left < right else 1,
+                                         "first corner geometry")
+                print(f"[lap] corner {self.quadrant}/{QUADRANTS_PER_RUN} "
+                      f"(+{self.last_gap_s:.1f}s)")
+        else:
+            # left the corner once the way ahead is clear again
+            if total < CORNER_TOTAL * 0.75:
+                self.in_corner = False
+
+    def _lock_direction(self, d, why):
+        """Direction is decided ONCE and never changes - this is what stops the
+        car flipping from counter-clockwise to clockwise mid-run."""
+        if self.direction == 0 and d != 0:
+            self.direction = d
+            print(f"[lap] direction locked {'CW' if d > 0 else 'CCW'} ({why})")
+
+    def stalled(self):
+        """True if no corner has been seen for suspiciously long (log a warning)."""
+        if not self._last_corner_t:
+            return False
+        return (time.monotonic() - self._last_corner_t) > CORNER_MAX_INTERVAL_S
+
+    def turn_bias(self):
+        """Steering bias to apply while inside a corner (deg)."""
+        return self.direction * STEER_MAX
 
 
 # ==========================================================================
@@ -280,24 +392,37 @@ class WallFollower:
        Centering keeps it off BOTH walls (fixes the inner-wall hugging).
        Hard-steers away if either wall gets dangerously close."""
 
-    def __init__(self, kp=60.0, kd=25.0):
+    def __init__(self, kp=45.0, kd=18.0):
         self.kp = kp
         self.kd = kd
         self._prev = 0.0
+        self._out = 0.0             # previous output, for slew limiting
 
     def steer(self, left, right, direction=0):
-        # emergency: whichever wall is very close wins
-        if left > WALL_EMERGENCY:
-            self._prev = 0.0
-            return STEER_MAX            # left close -> hard right
-        if right > WALL_EMERGENCY:
-            self._prev = 0.0
-            return -STEER_MAX           # right close -> hard left
+        err = left - right          # >0 => left wall closer => steer right
 
-        err = left - right              # center between the two side walls
+        # deadband: ignore tiny imbalances so the car runs straight instead of
+        # twitching left/right (this was the main cause of the jittery, risky run)
+        if abs(err) < CENTER_DEADBAND:
+            err = 0.0
+
         out = self.kp * err + self.kd * (err - self._prev)
         self._prev = err
-        return max(-STEER_MAX, min(STEER_MAX, out))
+
+        # emergency is PROPORTIONAL, not instant full lock: the closer the wall,
+        # the stronger the push away - blended on top of the PD output
+        if left > WALL_EMERGENCY:
+            out += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.15)
+        if right > WALL_EMERGENCY:
+            out -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.15)
+
+        out = max(-STEER_MAX, min(STEER_MAX, out))
+
+        # slew limit: no instant lock-to-lock snaps (protects the servo + traction)
+        max_step = STEER_MAX * 0.35
+        out = max(self._out - max_step, min(self._out + max_step, out))
+        self._out = out
+        return out
 
 
 def pillar_steer(color, cx, cy_base, kp=90.0):
