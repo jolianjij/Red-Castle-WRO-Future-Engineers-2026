@@ -552,7 +552,14 @@ def cruise_speed(base, steer):
 # and NAV_METHOD in config.py actually switches the strategy.
 # --------------------------------------------------------------------------
 def _apply_bias(steer):
-    """Add the drift trim and re-clamp. Applied to every driving command."""
+    """Add the straight-line drift trim and re-clamp.
+
+    ONLY for lane-keeping (gap / wall following). It must NOT be applied to
+    corner turns or emergency escapes, which need the full mechanical range:
+    a -4 deg trim on a CW corner turned +35 into +31, the car understeered and
+    ran wide into the OUTER wall. In CCW the same trim clamped harmlessly at
+    -35, which is why the fault only appeared clockwise.
+    """
     return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
 
 
@@ -570,12 +577,23 @@ def navigate(hsv, left, right, laps, follower):
     # This used to live only inside the density controller, so in "gap" mode the
     # car had NO wall avoidance at all and drove along touching the inner wall.
     if left > WALL_EMERGENCY or right > WALL_EMERGENCY:
+        if left > WALL_EMERGENCY and right > WALL_EMERGENCY:
+            # BOTH walls close - e.g. jammed facing a corner. Adding the two
+            # pushes made them CANCEL: a log showed L=0.993 R=0.993 producing
+            # -4 deg, so the car just sat against the wall. Instead commit FULL
+            # lock toward whichever side actually has more room; if the locked
+            # driving direction is known, prefer that (it is where the track goes).
+            if laps.direction != 0:
+                esc = STEER_MAX * (1.0 if laps.direction > 0 else -1.0)
+            else:
+                esc = STEER_MAX * (1.0 if right < left else -1.0)
+            return esc, "emergency-both"
         push = 0.0
         if left > WALL_EMERGENCY:
             push += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.12)
         if right > WALL_EMERGENCY:
             push -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.12)
-        return _apply_bias(push), "emergency"
+        return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
 
     if laps.in_corner:
         bias = laps.turn_bias()
@@ -583,8 +601,8 @@ def navigate(hsv, left, right, laps, follower):
             # direction is not fixed yet (no line crossed). Do NOT go straight
             # into the wall - turn toward whichever side has more free space.
             bias = STEER_MAX * (-1.0 if left < right else 1.0)
-            return _apply_bias(bias), "corner-nodir"
-        return _apply_bias(bias), "corner"
+            return bias, "corner-nodir"
+        return bias, "corner"
 
     if NAV_METHOD == "gap":
         free = freespace_profile(hsv)
@@ -594,7 +612,7 @@ def navigate(hsv, left, right, laps, follower):
             return _apply_bias(gap_steer(cx)), "gap"
         # blocked or nothing drivable -> commit to the known turn direction
         if laps.direction != 0:
-            return _apply_bias(laps.turn_bias()), "blocked"
+            return laps.turn_bias(), "blocked"
         return _apply_bias(follower.steer(left, right, laps.direction)), "blocked-nodir"
 
     return _apply_bias(follower.steer(left, right, laps.direction)), "wall"
