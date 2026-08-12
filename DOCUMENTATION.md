@@ -705,12 +705,6 @@ react. A faster frame rate would let us raise that.
 
 **Credits**
 
-We studied the publicly available work of **Team KyivRoboMagic (Ukraine, WRO 2024)**,
-whose camera-only vehicle reached the International Final on hardware comparable to
-ours. Their outer-wall control law is the basis of our own steering, adapted and
-re-calibrated for our camera and vehicle. Their repository is
-<https://github.com/KyivRoboMagic/WRO-2024>.
-
 As a team we thank our coach **Ahmad Kalthom**, and the **HMK AI and Robotics Club**
 for hosting and supporting us.
 

@@ -74,7 +74,7 @@ def main():
             # geometry backup: a wall this close ahead forces a turn even if the
             # corner line was missed entirely
             steer, mode = R.navigate(hsv, left, right, laps, follower, outer,
-                                     turner, front > R.FRONT_TURN_BACKUP)
+                                     turner, front > R.FRONT_TURN_BACKUP, front)
             speed = R.cruise_speed(CRUISE, steer)
             R.servo(steer)
             R.motor(speed)

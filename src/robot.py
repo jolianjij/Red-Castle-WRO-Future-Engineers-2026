@@ -595,6 +595,7 @@ class TurnSequencer:
     def __init__(self):
         self.active = False
         self._until = 0.0
+        self._min_until = 0.0
         self._dir = 0
 
     def trigger(self, direction):
@@ -603,11 +604,25 @@ class TurnSequencer:
         self.active = True
         self._dir = direction
         self._until = time.monotonic() + TURN_DURATION_S
+        self._min_until = time.monotonic() + TURN_MIN_S
         print(f"[turn] scripted {'RIGHT' if direction > 0 else 'LEFT'} turn "
               f"for {TURN_DURATION_S:.1f}s")
 
-    def update(self):
-        if self.active and time.monotonic() >= self._until:
+    def update(self, front=None):
+        """End the turn when the corner is CLEARED, not on a fixed clock.
+
+        A fixed 1.1 s at full lock kept turning after the corner was done and
+        drove the car into the INNER wall (log: inner density climbed 0.126 ->
+        0.195 -> 0.278 during the turn, in both CW and CCW). Now the clock is
+        only a maximum; the turn exits as soon as the way ahead is clear.
+        """
+        if not self.active:
+            return
+        now = time.monotonic()
+        if now >= self._until:                      # hard cap
+            self.active = False
+            return
+        if front is not None and now >= self._min_until and front < FRONT_EXIT:
             self.active = False
 
     def steer(self):
@@ -627,7 +642,7 @@ def _apply_bias(steer):
 
 
 def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
-             front_close=False):
+             front_close=False, front=None):
     """Return (steer_deg, mode_string) for this frame.
 
     Priority:
@@ -647,10 +662,10 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
             # -4 deg, so the car just sat against the wall. Instead commit FULL
             # lock toward whichever side actually has more room; if the locked
             # driving direction is known, prefer that (it is where the track goes).
-            if laps.direction != 0:
-                esc = STEER_MAX * (1.0 if laps.direction > 0 else -1.0)
-            else:
-                esc = STEER_MAX * (1.0 if right < left else -1.0)
+            # Steer away from whichever wall is CLOSER. Using the drive
+            # direction here was a bug: jammed against the INNER wall in CCW it
+            # steered LEFT into that wall for 10 s straight (log-confirmed).
+            esc = STEER_MAX * (1.0 if left > right else -1.0)
             return esc, "emergency-both"
         push = 0.0
         if left > WALL_EMERGENCY:
@@ -661,7 +676,7 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
 
     # ---- NAV_METHOD "outer": scripted line-triggered turn, else outer-wall PD --
     if NAV_METHOD == "outer":
-        turner.update()
+        turner.update(front if front is not None else front_reading(hsv))
         if turner.active:
             return turner.steer(), "turn"
         # SAFETY NET: the scripted turn normally fires on the corner LINE. If a

@@ -133,7 +133,10 @@ FRONT_TURN_BACKUP = 0.45  # SAFETY NET for NAV_METHOD="outer": if the corner lin
                         # is ever missed, a front-wall fill this high forces the
                         # turn anyway so the car cannot drive into the wall.
                         # Set ABOVE FRONT_ENTER so the line stays the primary cue.
-TURN_DURATION_S = 1.1   # how long to hold full lock through a 90 deg corner
+TURN_MIN_S = 0.35       # always turn at least this long (commit to the corner)
+TURN_DURATION_S = 1.1   # MAXIMUM hold; the turn normally exits earlier, as soon
+                        # as the way ahead is clear (front < FRONT_EXIT). A fixed
+                        # 1.1 s over-rotated into the INNER wall in both directions.
 TURN_LOCK_FRAC = 1.0    # fraction of STEER_MAX to use during the turn
 
 # ==========================================================================
