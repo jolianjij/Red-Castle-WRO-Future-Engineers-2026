@@ -1,4 +1,8 @@
-# 🏰 Team The Red Castle — WRO 2026 Future Engineers
+<p align="center">
+  <img src="other/team-logo.jpg" alt="Team The Red Castle" width="620">
+</p>
+
+<h1 align="center">Team The Red Castle — WRO 2026 Future Engineers</h1>
 
 An autonomous, self-driving model car for the **World Robot Olympiad 2026,
 Future Engineers** category. It completes the **Open Challenge** (three laps of a
@@ -263,8 +267,15 @@ other/                     # BOM, rulebook, misc
 
 ## 12. Team
 
-**Team The Red Castle** — _(to fill: member names + roles, e.g. mechanical,
-electronics, software.)_
+<p align="center">
+  <img src="other/team-logo.jpg" alt="Red Castle" width="300">
+  &nbsp;&nbsp;&nbsp;
+  <img src="other/hmk-club-logo.jpg" alt="HMK AI and Robotics Club" width="150">
+</p>
+
+**Team The Red Castle** — HMK AI and Robotics Club.
+
+_(to fill: member names + roles, e.g. mechanical, electronics, software.)_
 
 Built on a Raspberry Pi 4 with a Camera Module 3 Wide. Reference study: Team
 KyivRoboMagic (Ukraine, WRO 2024).
