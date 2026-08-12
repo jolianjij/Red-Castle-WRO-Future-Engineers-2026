@@ -214,7 +214,82 @@ stationary at measured distances, found three failures that would each have caus
 a crash — and cost nothing but a few minutes. Numbers from the field, not intuition,
 set every threshold.
 
-## 8. Software architecture
+## 9. The bug that cost us the most: the car could not tell a LINE from a WALL
+
+**Symptom.** The car followed the wall correctly along a straight, then crashed
+near the corner. It did this in **both** directions, and no amount of gain,
+setpoint or steering-limit tuning changed it. Every fix helped for a metre and
+then failed in the same place.
+
+**Why it resisted diagnosis.** Each failure looked like a control problem, so we
+kept tuning the controller. We re-derived gains, rescaled the setpoint, rewrote
+the corner logic and added an emergency override. The behaviour barely moved.
+That pattern - a controller that behaves well in one region and fails identically
+in another - should have pointed at the *input* much sooner than it did.
+
+**How we found it.** We stripped the program down to the bare control law (no
+emergency, no corner state machine, no lap counting) and made it **save an
+annotated frame whenever the steering exceeded 12 degrees**, drawing every pixel
+the code counted as "wall" in red. Looking at those frames answered the question
+immediately.
+
+**Root cause.** The wall detector was `value < 62` - *any* dark pixel. The blue
+corner line, the orange corner line and the mat's printed dotted markings are all
+dark, so **they were being counted as walls**. Worse, they were not spread evenly
+between the left and right halves of the image, so they injected a *steering
+bias* - and they only entered the frame near the corners. That is exactly why the
+fault appeared at corners, in both directions, and was immune to tuning: the
+controller was fine, its measurement was not.
+
+Measured on one failure frame, removing them changed the reading from
+`left 0.164 / right 0.256` to `left 0.072 / right 0.172` - the left inflated by
+2.3x and the right by 1.5x.
+
+**The fix, and a trap inside it.** The obvious repair is "a wall is dark AND
+desaturated, a coloured line is saturated". That alone **fails**: HSV saturation
+is numerically meaningless when brightness is near zero, so a genuinely black wall
+can report S > 200 from sensor noise. Tested on a nose-to-wall frame, a
+saturation-only rule discarded **99%** of a real wall. The rule that works needs
+both cases:
+
+```
+wall = (V < 32)                      very dark  -> wall regardless of saturation
+       or (V < 62 and S < 90)        dark AND desaturated
+followed by a morphological open to drop the small printed dots
+```
+
+**Consequence.** Every distance constant in the project had been calibrated
+against the faulty mask and was void. We re-measured from scratch, car parallel to
+the outer wall, gap measured car-side to wall-face:
+
+| Distance | Density |
+|---|---|
+| 40 cm | 0.1032 |
+| 25 cm | 0.1783 |
+
+giving 0.00501 density per cm. From that, every threshold became a real distance:
+driving line **40 cm**, emergency **18 cm**, full steering lock at **20 cm** of
+error - and, importantly, **22 cm of margin** between the driving line and the
+panic threshold, where the earlier (mis-calibrated) values had left only 13 cm and
+made the emergency fire almost continuously.
+
+**A related instrumentation bug.** The mat is a warm cream at hue ~17, saturation
+~42 - inside the orange range we had set. The orange mask was therefore matching
+**44% of the image with the car parked**, which would have locked the driving
+direction from a false reading on the very first frame. The real orange line
+measures hue 5-8 at saturation 86-94, so hue *and* saturation separate them:
+`H 2-13, S >= 72`. Parked, both line detectors now read 0.0000.
+
+**Result.** With the measurement corrected and the constants re-derived in
+centimetres, the car completed the Open Challenge **in both directions with stable
+control**.
+
+**Lesson.** When a controller fails identically in one specific place and resists
+every tuning change, stop tuning and go and *look* at what the sensor is
+reporting. An annotated frame answered in one glance what hours of parameter
+changes could not, because the fault was never in the control law.
+
+## 10. Software architecture
 
 We consolidated all hardware and vision logic into a single shared library
 (`src/robot.py`) imported by both challenge programs, so pins, the `servo()`/

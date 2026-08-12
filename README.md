@@ -584,8 +584,19 @@ tuning — is in **[`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md)**.
 
 ## 10. Results & future work
 
-**Results.** _(To fill: best Open lap time, Obstacle completion, parking success
-rate.)_
+**Open Challenge — complete.** The vehicle drives the full three laps and stops
+correctly **in both directions (clockwise and counter-clockwise)** with stable
+control, holding its line along the straights and taking the corners without
+contact.
+
+The decisive fix was not in the controller but in the perception: the wall
+detector had been counting the blue and orange corner lines, and the mat's printed
+markings, as walls - see [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md) §9.
+Once corrected, every distance constant was re-measured, so the control setpoints
+are now real distances (driving line 40 cm from the outer wall, emergency at
+18 cm, full steering lock at 20 cm of error) rather than tuned pixel fractions.
+
+_Obstacle Challenge: in progress._
 
 **Future work.**
 - Fit a small differential and raise `STEER_MAX` for tighter cornering.
