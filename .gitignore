@@ -16,3 +16,6 @@ camera_selftest.jpg
 # OS
 .DS_Store
 Thumbs.db
+
+# generated printable journal (rebuild with build_journal.py)
+Engineering-Journal.html

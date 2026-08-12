@@ -1,8 +1,29 @@
-# video
+# video — driving demonstration
 
-Add a public link to the driving demonstration video (YouTube / Google Drive):
+## Official requirement (WRO 2026 General Rules, §7)
 
-- **Open Challenge run:** <link>
-- **Obstacle Challenge run:** <link>
+> URL to YouTube (should be either public or accessible by link) showing the
+> vehicle driving autonomously. That part of the video where driving
+> demonstration exists, must be **at least 30 seconds** in length.
+> **One video for each challenge** must be provided.
 
-The video must show the vehicle completing the challenge autonomously in one take.
+| Requirement | Detail |
+|---|---|
+| Platform | **YouTube** (public, or unlisted/accessible by link) |
+| Length | the driving demonstration itself must be **≥ 30 seconds** |
+| Count | **two videos** — one for the Open Challenge, one for the Obstacle Challenge |
+| Content | the vehicle driving **autonomously** (no remote control, no human intervention) |
+
+## Our videos
+
+- **Open Challenge:** _<add YouTube URL>_
+- **Obstacle Challenge:** _<add YouTube URL>_
+
+## Filming checklist
+
+- [ ] Record the **full run** — from the start signal to the finish/park.
+- [ ] Keep at least **30 seconds of continuous driving** in frame.
+- [ ] Show the whole track so judges can see the vehicle stays inside the walls.
+- [ ] Make it obvious the run is autonomous (hands visible and away after the start).
+- [ ] Upload as **public or unlisted**, then paste the links above.
+- [ ] Verify the links open in a private/incognito window before submitting.

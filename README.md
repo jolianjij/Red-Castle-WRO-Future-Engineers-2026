@@ -66,7 +66,6 @@ handling, a clean park, and — importantly — **thorough engineering documenta
 | **Power** | 3 × 18650 (series) → motor driver directly; separate buck converter → Pi; common ground |
 | **Chassis** | 3D printed in **PLA+ Silk Silver** on a **Bambu Lab A1**, designed in **Fusion 360** |
 | **Software** | Python 3, OpenCV, Picamera2 |
-| **Reference** | Studied Team KyivRoboMagic (Ukraine, WRO 2024 International Final) |
 
 _Vehicle photos: [`v-photos/`](v-photos) · driving video: [`video/video.md`](video/video.md)_
 
