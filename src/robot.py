@@ -119,7 +119,12 @@ _DEFAULT_COLORS = {
                                             # (a warm cream). H<=13 and S>=72 are
                                             # what separate the line from the mat;
                                             # S<=170 keeps the red pillar out.
-    "green":   [45, 90, 120, 255, 60, 240],
+    "green":   [30, 95, 140, 255, 30, 170], # MEASURED. S>=140 is the key: the
+                                            # wall/mat boundary fringe sits at
+                                            # S96-111 and MERGED with the pillar
+                                            # below that, making one wide blob
+                                            # the "taller than wide" filter threw
+                                            # away. The mat itself is S~50.
     "red":     [170, 5, 150, 255, 60, 255], # MEASURED hue~178, S~252. High S
                                             # floor separates it from the line.
     "magenta": [130, 145, 177, 255, 93, 255],
