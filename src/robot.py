@@ -626,7 +626,8 @@ def _apply_bias(steer):
     return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
 
 
-def navigate(hsv, left, right, laps, follower, outer=None, turner=None):
+def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
+             front_close=False):
     """Return (steer_deg, mode_string) for this frame.
 
     Priority:
@@ -663,6 +664,13 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None):
         turner.update()
         if turner.active:
             return turner.steer(), "turn"
+        # SAFETY NET: the scripted turn normally fires on the corner LINE. If a
+        # line is ever missed the car would drive straight into the wall, so a
+        # very close wall AHEAD forces the turn anyway. Geometry is the backup,
+        # the line is the primary - the opposite of the old design.
+        if front_close and laps.direction != 0:
+            turner.trigger(laps.direction)
+            return turner.steer(), "turn-geom"
         return _apply_bias(outer.steer(left, right, laps.direction)), "outer"
 
     if laps.in_corner:

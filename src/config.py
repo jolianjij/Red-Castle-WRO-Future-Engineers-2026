@@ -112,6 +112,10 @@ OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
 # CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
 # Crossing the driving-direction line means we are physically at the corner, so
 # the turn timing is deterministic instead of depending on a front-wall fraction.
+FRONT_TURN_BACKUP = 0.45  # SAFETY NET for NAV_METHOD="outer": if the corner line
+                        # is ever missed, a front-wall fill this high forces the
+                        # turn anyway so the car cannot drive into the wall.
+                        # Set ABOVE FRONT_ENTER so the line stays the primary cue.
 TURN_DURATION_S = 1.1   # how long to hold full lock through a 90 deg corner
 TURN_LOCK_FRAC = 1.0    # fraction of STEER_MAX to use during the turn
 

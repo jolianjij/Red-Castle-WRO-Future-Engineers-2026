@@ -71,7 +71,10 @@ def main():
             # single dispatch point - honours NAV_METHOD ("gap" or "density")
             # a counted quadrant means we just crossed the corner line ->
             # fire the scripted turn (only used by NAV_METHOD == "outer")
-            steer, mode = R.navigate(hsv, left, right, laps, follower, outer, turner)
+            # geometry backup: a wall this close ahead forces a turn even if the
+            # corner line was missed entirely
+            steer, mode = R.navigate(hsv, left, right, laps, follower, outer,
+                                     turner, front > R.FRONT_TURN_BACKUP)
             speed = R.cruise_speed(CRUISE, steer)
             R.servo(steer)
             R.motor(speed)
