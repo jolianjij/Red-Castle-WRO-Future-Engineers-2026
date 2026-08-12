@@ -77,7 +77,8 @@ WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
 # WALL DENSITY METHOD  (KyivRoboMagic style - the proven fallback)
 # ==========================================================================
 WALL_TARGET = 0.14      # outer-wall fill when nicely positioned
-WALL_EMERGENCY = 0.28   # wall this close -> push away hard (was 0.34; lowered so
+WALL_EMERGENCY = 0.213  # ~18 cm from the wall (22 cm of margin below the 40 cm
+                        # driving line). Re-measured with the corrected mask.
                         # the escape begins before the car is already against it)
 CENTER_DEADBAND = 0.03  # ignore tiny left-right differences (anti-jitter)
 WALL_KP = 200.0         # MEASURED: left/right densities on this camera run
@@ -129,19 +130,19 @@ GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
 # Copying their gain does not transfer: it assumes our density responds to
 # distance the way theirs did, and it does not (different camera height/FOV).
 #
-# CALIBRATED on the field, car parallel to the outer wall:
-#     29 cm -> 0.2044      19 cm -> 0.2619
-#     slope  = 0.00575 density per cm closer
-# Choosing full lock at ~22 cm of deviation gives KP = 20 / (0.00575 * 22) ~= 160.
-#     KP=160 : 5 cm off -> 4.6 deg,  10 cm off -> 9.2 deg,  full lock at 21.7 cm
-# (KP=50, the "faithful" scaling of their 75, gives only 2.9 deg at 10 cm off and
-#  would need 70 cm of error to reach full lock - wider than the corridor.)
-OUTER_TARGET = 0.204    # MEASURED: this is the density at 29 cm from the outer
-                        # wall, the chosen driving line. Bigger = hug it closer.
-                        # (slope 0.00575/cm, so +0.0575 ~= 10 cm nearer.)
-OUTER_KP = 160.0        # from the calibration above, not from their number
-OUTER_KD = 45.0         # OUR IMPROVEMENT: they used pure P, which oscillates and
-                        # saturates. The derivative term damps the weave.
+# CALIBRATED with the CORRECTED wall mask (lines no longer counted as walls),
+# car parallel to the outer wall, gap measured car-side -> wall-face:
+#     40 cm -> 0.1032      25 cm -> 0.1783
+#     slope  = 0.00501 density per cm closer
+#     60cm=0.003  50cm=0.053  40cm=0.103  30cm=0.153  20cm=0.203  10cm=0.253
+# Earlier numbers (29cm->0.204) came from the OLD mask and are void.
+OUTER_TARGET = 0.1032   # the 40 cm driving line. Centred in the corridor is
+                        # ~45 cm, so this keeps real margin on the inner side.
+                        # +0.0050 on this number ~= 1 cm closer to the wall.
+OUTER_KP = 200.0        # 5 cm off -> 5 deg, 10 cm off -> 10 deg, full lock at
+                        # 20 cm of error. Gentle enough not to saturate on the
+                        # straights, firm enough to hold the line.
+OUTER_KD = 55.0         # damps the weave (they used pure P and it oscillated)
 OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
 
 # CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
