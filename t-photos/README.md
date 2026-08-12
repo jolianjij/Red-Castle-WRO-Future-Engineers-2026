@@ -2,24 +2,23 @@
 
 ## Team The Red Castle
 
-| Person | Role | Photo file to add |
+| Person | Role | File |
 |---|---|---|
-| **Ahmad Kalthom** | Coach | `ahmad-kalthom.jpg` |
-| **Jolian Wassof** | Team member | `jolian-wassof.jpg` |
-| **Omar Shammout** | Team member | `omar-shammout.jpg` |
-| **Louay Rashwan** | Team member | `louay-rashwan.jpg` |
+| **Ahmad Kalthom** | Coach | [`ahmad-kalthom.jpg`](ahmad-kalthom.jpg) |
+| **Jolian Wassof** | Team member | _pending — no individual photo yet_ |
+| **Omar Shammout** | Team member | [`omar-shammout.jpg`](omar-shammout.jpg) |
+| **Louay Rashwan** | Team member | [`louay-rashwan.jpg`](louay-rashwan.jpg) |
 
-These filenames are the ones referenced by the team table in the
-[main README](../README.md#12-team) — use them exactly and the photos appear
+These filenames are referenced by the team table in the
+[main README](../README.md#12-team) — matching names make the photos appear
 automatically.
 
-## Also required by WRO
+## Group photos
 
 | File | What it is |
 |---|---|
-| `team-official.jpg` | one **official** team photo (all members together) |
-| `team-fun.jpg` | one **fun / informal** team photo |
+| [`team-official.jpg`](team-official.jpg) | official team photo — all four members |
+| [`team-fun.jpg`](team-fun.jpg) | fun / informal photo (the team "testing" the field the hard way) |
 
-## Tips
-- Square-ish crops look best in the README table (roughly 1:1).
-- ~800–1200 px is plenty; keep each file under ~500 KB so the repo stays light.
+## Still needed
+- [ ] An individual photo of **Jolian Wassof** to complete the member set.

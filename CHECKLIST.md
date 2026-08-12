@@ -11,14 +11,14 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 
 ## 🔴 Mandatory for judging
 - [x] 📷 `v-photos/` — 6 vehicle photos (front, back, left, right, top, bottom)
-- [ ] 📷 `t-photos/` — 2 group photos (`team-official.jpg`, `team-fun.jpg`)
+- [x] 📷 `t-photos/` — 2 group photos (`team-official.jpg`, `team-fun.jpg`)
 - [ ] 🎥 `video/video.md` — driving video links (Open + Obstacle, one take each)
 - [x] 🖼️ `schemes/` — wiring diagram image (Pi ↔ L9110S ↔ servo ↔ power, common ground)
 - [ ] 🧩 `models/3d-parts/` — full Fusion 360 robot assembly + part files
 - [ ] 🧩 `models/printing/` — STL files + sliced plates with print settings
 - [x] ✍️ Team names + roles in `README.md`
-- [ ] 📷 Member photos → `t-photos/` (ahmad-kalthom.jpg, jolian-wassof.jpg, omar-shammout.jpg, louay-rashwan.jpg)
-- [ ] ✍️ Bio + email for each member (placeholders are in README §12)
+- [x] 📷 Member photos → Ahmad, Omar, Louay done — **Jolian's individual photo still missing**
+- [x] ✍️ Bio + email for each member — filled in README §12
 
 ## 🟡 Recommended (higher documentation score)
 - [ ] 🤖 Wiring pin-table / ASCII schematic in `schemes/` (text backup to the image)
@@ -42,4 +42,4 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [x] ~~Steering servo model~~ — SG90
 - [x] ~~Drive motor model/voltage~~ — N20, 12 V, 200 rpm
 - [ ] Wheel diameter, wheelbase, track, mass, max speed
-- [ ] Each member's bio + email
+- [x] ~~Each member's bio + email~~ — done

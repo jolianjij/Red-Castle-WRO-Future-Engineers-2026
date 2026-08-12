@@ -193,7 +193,7 @@ PARK_KP = 90.0
 NAV_METHOD = "gap"      # "gap"     = free-space follow-the-gap (method B)
                         # "density" = KyivRoboMagic wall-density (proven fallback)
 
-FORCE_DIRECTION = 0     # 0 = decide automatically (first line, else first corner)
+FORCE_DIRECTION = 1     # FORCED CLOCKWISE for this run (set back to 0 for auto)
                         # +1 = force clockwise, -1 = force counter-clockwise
                         # Use this if the judges tell you the run direction.
 

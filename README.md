@@ -636,26 +636,44 @@ other/                     # BOM, rulebook, misc
 </table>
 
 ### Ahmad Kalthom — Coach
-> _Bio: _
+> Computer and Automation Engineering student at Damascus University, interested
+> in embedded systems and automatic control. Works on applied projects to design
+> effective automation solutions within a competitive environment.
 
-📧 _email: _
+**Education:** Computer and Automation Engineering, Damascus University
+**Focus areas:** Embedded Systems, Automatic Control
+📧 _email not provided_
 
 ### Jolian Wassof — Team member
-> _Bio: _
+> Student at Al-Awael School, interested in artificial intelligence, robotics,
+> drones, and engineering. Has competed in the Pacific Olympiad in AI, the Syrian
+> Olympiad in AI, and the World Robot Olympiad, as well as mobile robotics and
+> unmanned aerial systems competitions. Has built several AI-based robots and
+> drones, and conducts research in AI.
 
-📧 _email: _
+**Education:** Al-Awael School
+**Focus areas:** Artificial Intelligence, Robotics, Drones
+📧 joleanwassof@gmail.com
 
 ### Omar Shammout — Team member
-> _Bio: _
+> IT Engineering student at Damascus University, interested in robotics,
+> artificial intelligence, programming, and electronics. Participates in
+> technical activities and projects to develop skills in designing and building
+> innovative solutions within a competitive environment.
 
-📧 _email: _
+**Education:** IT Engineering, Damascus University
+**Focus areas:** Robotics, Artificial Intelligence, Programming, Electronics
+📧 omarhamze.shammout@gmail.com
 
 ### Louay Rashwan — Team member
-> _Bio: _
+> Computer and Automation Engineering student at Damascus University, interested
+> in robotics, artificial intelligence, and electronics. Participates in
+> technical activities and projects to develop skills in designing and building
+> innovative solutions within a competitive environment.
 
-📧 _email: _
-
-<sub>Photos go in [`t-photos/`](t-photos) using the filenames referenced above.</sub>
+**Education:** Computer and Automation Engineering, Damascus University
+**Focus areas:** Robotics, Artificial Intelligence, Electronics
+📧 rashwanlouay@gmail.com
 
 Built on a Raspberry Pi 4 with an OV5647 wide-angle camera. Reference study: Team
 KyivRoboMagic (Ukraine, WRO 2024).
