@@ -79,11 +79,9 @@ def main():
                 print(f"t={t_ms:5d}ms dir={laps.direction:+d} quad={laps.quadrant:2d} "
                       f"{mode:12s} L={left:.2f} R={right:.2f} steer={steer:+.0f}")
 
-            # 3 laps done -> coast a moment then stop
-            if laps.quadrant >= 12 and finish_at is None:
-                finish_at = n + FINISH_EXTRA_CYCLES
-            if finish_at is not None and n >= finish_at:
-                reason = "3 laps complete"
+            # finish: STOP_AFTER_QUADRANT counted AND the lap timer expired
+            if laps.ready_to_finish():
+                reason = f"{laps.quadrant} quadrants + lap timer expired"
                 break
             # safety timeout
             if time.time() - t0 > MAX_RUNTIME_S:

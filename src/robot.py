@@ -113,7 +113,8 @@ _K = np.ones((3, 3), np.uint8)
 _DEFAULT_COLORS = {
     "black":   [0, 179, 0, 255, 0, 70],
     "blue":    [90, 135, 60, 255, 70, 200],
-    "orange":  [0, 30, 60, 255, 125, 240],
+    "orange":  [8, 25, 45, 255, 70, 255],   # H clear of red(0-10); low S/V
+                                            # floors - this scene peaks at S=109
     "green":   [45, 90, 120, 255, 60, 240],
     "red":     [170, 10, 120, 255, 60, 240],
     "magenta": [130, 145, 177, 255, 93, 255],
@@ -464,6 +465,13 @@ class LapTracker:
                 f" | corners={self.quadrant} (geom {self.corners_geom}, line {self.corners_line})"
                 f" | line reads: blue={self.blue_reads} orange={self.orange_reads}"
                 f" | disagreements={self.disagreements}")
+
+    def ready_to_finish(self):
+        """True once STOP_AFTER_QUADRANT quadrants are counted AND the lap timer
+        has run out - i.e. the car has driven on past the last counted line."""
+        if self.quadrant < STOP_AFTER_QUADRANT:
+            return False
+        return (time.monotonic() - self._last_count_t) >= LAP_COUNT_LOCKOUT_S
 
     def stalled(self):
         """True if no quadrant has been counted for suspiciously long."""

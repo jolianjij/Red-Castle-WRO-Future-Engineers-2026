@@ -61,7 +61,8 @@ BLUR_KSIZE = 5          # median blur before HSV (0/1 = off) - kills sensor nois
 # WALL DENSITY METHOD  (KyivRoboMagic style - the proven fallback)
 # ==========================================================================
 WALL_TARGET = 0.14      # outer-wall fill when nicely positioned
-WALL_EMERGENCY = 0.34   # wall this close -> push away hard
+WALL_EMERGENCY = 0.28   # wall this close -> push away hard (was 0.34; lowered so
+                        # the escape begins before the car is already against it)
 CENTER_DEADBAND = 0.03  # ignore tiny left-right differences (anti-jitter)
 WALL_KP = 200.0         # MEASURED: left/right densities on this camera run
 WALL_KD = 50.0          # 0.03-0.09, not the ~0.5 the old gains assumed, so the
@@ -102,7 +103,10 @@ FRONT_COLS = 0.40       # centre fraction of width treated as "ahead"
 FRONT_ROWS = 0.55       # upper fraction of ROI treated as "ahead"
 # MEASURED front values head-on to a wall: 0.15 far, 0.40 at 40 cm, 0.54 at 25 cm.
 # 'front' separates distance far better than left+right, so corner detection uses it.
-FRONT_ENTER = 0.38      # front fill this high -> a corner is here (fires ~40 cm out)
+FRONT_ENTER = 0.30      # front fill this high -> a corner is here.
+                        # 0.38 fired at ~40 cm which was too late at full speed -
+                        # the car reached the wall before the turn developed.
+                        # 0.30 fires further out (~55-60 cm) so the turn starts early.
 FRONT_EXIT = 0.20       # front cleared below this -> corner finished
 CORNER_TOTAL = 0.55     # left+right fill meaning a wall is AHEAD (density method)
 
@@ -123,7 +127,12 @@ LAP_COUNT_LOCKOUT_S = 2.5
 CORNER_MAX_INTERVAL_S = 25.0   # if no corner for this long, something is wrong
                                # (logged as a warning, does not stop the run)
 
-QUADRANTS_PER_RUN = 12  # 12 corners = 3 laps
+QUADRANTS_PER_RUN = 12  # 12 corners = 3 laps (reference)
+
+# STOP RULE: finish after this many counted quadrants AND once the lap timer has
+# expired - so the car keeps driving through the last segment and comes to rest
+# in the start/finish section instead of halting on the line itself.
+STOP_AFTER_QUADRANT = 11
 FINISH_EXTRA_CYCLES = 60   # keep driving briefly after the last corner
 MAX_RUNTIME_S = 90      # SAFETY: hard stop after this long
 
