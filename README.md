@@ -114,10 +114,14 @@ Early on, the Pi rebooted every time the motor drew current. The fix defines our
 power design and is now standard on the car:
 
 ```
-Battery + ─┬─────────────────────────► L9110S VCC   (motor power, direct)
-           └─► 5V / ≥3A regulator ────► Raspberry Pi 5V
+3 x 18650 (series) ─┬──────────────────────► L9110S VCC   (motor power, direct)
+   via rocker switch└─► DC-DC buck (5 V) ───► Raspberry Pi 5V
 Battery − ──── common ground ── L9110S GND ── Pi GND
 ```
+
+![Wiring diagram](schemes/wiring-diagram.png)
+
+_Full wiring notes: [`schemes/`](schemes)._
 
 1. **Separate rails** — the motor draws straight from the battery; the Pi has its
    **own regulator**. Motor current spikes never pass through the Pi's supply.
@@ -137,6 +141,10 @@ The OV5647 is a **small-sensor, fixed-focus** module, so its depth of field cove
 the whole track — near mat and far walls are sharp simultaneously — and there is
 no autofocus to hunt mid-run. Losing autofocus cost us nothing; a ground robot
 never needs to refocus.
+
+**Connection.** The camera uses the Pi's dedicated **CSI port** via a flat ribbon
+cable — it takes no GPIO pin and needs no separate power, which is why it does not
+appear on the wiring diagram.
 
 **Mount.** **12.5 cm above the mat**, tilted **~15° downward**, centred laterally
 and facing straight ahead on a rigid mast. It is physically mounted
