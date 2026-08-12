@@ -528,6 +528,11 @@ def cruise_speed(base, steer):
 # One place decides how the car steers, so both challenges behave identically
 # and NAV_METHOD in config.py actually switches the strategy.
 # --------------------------------------------------------------------------
+def _apply_bias(steer):
+    """Add the drift trim and re-clamp. Applied to every driving command."""
+    return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
+
+
 def navigate(hsv, left, right, laps, follower):
     """Return (steer_deg, mode_string) for this frame.
 
@@ -547,7 +552,7 @@ def navigate(hsv, left, right, laps, follower):
             push += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.12)
         if right > WALL_EMERGENCY:
             push -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.12)
-        return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
+        return _apply_bias(push), "emergency"
 
     if laps.in_corner:
         bias = laps.turn_bias()
@@ -555,18 +560,18 @@ def navigate(hsv, left, right, laps, follower):
             # direction is not fixed yet (no line crossed). Do NOT go straight
             # into the wall - turn toward whichever side has more free space.
             bias = STEER_MAX * (-1.0 if left < right else 1.0)
-            return bias, "corner-nodir"
-        return bias, "corner"
+            return _apply_bias(bias), "corner-nodir"
+        return _apply_bias(bias), "corner"
 
     if NAV_METHOD == "gap":
         free = freespace_profile(hsv)
         gap = find_gap(free)
         if gap is not None and free.max() >= GAP_BLOCKED_FRAC * PROC_H:
             cx, width, best = gap
-            return gap_steer(cx), "gap"
+            return _apply_bias(gap_steer(cx)), "gap"
         # blocked or nothing drivable -> commit to the known turn direction
         if laps.direction != 0:
-            return laps.turn_bias(), "blocked"
-        return follower.steer(left, right, laps.direction), "blocked-nodir"
+            return _apply_bias(laps.turn_bias()), "blocked"
+        return _apply_bias(follower.steer(left, right, laps.direction)), "blocked-nodir"
 
-    return follower.steer(left, right, laps.direction), "wall"
+    return _apply_bias(follower.steer(left, right, laps.direction)), "wall"

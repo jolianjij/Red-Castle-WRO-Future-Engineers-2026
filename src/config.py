@@ -30,6 +30,17 @@ STEER_MAX = 35          # deg - max steering deviation from centre.
 SERVO_MIN_DUTY = 2.5    # duty at 0 deg
 SERVO_MAX_DUTY = 12.5   # duty at 180 deg
 
+# DRIFT TRIM - added to every DRIVING steering command (not to servo() itself,
+# so centring the wheels at shutdown still centres them).
+#   NEGATIVE = push LEFT      POSITIVE = push RIGHT
+# MEASURED: across four runs the car always sat closer to the RIGHT wall
+# (right density 0.094/0.027/0.062/0.162 vs left 0.027/0.017/0.023/0.018) even
+# though the controller was already commanding LEFT on average. Steering
+# direction and centre were verified correct by hand, so this is a residual
+# mechanical/alignment pull. Make it MORE negative if it still drifts right,
+# less negative (toward 0) if it now hugs the left wall.
+STEER_BIAS = -4.0
+
 # ==========================================================================
 # SPEEDS
 # ==========================================================================
