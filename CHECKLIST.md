@@ -26,7 +26,8 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [ ] 🤖 Engineering journal (design process: brownout fix, no-diff steering, focus/exposure)
 - [x] 🤖 BOM: battery (3×18650), buck converter, SG90 servo confirmed from the wiring diagram
 - [x] 🤖 BOM: N20 motor (12 V 200 rpm), differential, 25:20 gears, PLA+ Silk Silver / Bambu A1 / Fusion 360, Pi 2 GB
-- [ ] 📏 Measurements: mass, max speed, wheel diameter, wheelbase, track, camera height/tilt
+- [x] 📏 Measurements: mass (407g), wheel diameter (4.7cm), wheelbase (9.4cm), track (8.5cm), dimensions (14.2x9.3x15cm), camera height/tilt confirmed
+- [ ] 📏 Measured (timed) real max speed — theoretical 0.39 m/s is in the docs as a placeholder
 - [ ] 🤖 BOM: total cost
 - [ ] 🤖 Commit reference `colors.json` + `servo_center.txt` (pull from Pi once tuning is final)
 
@@ -41,5 +42,6 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [x] ~~Battery voltage & type~~ — 3×18650 in series
 - [x] ~~Steering servo model~~ — SG90
 - [x] ~~Drive motor model/voltage~~ — N20, 12 V, 200 rpm
-- [ ] Wheel diameter, wheelbase, track, mass, max speed
+- [x] ~~Wheel diameter, wheelbase, track, mass~~ — done
+- [ ] Real measured max speed (timed run)
 - [x] ~~Each member's bio + email~~ — done

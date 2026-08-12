@@ -76,14 +76,18 @@ _Vehicle photos: [`v-photos/`](v-photos) · driving video: [`video/video.md`](vi
 | Drive motor | N20 gear motor, 12 V, 200 rpm |
 | Transmission | 25:20 spur pair (1.25:1) → differential, rear axle |
 | Steering | Ackermann, ±35° max |
-| Camera height / tilt | 12.5 cm above the mat / ~15° down _(to re-confirm)_ |
-| Mass | _to measure_ |
-| Max speed | _to measure_ |
-| Wheel diameter | _to measure_ |
-| Wheelbase (front↔rear) | _to measure_ |
-| Track (rear wheel↔wheel) | _to measure_ |
+| Camera height / tilt | 12.5 cm above the mat / ~15° down |
+| Mass | **407 g** |
+| Theoretical top speed | **≈ 0.39 m/s** (39 cm/s), no-load — see §3.4 |
+| Wheel diameter | **4.7 cm** |
+| Wheelbase (front axle ↔ rear axle) | **9.4 cm** |
+| Track (rear wheel centre ↔ centre) | **8.5 cm** |
+| Overall dimensions (L × W × H) | **14.2 × 9.3 × 15 cm** |
 | Print material | PLA+ Silk Silver |
 | Printer / CAD | Bambu Lab A1 / Fusion 360 |
+
+_Measured max speed on the mat is still to be timed — the figure above is the
+motor's theoretical no-load ceiling (§3.4)._
 
 ## 3. Mobility management
 
@@ -158,15 +162,16 @@ Differential axle  200 / 1.25 = 160 rpm
 Ground speed       v = π · D · 160 / 60   (D = wheel diameter in m)
 ```
 
-| Wheel Ø | Axle speed | Theoretical top speed |
-|---|---|---|
-| 50 mm | 160 rpm | ≈ 0.42 m/s |
-| 60 mm | 160 rpm | ≈ 0.50 m/s |
-| 70 mm | 160 rpm | ≈ 0.59 m/s |
+With our **measured wheel diameter (4.7 cm)**:
 
-_(Our measured wheel diameter and real top speed go in the specifications table
-above; the theoretical figure is the no-load ceiling — the real value is lower
-under load.)_
+```
+v = π × 0.047 m × 160 rpm / 60 = 0.394 m/s  ≈ 39 cm/s  (no-load ceiling)
+```
+
+That is the motor's theoretical maximum with nothing slowing it down. The real
+figure is lower once tyre friction, the differential, and the car's 407 g mass are
+accounted for — a timed run over a measured distance is a pending test, and the
+result will replace this estimate in the specifications table above.
 
 **Why gear down at all?** The 1.25:1 reduction trades ~20 % of top speed for
 ~25 % more torque at the axle (torque scales with the reduction, speed inversely).
@@ -186,11 +191,15 @@ score — the challenge rewards *completing* laps cleanly, not raw speed. The
 software also **reduces speed in proportion to steering effort**
 (`cruise_speed()`), so the car is fastest exactly where it is safest: on straights.
 
-**Mechanical stability.** Mass is kept low and central (battery and Pi over the
-wheelbase), the camera sits on a rigid mast rather than a flexible arm, and the
-Ackermann geometry means the wheels roll rather than scrub through a corner. A
-vibrating camera would corrupt the wall measurements, so mast rigidity is a
-control requirement, not a cosmetic one.
+**Mechanical stability.** At **407 g** total mass on a **14.2 × 9.3 × 15 cm**
+footprint, the car is light and compact enough that keeping mass low and central
+matters for cornering grip — the battery and Pi sit over the **9.4 cm wheelbase**,
+between the front and rear axles, rather than overhanging either end. The **8.5 cm**
+rear track keeps the wheelbase-to-track ratio close to 1:1, which is a stable
+proportion for cornering without tipping risk. The camera sits on a rigid mast
+rather than a flexible arm, and the Ackermann geometry means the wheels roll
+rather than scrub through a corner. A vibrating camera would corrupt the wall
+measurements, so mast rigidity is a control requirement, not a cosmetic one.
 
 ## 4. Power & sense management
 
