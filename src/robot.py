@@ -441,4 +441,36 @@ def pillar_steer(color, cx, cy_base, kp=90.0):
 
 def cruise_speed(base, steer):
     """Slow down in proportion to steering effort (fast on straights)."""
-    return base * (1.0 - 0.5 * min(1.0, abs(steer) / STEER_MAX))
+    return max(MIN_SPEED, base * (1.0 - SPEED_CORNER_CUT * min(1.0, abs(steer) / STEER_MAX)))
+
+
+# --------------------------------------------------------------------------
+# NAVIGATION DISPATCH
+# One place decides how the car steers, so both challenges behave identically
+# and NAV_METHOD in config.py actually switches the strategy.
+# --------------------------------------------------------------------------
+def navigate(hsv, left, right, laps, follower):
+    """Return (steer_deg, mode_string) for this frame.
+
+    Priority:
+      1. in a corner        -> commit to the locked turn direction
+      2. NAV_METHOD == gap  -> follow-the-gap on the free-space profile
+                               (falls back to the density controller if the way
+                               ahead is blocked or no gap is drivable)
+      3. otherwise          -> PD wall-density controller (proven fallback)
+    """
+    if laps.in_corner:
+        return laps.turn_bias(), "corner"
+
+    if NAV_METHOD == "gap":
+        free = freespace_profile(hsv)
+        gap = find_gap(free)
+        if gap is not None and free.max() >= GAP_BLOCKED_FRAC * PROC_H:
+            cx, width, best = gap
+            return gap_steer(cx), "gap"
+        # blocked or nothing drivable -> commit to the known turn direction
+        if laps.direction != 0:
+            return laps.turn_bias(), "blocked"
+        return follower.steer(left, right, laps.direction), "blocked-nodir"
+
+    return follower.steer(left, right, laps.direction), "wall"

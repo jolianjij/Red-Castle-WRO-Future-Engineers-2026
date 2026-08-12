@@ -39,9 +39,10 @@ def main():
     logpath = time.strftime("logs/open_%Y%m%d_%H%M%S.csv")
     logf = open(logpath, "w", newline="")
     log = csv.writer(logf)
-    log.writerow(["t_ms", "cycle", "dir", "quad", "corner",
+    log.writerow(["t_ms", "cycle", "dir", "quad", "corner", "mode",
                   "left", "right", "blue", "orange", "steer", "speed"])
-    print(f"config: CRUISE={CRUISE} STEER_MAX={R.STEER_MAX} trim={R.SERVO_CENTER_TRIM}")
+    print(f"config: NAV_METHOD={R.NAV_METHOD} CRUISE={CRUISE} "
+          f"STEER_MAX={R.STEER_MAX} trim={R.SERVO_CENTER_TRIM}")
     print(f"colors loaded: {list(R.COLORS.keys())}")
     print(f"logging -> {logpath}")
 
@@ -60,25 +61,21 @@ def main():
             blue, orange = R.line_counts(hsv)
             laps.update(blue, orange, left, right)
 
-            if laps.in_corner:
-                # inside a corner: commit to the locked turn direction
-                steer = laps.turn_bias()
-            else:
-                steer = follower.steer(left, right, laps.direction)
+            # single dispatch point - honours NAV_METHOD ("gap" or "density")
+            steer, mode = R.navigate(hsv, left, right, laps, follower)
             speed = R.cruise_speed(CRUISE, steer)
             R.servo(steer)
             R.motor(speed)
 
             t_ms = int((time.time() - t0) * 1000)
-            log.writerow([t_ms, n, laps.direction, laps.quadrant, int(laps.in_corner),
+            log.writerow([t_ms, n, laps.direction, laps.quadrant, int(laps.in_corner), mode,
                           f"{left:.3f}", f"{right:.3f}", f"{blue:.3f}", f"{orange:.3f}",
                           f"{steer:.1f}", f"{speed:.0f}"])
 
             if DEBUG and n % 15 == 0:
                 logf.flush()
                 print(f"t={t_ms:5d}ms dir={laps.direction:+d} quad={laps.quadrant:2d} "
-                      f"{'CORNER' if laps.in_corner else '      '} "
-                      f"L={left:.2f} R={right:.2f} steer={steer:+.0f}")
+                      f"{mode:12s} L={left:.2f} R={right:.2f} steer={steer:+.0f}")
 
             # 3 laps done -> coast a moment then stop
             if laps.quadrant >= 12 and finish_at is None:
