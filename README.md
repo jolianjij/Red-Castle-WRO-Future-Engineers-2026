@@ -25,6 +25,10 @@ encoders, no IMU.
 3. [Mobility management](#3-mobility-management)
 4. [Power & sense management](#4-power--sense-management)
 5. [Software & obstacle management](#5-software--obstacle-management)
+   · [flowchart](#51b-control-loop-flowchart) · [state machine](#51c-obstacle-challenge-state-machine)
+   · [subsystem map](#56-how-the-subsystems-fit-together)
+   · [testing & metrics](#57-testing-tuning-and-validation)
+   · [risks](#58-risks-and-mitigations)
 6. [Calibration workflow](#6-calibration-workflow)
 7. [Build & run](#7-build--run)
 8. [Bill of materials & cost](#8-bill-of-materials--cost)
@@ -140,6 +144,55 @@ tiny size and simple two-pin-per-motor interface.
 > the motor's back-EMF onto the supply and can destroy the Pi's regulator — we
 > learned this the hard way (see the journal).
 
+### 3.4 Torque and speed reasoning
+
+The drivetrain was sized around one question: **how fast can the car go while the
+vision loop still has time to react?**
+
+**Speed chain**
+
+```
+N20 motor          200 rpm  @ 12 V (no load)
+  ↓ 25:20 spur pair (1.25:1 reduction)
+Differential axle  200 / 1.25 = 160 rpm
+  ↓ wheel circumference
+Ground speed       v = π · D · 160 / 60   (D = wheel diameter in m)
+```
+
+| Wheel Ø | Axle speed | Theoretical top speed |
+|---|---|---|
+| 50 mm | 160 rpm | ≈ 0.42 m/s |
+| 60 mm | 160 rpm | ≈ 0.50 m/s |
+| 70 mm | 160 rpm | ≈ 0.59 m/s |
+
+_(Our measured wheel diameter and real top speed go in the specifications table
+above; the theoretical figure is the no-load ceiling — the real value is lower
+under load.)_
+
+**Why gear down at all?** The 1.25:1 reduction trades ~20 % of top speed for
+~25 % more torque at the axle (torque scales with the reduction, speed inversely).
+That matters because:
+
+- The car must **pull away from rest** repeatedly and climb over the mat seam
+  without stalling. Our earlier drivetrain *did* stall — see the journal.
+- The L9110S wastes ~1.5–1.8 V, so the motor never sees the full pack voltage;
+  extra mechanical advantage compensates for the lost electrical headroom.
+- More torque means the controller can use **lower duty cycles** for the same
+  motion, which keeps current (and driver heating) down.
+
+**Why not faster?** The vision loop runs at a finite frame rate. At ~0.5 m/s the
+car covers ~2–3 cm per frame, so a wall or sign is seen many frames before it
+matters. Doubling the speed would halve that reaction margin without improving the
+score — the challenge rewards *completing* laps cleanly, not raw speed. The
+software also **reduces speed in proportion to steering effort**
+(`cruise_speed()`), so the car is fastest exactly where it is safest: on straights.
+
+**Mechanical stability.** Mass is kept low and central (battery and Pi over the
+wheelbase), the camera sits on a rigid mast rather than a flexible arm, and the
+Ackermann geometry means the wheels roll rather than scrub through a corner. A
+vibrating camera would corrupt the wall measurements, so mast rigidity is a
+control requirement, not a cosmetic one.
+
 ## 4. Power & sense management
 
 ### 4.1 Power topology
@@ -163,7 +216,43 @@ _Full wiring notes: [`schemes/`](schemes)._
    and driver is the signal wire, and motor return current back-feeds the GPIO pin
    — which browns out or damages the Pi.)
 
-### 4.2 Sensing — the camera
+### 4.2 Power budget
+
+Sizing the pack: what draws current, how much, and for how long.
+
+| Load | Rail | Typical | Peak | Notes |
+|---|---|---|---|---|
+| Raspberry Pi 4 (2 GB) | 5 V (buck) | ~0.6 A | ~1.2 A | rises while the vision loop runs |
+| OV5647 camera | 3.3 V via CSI | ~0.25 A | ~0.25 A | powered by the Pi, no separate rail |
+| SG90 steering servo | 5 V (buck) | ~0.15 A | ~0.7 A | peak only during a fast steering step |
+| N20 drive motor | 12 V (battery) | ~0.15 A | ~0.8 A | limited by the L9110S's ~0.8 A ceiling |
+| L9110S quiescent | 12 V | ~0.01 A | — | negligible |
+
+**Reasoning**
+
+- **Pi rail:** 0.6 + 0.25 + 0.15 ≈ **1.0 A typical**, ~2.1 A worst case if the Pi
+  peaks while the servo slams. The buck converter is specified at **≥ 3 A**, giving
+  roughly 40 % headroom over the worst case — deliberately generous, because
+  under-sizing this rail is what caused our early brownouts.
+- **Motor rail:** the motor is fed **straight from the pack**, so its spikes never
+  touch the Pi's rail. This separation is the single most important power decision
+  on the car (§4.1).
+- **Runtime:** 3 × 18650 in series keeps the *capacity* of one cell (~2500–3000 mAh)
+  while tripling voltage. The 12 V side draws ~0.15 A average; the 5 V side draws
+  ~1.0 A but the buck converter steps *down*, so the current it pulls from the 11 V
+  pack is roughly `1.0 A × 5 V / 11 V / 0.85 ≈ 0.53 A`. Total ≈ **0.7 A**, giving on
+  the order of **3–4 hours** of running — far beyond the few minutes a run needs.
+  Practice sessions, not runtime, drain the pack.
+- **Failure points considered:** motor stall (bounded by the L9110S current limit),
+  reverse back-EMF (handled in software by a forced coast before any direction
+  change), pack sag under load (why the rails are separated), and the fact that a
+  freshly charged 12.6 V pack sits marginally above the L9110S's 12 V rating — a
+  known watch-item logged in [`schemes/`](schemes).
+
+_These are datasheet/typical figures used for sizing; a clamp-meter measurement of
+the real draw is a pending task._
+
+### 4.3 Sensing — the camera
 The camera is the entire perception system, so most of our tuning went here.
 
 **Sensor choice.** We began with a Raspberry Pi Camera Module 3 Wide (IMX708) but
@@ -179,9 +268,27 @@ never needs to refocus.
 cable — it takes no GPIO pin and needs no separate power, which is why it does not
 appear on the wiring diagram.
 
-**Mount.** **12.5 cm above the mat**, tilted **~15° downward**, centred laterally
-and facing straight ahead on a rigid mast. It is physically mounted
-**upside-down**, so frames are rotated 180° in software.
+**Mount — justified by field geometry.** **12.5 cm above the mat**, tilted **~15°
+downward**, centred laterally and facing straight ahead on a rigid mast. It is
+physically mounted **upside-down**, so frames are rotated 180° in software.
+
+Each number follows from the field itself:
+
+| Choice | Driven by | Reasoning |
+|---|---|---|
+| **Height 12.5 cm** | walls are **10 cm** tall | The lens must sit **above the wall line** so the camera looks *down onto* the mat and sees the wall **base** — the white-mat/black-wall edge, the highest-contrast feature available. Below 10 cm the walls would fill the frame as a flat black band with no distance information. |
+| **Not much higher** | depth resolution vs clutter | Raising the camera improves distance precision by only ~30 % at long range while showing more of the room *over* the walls. Not worth the extra clutter and mast flex — analysed in the journal. |
+| **Tilt ~15° down** | track width & look-ahead | Enough downward angle to keep the mat and both wall bases in the lower frame, while still seeing far enough ahead to detect a corner and a traffic sign before reaching them. |
+| **Centred, zero yaw** | left/right symmetry | Wall following compares the **left half against the right half** of the image. Any lateral offset or twist becomes a permanent steering bias that no amount of tuning removes. |
+| **120° wide lens** | corridor width | A narrow lens cannot see **both** side walls at once in the corridor; the wide lens keeps both walls and the corner lines in a single frame. |
+| **Rigid mast** | measurement noise | Vibration blurs the wall edge and injects noise straight into the steering loop, so mast stiffness is a control requirement, not cosmetic. |
+
+**Calibration method.** Colour thresholds are field-calibrated, never hard-coded:
+`tools/camera_tune.py` first fixes the *image* (exposure, gain, white balance,
+saturation) and writes `camera_settings.json`; `tools/color_tuner.py` then samples
+each real object on the real mat and writes `colors.json`. Steering centre is
+calibrated by `tools/servo_center.py` into `servo_center.txt`. The car reads all
+three files at start-up, so re-calibrating never means editing code.
 
 **Locked settings** (`src/camera.py`), chosen from on-field capture tests:
 
@@ -223,6 +330,69 @@ the challenge code. Six colours are thresholded from `colors.json` (produced by
 - **green / red** → traffic signs
 - **magenta** → parking lot
 
+### 5.1b Control-loop flowchart
+
+Every frame runs the same loop. The only difference between challenges is which
+decision block sits in the middle.
+
+```mermaid
+flowchart TD
+    A([Start / button]) --> B[Capture frame<br/>OV5647, 180 deg flip]
+    B --> C[Crop mat ROI<br/>resize 320x160, median blur]
+    C --> D[Convert to HSV]
+    D --> E[Segment: walls, lines, signs]
+    E --> F[Measure: left/right wall,<br/>front wall, free-space profile]
+    F --> G{Corner ahead?<br/>front &gt; FRONT_ENTER}
+    G -- yes --> H[Lock direction on 1st corner<br/>count quadrant<br/>commit turn]
+    G -- no --> I[Steering decision<br/>see state machine]
+    H --> J[Clamp to STEER_MAX<br/>set servo]
+    I --> J
+    J --> K[Scale speed by steering effort<br/>set motor]
+    K --> L[Log row to CSV]
+    L --> M{12 quadrants<br/>or timeout?}
+    M -- no --> B
+    M -- yes --> N([Stop: motor 0, servo centre])
+```
+
+### 5.1c Obstacle Challenge state machine
+
+Steering is decided by a strict **priority**, so a lower-priority behaviour can
+never override safety. The rationale for each level is in the right-hand column.
+
+```mermaid
+stateDiagram-v2
+    [*] --> WALL_FOLLOW
+    WALL_FOLLOW --> WALL_EMERGENCY: wall closer than WALL_EMERGENCY
+    WALL_EMERGENCY --> WALL_FOLLOW: wall cleared
+    WALL_FOLLOW --> PASS_SIGN: red/green sign detected
+    PASS_SIGN --> WALL_EMERGENCY: wall too close while passing
+    PASS_SIGN --> WALL_FOLLOW: sign cleared
+    WALL_FOLLOW --> CORNER: front wall detected
+    CORNER --> WALL_FOLLOW: corner completed (quadrant++)
+    WALL_FOLLOW --> PARK: 12 quadrants reached
+    PARK --> [*]: magenta area > PARK_STOP_AREA
+```
+
+| Priority | State | Why it sits at this level |
+|---|---|---|
+| 1 (highest) | `WALL_EMERGENCY` | Touching a wall ends the run. Nothing may override it — not even an obstacle manoeuvre. |
+| 2 | `PARK` | Once 3 laps are done the mission goal changes; parking outranks ordinary navigation. |
+| 3 | `PASS_SIGN` | Sign obedience scores points, so it outranks plain lane keeping — but never safety. |
+| 4 | `CORNER` | A committed turn, entered from wall geometry rather than colour (colour proved unreliable). |
+| 5 (lowest) | `WALL_FOLLOW` | The default behaviour when nothing else applies. |
+
+**Edge cases handled explicitly**
+- *Corner counted twice in consecutive frames* → a **time guard**
+  (`CORNER_MIN_INTERVAL_S`) plus a cycle debounce; a physical corner cannot recur
+  within ~1.2 s.
+- *Direction flip mid-run* → direction is **locked once** and never re-decided.
+  Before the lock it can come from a corner line; after, never.
+- *Colour line never detected* → the first corner's **geometry** decides direction,
+  so the run does not depend on colour at all.
+- *Sign lost for a frame* → `PILLAR_MEMORY_CYCLES` keeps the manoeuvre committed.
+- *Robot stuck facing a wall* → `MAX_CORNER_CYCLES` forces the corner to complete.
+- *Anything unexpected* → `MAX_RUNTIME_S` stops the car safely.
+
 ### 5.2 Open Challenge algorithm
 1. **Wall-follow** the continuous *outer* wall with a **PD** controller — clockwise
    follows the left wall, counter-clockwise the right; either wall getting
@@ -244,6 +414,93 @@ A strict **per-frame priority** decides steering:
 ### 5.4 Speed
 Base speed is `CRUISE`; `cruise_speed()` **eases off in proportion to steering
 effort**, so the car runs fast on straights and slows automatically for corners.
+
+## 5.6 How the subsystems fit together
+
+```mermaid
+flowchart LR
+    subgraph POWER[Power]
+        BAT[3 x 18650<br/>~11.1 V] --> SW[Switch]
+        SW --> BUCK[Buck 5 V]
+        SW --> DRV[L9110S]
+    end
+    subgraph SENSE[Sensing]
+        CAM[OV5647 wide<br/>fixed focus] -- CSI --> PI
+    end
+    subgraph THINK[Compute]
+        PI[Raspberry Pi 4<br/>robot.py loop]
+    end
+    subgraph ACT[Actuation]
+        SRV[SG90 servo<br/>Ackermann]
+        MOT[N20 motor] --> GEAR[25:20] --> DIFF[Differential] --> WHL[Rear wheels]
+    end
+    BUCK --> PI
+    BUCK --> SRV
+    DRV --> MOT
+    PI -- GPIO13 PWM --> SRV
+    PI -- GPIO24/23 PWM --> DRV
+    CFG[(colors.json<br/>servo_center.txt<br/>camera_settings.json)] --> PI
+    PI --> LOG[(CSV run log)]
+```
+
+**Interactions that actually constrained the design**
+
+| Interaction | Constraint it created |
+|---|---|
+| Motor ↔ Pi share one battery | Rails **must** be separated and grounds tied, or the Pi browns out (§4.1). |
+| Drivetrain ↔ steering software | A solid axle forced `STEER_MAX` down to ~8°; the differential lifted it to 35°. Mechanics set the software limit. |
+| Camera mount ↔ control loop | Mount height/tilt/rigidity determine what the controller can even measure; a loose mast is a control failure. |
+| Lighting ↔ colour thresholds | Auto-exposure made HSV drift, so exposure and white balance are **locked** and colours re-tuned on the real mat. |
+| Camera choice ↔ obstacle detection | Shallow depth of field blurred distant signs, so the sensor was swapped for a fixed-focus module. |
+| Frame rate ↔ top speed | Speed is capped so the car moves only a few cm per frame, preserving reaction margin. |
+
+## 5.7 Testing, tuning and validation
+
+**How we test.** Each subsystem has a dedicated tool so faults are isolated rather
+than guessed at (all in [`src/tools/`](src/tools)):
+
+| Stage | Tool | What it proves |
+|---|---|---|
+| Wiring | `driver_on.py`, `test.py` | servo sweeps, motor turns both ways, camera captures |
+| Motor limits | `motor_speed_steps.py` | steps 100 → 50 % to find the stall point |
+| Motor path | `motor_debug.py` | separates a PWM fault from a power fault |
+| Camera image | `camera_tune.py` | exposure/gain/saturation, with a live `mean_sat / blown% / dark%` read-out |
+| Colour | `color_tuner.py` | each colour verified against its real object, mask checked for speckle |
+| Perception | `freespace_test.py` | draws the detected wall boundary and chosen gap on a real frame — **nothing drives**, so perception is validated before control |
+| Full run | `open_challenge.py` | logs every frame to `logs/*.csv` |
+
+**Metrics we record.** Every run writes a CSV row per frame — timestamp, cycle,
+direction, quadrant, in-corner flag, left/right wall, blue/orange line fractions,
+steering and speed — plus a summary line (quadrants, cycles, elapsed time,
+ms/cycle). That log is how we tune: after a bad run we read *why* the car did what
+it did instead of guessing.
+
+| Metric | Why it matters |
+|---|---|
+| ms per cycle | loop rate — sets how far the car travels blind between frames |
+| quadrants counted vs. real corners | validates lap counting |
+| seconds between corners | catches a corner counted twice or missed |
+| left/right wall balance on a straight | proves the camera is centred and the controller is not biased |
+| steering saturation (% of frames at `STEER_MAX`) | shows whether gains are too high |
+
+**Tuning process.** Change one constant in [`src/config.py`](src/config.py) → run →
+read the log → keep or revert. Because every threshold lives in one file and all
+calibration lives in JSON/text files, a tuning change never risks breaking code.
+
+## 5.8 Risks and mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Motor current spike browns out the Pi | run ends, SD card can corrupt | separate rails, own buck converter, common ground (§4.1) |
+| Forward↔reverse slam destroys the regulator | hardware loss | `motor()` forces a coast + settle before any direction change |
+| Lighting changes at the venue | colour masks fail | exposure/AWB locked; colours re-tuned on site in minutes via `color_tuner.py` |
+| Corner line never detected | laps never counted | lap counting runs on **wall geometry**, colour is only a hint |
+| Direction mis-detected | car laps the wrong way | direction locked once; `FORCE_DIRECTION` in config overrides at the venue |
+| Camera knocked out of alignment | permanent steering bias | rigid mast; left/right balance check before every run |
+| Mat markings read as a wall | false obstacle | boundary scan requires **N consecutive** dark rows (`FREE_MIN_RUN`) |
+| Car stuck against a wall | run wasted | `MAX_CORNER_CYCLES` and `MAX_RUNTIME_S` force an exit/stop |
+| Fresh pack exceeds L9110S 12 V rating | driver overheats | monitored; noted in [`schemes/`](schemes) |
+| Algorithm underperforms on the day | lost points | `NAV_METHOD` switches between the free-space and proven density controller with one word |
 
 ## 6. Calibration workflow
 
