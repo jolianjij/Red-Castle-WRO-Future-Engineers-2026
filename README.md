@@ -657,5 +657,4 @@ other/                     # BOM, rulebook, misc
 
 <sub>Photos go in [`t-photos/`](t-photos) using the filenames referenced above.</sub>
 
-Built on a Raspberry Pi 4 with an OV5647 wide-angle camera. Reference study: Team
-KyivRoboMagic (Ukraine, WRO 2024).
+Built on a Raspberry Pi 4 with an OV5647 wide-angle camera.
