@@ -9,9 +9,13 @@ Their control block, in order, is:
     if outer wall too close: dir = +-45 # wall override (this also turns corners)
     lines -> driving direction and quadrant count
 
-There is deliberately NO wall following here. With no sign in view Err = 0 and the
-car drives STRAIGHT; the only wall input is the override. That is their design and
-it is what we reproduce.
+ONE DELIBERATE DEPARTURE. Their design has no lane keeping: with no sign in view
+Err = 0 and the car drives STRAIGHT, relying on the wall override to fire often
+enough to stay in the corridor. That holds on their optics but not ours - measured
+L=0.112 R=0.129 against our 0.213 override threshold, so 44% of a run was
+steer = 0 and the car drove into things. Between signs we therefore fall back to
+the outer-wall law that scored full marks in the Open Challenge. Sign steering is
+still primary and the override still outranks everything.
 
 Their sign-positioning law (verbatim):
     green : Err = -((180 + y*2) - x)     -> push the sign toward the RIGHT of frame
@@ -44,6 +48,7 @@ CRUISE = 55             # start conservative; the sign manoeuvre needs reaction 
 PILLAR_KP = 0.111       # their kp was 0.25 against a +-45 clamp; we clamp at +-20,
                         # so 0.25 * (20/45) keeps the same response shape
 PILLAR_MIN_AREA = 60    # min contour area in our 320x160 buffer
+SIGN_MEMORY = 8         # frames to hold a manoeuvre after losing the sign
 Y_SCALE = 120.0 / R.PROC_H   # their frame was 120 rows tall, ours is 160
 MAX_RUNTIME_S = 150
 DEBUG = True
@@ -82,6 +87,9 @@ def main():
     R.setup_hardware(); R.servo(0)
     cam = R.open_camera()
     laps = R.LapTracker()
+    outer = R.OuterWallFollower()   # lane keeping between signs
+    hold = {"kind": "", "n": 0}     # short memory so detection flicker does not
+                                    # drop us out of a manoeuvre mid-pass
 
     os.makedirs("logs", exist_ok=True)
     path = time.strftime("logs/obstacle_%Y%m%d_%H%M%S.csv")
@@ -95,7 +103,7 @@ def main():
     print(f"  log -> {path}")
     input("Press Enter to START...")
 
-    t0 = time.time(); n = 0; reason = "?"
+    t0 = time.time(); n = 0; reason = "?"; last_steer = 0.0
     try:
         R.motor(CRUISE)
         while True:
@@ -112,10 +120,25 @@ def main():
                 kind, sx, sy, area = sign
                 steer = sign_error(kind, sx, sy) * PILLAR_KP
                 mode = "sign-" + kind
+                hold["kind"], hold["n"] = kind, SIGN_MEMORY
+            elif hold["n"] > 0:
+                # detection dropped for a frame - keep the manoeuvre committed.
+                # MEASURED: sign-red toggled with 'straight' frame to frame
+                # (area 61 -> 851 -> 0 -> 1060), which broke every pass.
+                hold["n"] -= 1
+                kind, sx, sy, area = hold["kind"], 0.0, 0.0, 0
+                steer = last_steer
+                mode = "sign-hold"
             else:
                 kind, sx, sy, area = "", 0.0, 0.0, 0
-                steer = 0.0          # no sign -> drive straight (their behaviour)
-                mode = "straight"
+                # NOT "drive straight". Their design leans on the wall override
+                # firing constantly, which it does on their optics but not ours:
+                # measured L=0.112 R=0.129 against a 0.213 threshold, so 44% of a
+                # run was steer=0 and the car simply drove into things. Between
+                # signs we use the outer-wall law that scored full marks in the
+                # Open Challenge.
+                steer = outer.steer(left, right, laps.direction)
+                mode = "lane"
 
             # ---- 2. WALL OVERRIDE (also what turns the corners) ----
             d = laps.direction
@@ -131,6 +154,7 @@ def main():
                     steer, mode = R.STEER_MAX, "wall-L"
 
             steer = max(-R.STEER_MAX, min(R.STEER_MAX, steer))
+            last_steer = steer
             speed = R.cruise_speed(CRUISE, steer)
             R.servo(steer); R.motor(speed)
 
