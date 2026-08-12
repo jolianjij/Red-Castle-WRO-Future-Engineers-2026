@@ -229,10 +229,17 @@ def front_reading(hsv):
 
 
 def line_counts(hsv):
-    """Return (blue_fraction, orange_fraction) over the ROI."""
-    area = PROC_W * PROC_H
-    b = int(np.count_nonzero(mask(hsv, "blue"))) / area
-    o = int(np.count_nonzero(mask(hsv, "orange"))) / area
+    """Return (blue_fraction, orange_fraction) in the LINE BAND only.
+
+    The band is the bottom LINE_ROWS of the ROI - the mat. Corner lines are
+    painted on the mat, so a line cannot appear above it; anything blue/orange
+    higher up is wall or background and must not be able to trigger a lap count.
+    """
+    r0 = int(PROC_H * (1.0 - LINE_ROWS))
+    band = hsv[r0:, :, :]
+    area = band.shape[0] * band.shape[1]
+    b = int(np.count_nonzero(mask(band, "blue"))) / area
+    o = int(np.count_nonzero(mask(band, "orange"))) / area
     return b, o
 
 
@@ -296,15 +303,15 @@ class LapTracker:
         self.front = 0.0
         self._next_ok = 0
         # TIME-based guards (frame-rate independent - the reliable ones)
-        self._last_corner_t = 0.0          # 0 = no corner counted yet
+        self._last_count_t = 0.0           # lap timer reference
         self.last_gap_s = 0.0              # seconds between the last two corners
         # colour line edge detection
         self.blue_state = 0
         self.orange_state = 0
         self._blue_det = False
         self._orange_det = False
-        self._blue_next = 0
-        self._orange_next = 0
+        self._blue_next_t = 0.0    # wall-clock lockout, NOT cycles
+        self._orange_next_t = 0.0
         # ---- SENSOR FUSION bookkeeping (visible in the log) ----
         self.direction_source = "none"     # what locked the direction
         self.direction_confirmed = False   # geometry AND lines agreed
@@ -314,125 +321,118 @@ class LapTracker:
         self.disagreements = 0             # times the two signals conflicted
         self.corners_geom = 0              # corners first seen by geometry
         self.corners_line = 0              # corners first seen by a line
+        self.blue_reads = 0                # times the blue line was READ (locked)
+        self.orange_reads = 0              # times the orange line was READ
 
     def _line_edges(self, blue_frac, orange_frac):
+        """Turn a noisy colour fraction into ONE reading per physical crossing.
+
+        state 0 = absent, 1 = present, 2 = falling edge (the crossing is over).
+        After a falling edge the colour is LOCKED OUT for LINE_LOCKOUT_S seconds,
+        so a mask that flickers above/below threshold can only ever be read once
+        per crossing. The lockout is in SECONDS so it does not change with frame
+        rate.
+        """
+        now = time.monotonic()
+
+        # ---- blue ----
         if blue_frac > LINE_FRACTION:
             self.blue_state = 1
-            if self.cycle >= self._blue_next:
+            if now >= self._blue_next_t:      # not locked out -> arm it
                 self._blue_det = True
         else:
             self.blue_state = 0
-            if self._blue_det:
+            if self._blue_det:                # armed and now gone = one crossing
                 self.blue_state = 2
-                self._blue_next = self.cycle + LINE_DEBOUNCE
+                self._blue_next_t = now + LINE_LOCKOUT_S
+                self.blue_reads += 1
             self._blue_det = False
 
+        # ---- orange ----
         if orange_frac > LINE_FRACTION:
             self.orange_state = 1
-            if self.cycle >= self._orange_next:
+            if now >= self._orange_next_t:
                 self._orange_det = True
         else:
             self.orange_state = 0
             if self._orange_det:
                 self.orange_state = 2
-                self._orange_next = self.cycle + LINE_DEBOUNCE
+                self._orange_next_t = now + LINE_LOCKOUT_S
+                self.orange_reads += 1
             self._orange_det = False
 
     def update(self, blue_frac, orange_frac, left=0.0, right=0.0, front=None):
-        """front: pass front_reading(hsv). Measured on the field it separates
-        distance far better than left+right (0.15 far / 0.40 at 40 cm / 0.54 at
-        25 cm), so it is the preferred corner signal. If it is not supplied we
-        fall back to the old left+right density test."""
+        """One frame of lap logic.
+
+        PHASE 1 - direction (happens once, at the FIRST line seen):
+            decided by the BIGGER line (orange = CW, blue = CCW) with the wall
+            geometry as a second opinion. Once set it is FIXED for the whole run.
+
+        PHASE 2 - lap counting (only after the direction is known):
+            a quadrant needs BOTH
+              (a) a line crossing (blue OR orange), and
+              (b) the lap timer to have expired.
+            Counting restarts the timer, so one crossing can only ever add one.
+
+        Corner detection for STEERING is separate and comes from wall geometry,
+        because the car must turn whether or not a line is visible.
+        """
         self.cycle += 1
         self._line_edges(blue_frac, orange_frac)
         self.front = front if front is not None else (left + right)
         now = time.monotonic()
 
-        # ------------------------------------------------------------------
-        # SIGNAL 1 - colour lines.  WRO convention: orange first = clockwise,
-        # blue first = counter-clockwise.
-        # ------------------------------------------------------------------
-        line_now = 0
-        if USE_LINES_FOR_DIRECTION:
-            if self.orange_state != 0:
-                line_now = 1
-            elif self.blue_state != 0:
-                line_now = -1
-        if line_now and not self.line_hint:
-            self.line_hint = line_now
+        # ---------------- PHASE 1: fix the direction, once ----------------
+        if self.direction == 0:
+            line_seen = (blue_frac > LINE_FRACTION) or (orange_frac > LINE_FRACTION)
+            if line_seen:
+                # condition 1 - the BIGGER line wins
+                bigger = 1 if orange_frac > blue_frac else -1      # +1 CW, -1 CCW
+                self.line_hint = bigger
+                # condition 2 - wall geometry, only when one side is clearly open
+                if abs(left - right) >= GEOM_DIR_MIN_DIFF:
+                    self.geom_hint = -1 if left < right else 1
+                self._lock_direction(bigger, "bigger line "
+                                     f"({'orange' if bigger > 0 else 'blue'} "
+                                     f"{max(blue_frac, orange_frac):.3f})")
+                if self.geom_hint:
+                    if self.geom_hint == self.direction:
+                        self.direction_confirmed = True
+                        print("[lap] direction CONFIRMED by wall geometry")
+                    else:
+                        self.disagreements += 1
+                        print("[lap] NOTE: geometry suggested the opposite; "
+                              "keeping the line decision")
+                # the lap timer starts running from the moment direction is fixed
+                self._last_count_t = now
 
-        # ------------------------------------------------------------------
-        # SIGNAL 2 - wall geometry.  A wall ahead means a corner; the side with
-        # more free space is the way the track turns.
-        # ------------------------------------------------------------------
+        # ---------------- corner detection for STEERING (geometry) ----------
         if front is not None:
-            enter, exit_, metric = FRONT_ENTER, FRONT_EXIT, front
+            enter, exit_ = FRONT_ENTER, FRONT_EXIT
         else:
-            enter, exit_, metric = CORNER_TOTAL, CORNER_TOTAL * 0.75, left + right
-        geom_corner = metric > enter
-
-        # ------------------------------------------------------------------
-        # FUSION - direction.  Whichever signal arrives first locks it; the
-        # second one CONFIRMS it (or is logged as a disagreement). Once locked
-        # the direction never changes.
-        # ------------------------------------------------------------------
-        if self.direction == 0 and self.line_hint:
-            self._lock_direction(self.line_hint, "colour line")
-        if geom_corner and abs(left - right) >= GEOM_DIR_MIN_DIFF:
-            # only trust geometry for DIRECTION when one side is clearly more
-            # open; near-symmetric readings carry no information
-            g = -1 if left < right else 1
-            if not self.geom_hint:
-                self.geom_hint = g
-            if self.direction == 0:
-                self._lock_direction(g, "corner geometry")
-
-        if (self.line_hint and self.geom_hint and not self.direction_confirmed):
-            if self.line_hint == self.geom_hint:
-                self.direction_confirmed = True
-                print(f"[lap] direction CONFIRMED by both signals "
-                      f"({'CW' if self.direction > 0 else 'CCW'})")
-            else:
-                self.disagreements += 1
-                self.direction_confirmed = True   # decided; stop re-reporting
-                print(f"[lap] WARNING: signals disagree - line says "
-                      f"{'CW' if self.line_hint > 0 else 'CCW'}, geometry says "
-                      f"{'CW' if self.geom_hint > 0 else 'CCW'}. Keeping "
-                      f"{'CW' if self.direction > 0 else 'CCW'} "
-                      f"(locked by {self.direction_source}).")
-
-        # ------------------------------------------------------------------
-        # FUSION - corner counting.  EITHER signal can raise a corner; the time
-        # guard below means a corner seen by both is still counted only ONCE.
-        # ------------------------------------------------------------------
-        drive_line_edge = False
-        if USE_LINES_FOR_CORNERS and self.direction != 0:
-            # only the line matching our travel direction marks a lap corner
-            drive_line_edge = (self.orange_state == 2 if self.direction > 0
-                               else self.blue_state == 2)
-
+            enter, exit_ = CORNER_TOTAL, CORNER_TOTAL * 0.75
         if not self.in_corner:
-            since = now - self._last_corner_t if self._last_corner_t else 1e9
-            if ((geom_corner or drive_line_edge)
-                    and self.cycle >= self._next_ok
-                    and since >= CORNER_MIN_INTERVAL_S):
-                src = "geom+line" if (geom_corner and drive_line_edge) else (
-                      "geom" if geom_corner else "line")
-                self.corner_source = src
-                if geom_corner:
-                    self.corners_geom += 1
-                else:
-                    self.corners_line += 1
+            if self.front > enter:
                 self.in_corner = True
+        elif self.front < exit_:
+            self.in_corner = False
+
+        # ---------------- PHASE 2: count laps from the LINES + timer --------
+        if self.direction != 0:
+            crossed = (self.blue_state == 2) or (self.orange_state == 2)
+            elapsed = now - self._last_count_t
+            if crossed and elapsed >= LAP_COUNT_LOCKOUT_S:
                 self.quadrant += 1
-                self._next_ok = self.cycle + CORNER_DEBOUNCE
-                self.last_gap_s = 0.0 if since > 1e8 else since
-                self._last_corner_t = now
-                print(f"[lap] corner {self.quadrant}/{QUADRANTS_PER_RUN} "
-                      f"via {src} (+{self.last_gap_s:.1f}s)")
-        else:
-            if metric < exit_:
-                self.in_corner = False
+                self.corners_line += 1
+                self.corner_source = "line"
+                self.last_gap_s = elapsed
+                self._last_count_t = now          # <-- timer RESTARTS here
+                which = "orange" if self.orange_state == 2 else "blue"
+                print(f"[lap] quadrant {self.quadrant}/{QUADRANTS_PER_RUN} "
+                      f"on {which} line (+{elapsed:.1f}s)")
+            elif crossed:
+                print(f"[lap] line crossing IGNORED - timer has "
+                      f"{LAP_COUNT_LOCKOUT_S - elapsed:.1f}s left")
 
     def _lock_direction(self, d, why):
         """Direction is decided ONCE and never changes - this is what stops the
@@ -448,13 +448,14 @@ class LapTracker:
                 f" via {self.direction_source}"
                 f"{' (CONFIRMED by both)' if self.direction_confirmed else ''}"
                 f" | corners={self.quadrant} (geom {self.corners_geom}, line {self.corners_line})"
+                f" | line reads: blue={self.blue_reads} orange={self.orange_reads}"
                 f" | disagreements={self.disagreements}")
 
     def stalled(self):
-        """True if no corner has been seen for suspiciously long (log a warning)."""
-        if not self._last_corner_t:
+        """True if no quadrant has been counted for suspiciously long."""
+        if not self._last_count_t:
             return False
-        return (time.monotonic() - self._last_corner_t) > CORNER_MAX_INTERVAL_S
+        return (time.monotonic() - self._last_count_t) > CORNER_MAX_INTERVAL_S
 
     def turn_bias(self):
         """Steering bias to apply while inside a corner (deg)."""
@@ -537,8 +538,25 @@ def navigate(hsv, left, right, laps, follower):
                                ahead is blocked or no gap is drivable)
       3. otherwise          -> PD wall-density controller (proven fallback)
     """
+    # ---- PRIORITY 1: WALL EMERGENCY - applies in EVERY mode, no exceptions ----
+    # This used to live only inside the density controller, so in "gap" mode the
+    # car had NO wall avoidance at all and drove along touching the inner wall.
+    if left > WALL_EMERGENCY or right > WALL_EMERGENCY:
+        push = 0.0
+        if left > WALL_EMERGENCY:
+            push += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.12)
+        if right > WALL_EMERGENCY:
+            push -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.12)
+        return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
+
     if laps.in_corner:
-        return laps.turn_bias(), "corner"
+        bias = laps.turn_bias()
+        if bias == 0.0:
+            # direction is not fixed yet (no line crossed). Do NOT go straight
+            # into the wall - turn toward whichever side has more free space.
+            bias = STEER_MAX * (-1.0 if left < right else 1.0)
+            return bias, "corner-nodir"
+        return bias, "corner"
 
     if NAV_METHOD == "gap":
         free = freespace_profile(hsv)

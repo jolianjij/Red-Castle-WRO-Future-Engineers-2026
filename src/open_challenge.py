@@ -20,9 +20,9 @@ import time
 import robot as R
 
 # ---- tunables ----
-CRUISE = 100            # base forward speed (%)                         (TUNE)
+CRUISE = 40            # first-drive speed - raise once it laps cleanly  (TUNE)
 FINISH_EXTRA_CYCLES = 60  # keep going a bit after the 12th quadrant, then stop
-MAX_RUNTIME_S = 60      # SAFETY: hard stop after this many seconds       (TUNE)
+MAX_RUNTIME_S = 45      # SAFETY: hard stop after this many seconds
 DEBUG = True            # print a status line every 15 cycles
 
 

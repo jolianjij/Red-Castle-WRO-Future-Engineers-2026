@@ -52,8 +52,9 @@ BLUR_KSIZE = 5          # median blur before HSV (0/1 = off) - kills sensor nois
 WALL_TARGET = 0.14      # outer-wall fill when nicely positioned
 WALL_EMERGENCY = 0.34   # wall this close -> push away hard
 CENTER_DEADBAND = 0.03  # ignore tiny left-right differences (anti-jitter)
-WALL_KP = 45.0
-WALL_KD = 18.0
+WALL_KP = 200.0         # MEASURED: left/right densities on this camera run
+WALL_KD = 50.0          # 0.03-0.09, not the ~0.5 the old gains assumed, so the
+                        # controller was ~5x too soft to hold a line.
 
 # ==========================================================================
 # FREE-SPACE / FOLLOW-THE-GAP METHOD  (method "B")
@@ -76,7 +77,10 @@ GAP_MIN_WIDTH = 60      # a gap narrower than this many columns is NOT drivable.
                         # big fraction of the frame. MEASURED: with this at 12 a
                         # 12-px fisheye sliver at the frame edge was mistaken for
                         # an opening and produced a +23 deg steer into a wall.
-GAP_KP = 26.0           # steering gain on the gap-centre error
+GAP_KP = 80.0           # steering gain on the gap-centre error.
+                        # MEASURED: at 26 the largest correction produced in a
+                        # whole run was 6.9 deg out of 35 available, and 61% of
+                        # frames steered less than 2 deg - far too weak.
 GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
                         # ahead is blocked -> commit to the locked turn direction
 
@@ -99,7 +103,12 @@ CORNER_DEBOUNCE = 25    # min CYCLES between two counted corners
 # many seconds. This is the reliable one - cycle counts change with frame rate,
 # seconds do not. Raise it if one corner gets counted twice; lower it if a
 # genuine corner is missed because it came too soon after the previous one.
-CORNER_MIN_INTERVAL_S = 1.2
+CORNER_MIN_INTERVAL_S = 2.5    # (steering-corner guard, geometry side)
+
+# THE LAP TIMER. After a quadrant is counted, NO further count is allowed until
+# this many seconds have passed - and the timer RESTARTS on every count. A lap
+# quadrant therefore needs BOTH: a line crossing AND an expired timer.
+LAP_COUNT_LOCKOUT_S = 2.5
 CORNER_MAX_INTERVAL_S = 25.0   # if no corner for this long, something is wrong
                                # (logged as a warning, does not stop the run)
 
@@ -110,15 +119,29 @@ MAX_RUNTIME_S = 90      # SAFETY: hard stop after this long
 # ==========================================================================
 # COLOURED LINES (direction hint only - NOT required for lap counting)
 # ==========================================================================
-LINE_FRACTION = 0.020   # a line is "present" above this fraction of the ROI
-LINE_DEBOUNCE = 10      # cycles before the same line can trigger again
+# The corner lines are painted on the MAT, so they can only appear in the LOWER
+# part of the frame. Searching the whole ROI let bluish WALL/background pixels in
+# the top corners trigger the blue line: measured 41% of a run above threshold,
+# with the pixels sitting at rows 0-13 (the very top). Restricting the search to
+# the bottom band removes that class of false positive geometrically, without
+# depending on colour tuning at all.
+LINE_ROWS = 0.45        # only the BOTTOM 45% of the ROI is searched for lines
+LINE_FRACTION = 0.020   # a line is "present" above this fraction of the line band
+
+# TIME lockout: once a line has been READ ONCE, that colour is ignored for this
+# many seconds. This is what stops one physical crossing being counted many
+# times. It MUST be in seconds, not cycles - the old 10-cycle debounce was only
+# 0.33 s at 30 fps, so a flickering mask produced 36 "crossings" in a 45 s run.
+LINE_LOCKOUT_S = 2.5    # a line cannot be read again for this long
+LINE_DEBOUNCE = 10      # (legacy cycle guard, kept as a secondary floor)
 # SENSOR FUSION. Both signals run together and cross-check each other:
 #   geometry (front wall)  - always available, never depends on colour tuning
 #   colour lines           - the official WRO cue (orange=CW, blue=CCW)
 # Direction: whichever arrives first locks it, the second CONFIRMS or warns.
 # Corners:   EITHER may raise one; the time guard means it is still counted once.
 USE_LINES_FOR_DIRECTION = True   # False = decide direction purely from geometry
-USE_LINES_FOR_CORNERS = True     # False = count corners from geometry only
+USE_LINES_FOR_CORNERS = True     # lines DO count corners - each crossing is read
+                                 # ONCE thanks to the LINE_LOCKOUT_S timer above.
 GEOM_DIR_MIN_DIFF = 0.08         # |left-right| must exceed this before the wall
                                  # geometry is allowed an opinion on direction.
                                  # MEASURED: head-on to a corner the two halves
