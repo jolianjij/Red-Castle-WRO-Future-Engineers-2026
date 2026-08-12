@@ -1,105 +1,168 @@
 #!/usr/bin/env python3
 """
-obstacle_challenge.py - WRO 2026 Future Engineers, OBSTACLE challenge.
+obstacle_challenge.py - WRO 2026 Obstacle Challenge.
 
-Logic (priority order each frame):
-  1. WALL EMERGENCY - if either wall is dangerously close, hard-steer away.
-     (Never crash into a wall, even while dodging a pillar.)
-  2. PARK (after 3 laps) - hunt the magenta parking gate, aim at it, stop when close.
-  3. PILLAR - if a red/green pillar is near, pass it:
-        red  -> pass on the RIGHT (keep pillar to our left)
-        green-> pass on the LEFT  (keep pillar to our right)
-  4. WALL-FOLLOW - otherwise, PD outer-wall following (same as open challenge).
+STRUCTURE IS KYIVROBOMAGIC'S, READ FROM THEIR SOURCE (obstacle_challenge_3.cpp).
+Their control block, in order, is:
 
-Direction (orange=CW / blue=CCW) and 12-quadrant lap counting are identical to
-the open challenge.
+    dir = Err * kp                      # PILLAR steering is the PRIMARY control
+    if outer wall too close: dir = +-45 # wall override (this also turns corners)
+    lines -> driving direction and quadrant count
 
-Run on the Pi:  python3 obstacle_challenge.py
-(keep robot.py, camera.py, colors.json in the same folder / ~/wro2026)
+There is deliberately NO wall following here. With no sign in view Err = 0 and the
+car drives STRAIGHT; the only wall input is the override. That is their design and
+it is what we reproduce.
+
+Their sign-positioning law (verbatim):
+    green : Err = -((180 + y*2) - x)     -> push the sign toward the RIGHT of frame
+    red   : Err =  (x - (140 - y*2))     -> push the sign toward the LEFT of frame
+so the car passes GREEN on its left and RED on its right, and the target column
+slides further out as the sign gets nearer (the y*2 term).
+
+WHAT IS OURS:
+  * every distance/threshold is MEASURED on our camera, not copied. Their numbers
+    are for their optics and do not transfer (proven when their open-challenge
+    constants read 0.021 against their own 0.5 reference on our camera).
+  * the corrected wall mask, so the blue/orange lines and mat markings are not
+    counted as walls.
+  * MAGENTA COUNTS AS A WALL. They do the same until the parking phase; we have no
+    parking walls to tune against yet, so it stays a wall for the whole run.
+
+Run:  cd ~/wro2026 && source .venv/bin/activate && python obstacle_challenge.py
 """
+import csv
+import os
 import time
+
+import cv2
+import numpy as np
 
 import robot as R
 
 # ---- tunables ----
-CRUISE = 100           # base speed (100%)                                       (TUNE)
-PILLAR_SPEED = 42      # speed while actively passing a pillar                    (TUNE)
-PARK_SPEED = 30        # speed while parking                                      (TUNE)
-KP_PARK = 90.0
-DEBUG = False
+CRUISE = 55             # start conservative; the sign manoeuvre needs reaction time
+PILLAR_KP = 0.111       # their kp was 0.25 against a +-45 clamp; we clamp at +-20,
+                        # so 0.25 * (20/45) keeps the same response shape
+PILLAR_MIN_AREA = 60    # min contour area in our 320x160 buffer
+Y_SCALE = 120.0 / R.PROC_H   # their frame was 120 rows tall, ours is 160
+MAX_RUNTIME_S = 150
+DEBUG = True
+
+
+def find_sign(hsv):
+    """Largest red/green contour that is TALLER than wide (their filter).
+    Returns (kind, cx, cy, area) using the CENTROID, as they do, or None."""
+    best = None
+    for kind in ("red", "green"):
+        m = R.mask(hsv, kind)
+        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area < PILLAR_MIN_AREA or (best and area <= best[3]):
+                continue
+            x, y, w, h = cv2.boundingRect(c)
+            if w >= h:                     # must be taller than wide
+                continue
+            mm = cv2.moments(c)
+            if mm["m00"] == 0:
+                continue
+            best = (kind, mm["m10"] / mm["m00"], mm["m01"] / mm["m00"], area)
+    return best
+
+
+def sign_error(kind, cx, cy):
+    """Their formulas, with y mapped onto their 120-row frame."""
+    y = cy * Y_SCALE
+    if kind == "green":
+        return -((180.0 + y * 2.0) - cx)
+    return cx - (140.0 - y * 2.0)
 
 
 def main():
-    R.setup_hardware()
-    R.servo(0)
+    R.setup_hardware(); R.servo(0)
     cam = R.open_camera()
-
     laps = R.LapTracker()
-    follower = R.WallFollower()
 
-    input("Obstacle Challenge ready. Press Enter to START...")
-    R.motor(CRUISE)
+    os.makedirs("logs", exist_ok=True)
+    path = time.strftime("logs/obstacle_%Y%m%d_%H%M%S.csv")
+    lf = open(path, "w", newline=""); log = csv.writer(lf)
+    log.writerow(["t_ms", "cycle", "dir", "quad", "mode", "sign", "sx", "sy",
+                  "area", "left", "right", "steer", "speed"])
 
-    n = 0
+    print(f"OBSTACLE - KyivRoboMagic structure, our measured constants")
+    print(f"  CRUISE={CRUISE} PILLAR_KP={PILLAR_KP} STEER_MAX={R.STEER_MAX}")
+    print(f"  wall override at {R.WALL_EMERGENCY} (~18 cm)   magenta counts as wall")
+    print(f"  log -> {path}")
+    input("Press Enter to START...")
+
+    t0 = time.time(); n = 0; reason = "?"
     try:
+        R.motor(CRUISE)
         while True:
             n += 1
             proc, hsv = R.read_hsv(cam)
-
             left, right = R.wall_readings(hsv)
+            front = R.front_reading(hsv)
             blue, orange = R.line_counts(hsv)
-            laps.update(blue, orange)
+            laps.update(blue, orange, left, right, front)
 
-            steer = 0.0
-            speed = CRUISE
-            mode = "follow"
-
-            # ---- 2. PARK (after 3 laps) ----
-            if laps.quadrant >= 12:
-                mode = "park"
-                area, mcx = R.magenta_area(hsv)
-                speed = PARK_SPEED
-                if area > 0:
-                    steer = KP_PARK * ((mcx - R.PROC_W / 2) / R.PROC_W)
-                    steer = max(-R.STEER_MAX, min(R.STEER_MAX, steer))
-                    if area > R.PARK_STOP_AREA:      # close enough -> parked
-                        R.motor(0); R.servo(0)
-                        print("PARKED.")
-                        break
-                else:
-                    steer = follower.steer(left, right, laps.direction)
-
-            # ---- 1. WALL EMERGENCY ----
-            elif left > R.WALL_EMERGENCY:
-                steer = R.STEER_MAX; mode = "wall!"
-            elif right > R.WALL_EMERGENCY:
-                steer = -R.STEER_MAX; mode = "wall!"
-
+            # ---- 1. PRIMARY: steer to place the sign correctly ----
+            sign = find_sign(hsv)
+            if sign is not None:
+                kind, sx, sy, area = sign
+                steer = sign_error(kind, sx, sy) * PILLAR_KP
+                mode = "sign-" + kind
             else:
-                # ---- 3. PILLAR ----
-                pil = R.find_pillars(hsv)
-                if pil is not None:
-                    color, cx, cy, aarea = pil
-                    steer = R.pillar_steer(color, cx, cy)
-                    speed = PILLAR_SPEED
-                    mode = "pass-" + color
-                else:
-                    # ---- 4. WALL-FOLLOW ----
-                    steer = follower.steer(left, right, laps.direction)
+                kind, sx, sy, area = "", 0.0, 0.0, 0
+                steer = 0.0          # no sign -> drive straight (their behaviour)
+                mode = "straight"
 
-            R.servo(steer)
-            R.motor(R.cruise_speed(speed, steer))
+            # ---- 2. WALL OVERRIDE (also what turns the corners) ----
+            d = laps.direction
+            if d >= 0:
+                if left > R.WALL_EMERGENCY:
+                    steer, mode = R.STEER_MAX, "wall-L"
+                elif right > R.WALL_EMERGENCY:
+                    steer, mode = -R.STEER_MAX, "wall-R"
+            else:
+                if right > R.WALL_EMERGENCY:
+                    steer, mode = -R.STEER_MAX, "wall-R"
+                elif left > R.WALL_EMERGENCY:
+                    steer, mode = R.STEER_MAX, "wall-L"
 
-            if DEBUG and n % 30 == 0:
-                print(f"n={n} dir={laps.direction} quad={laps.quadrant} "
-                      f"L={left:.2f} R={right:.2f} {mode} steer={steer:+.0f}")
+            steer = max(-R.STEER_MAX, min(R.STEER_MAX, steer))
+            speed = R.cruise_speed(CRUISE, steer)
+            R.servo(steer); R.motor(speed)
 
-        print(f"FINISHED obstacle: {laps.quadrant} quadrants, {n} cycles.")
+            t_ms = int((time.time() - t0) * 1000)
+            log.writerow([t_ms, n, laps.direction, laps.quadrant, mode, kind,
+                          f"{sx:.0f}", f"{sy:.0f}", int(area),
+                          f"{left:.3f}", f"{right:.3f}", f"{steer:.1f}", f"{speed:.0f}"])
+
+            if DEBUG and n % 15 == 0:
+                lf.flush()
+                print(f"  t={t_ms/1000:5.1f}s dir={laps.direction:+d} q={laps.quadrant:2d} "
+                      f"{mode:10s} L={left:.3f} R={right:.3f} steer={steer:+6.1f}")
+
+            if laps.ready_to_finish():
+                reason = f"{laps.quadrant} quadrants"
+                break
+            if time.time() - t0 > MAX_RUNTIME_S:
+                reason = "timeout"
+                break
+
+        R.motor(0); R.servo(0)
+        dt = time.time() - t0
+        print(f"FINISHED ({reason}) quadrants={laps.quadrant} {dt:.1f}s "
+              f"{1000*dt/max(n,1):.1f} ms/cycle")
+        print("  fusion: " + laps.summary())
     except KeyboardInterrupt:
         print("interrupted")
     finally:
-        R.shutdown()
-        cam.close()
+        R.motor(0); R.servo(0)
+        lf.flush(); lf.close()
+        R.shutdown(); cam.close()
+        print(f"log saved: {path}")
 
 
 if __name__ == "__main__":

@@ -168,6 +168,9 @@ def wall_mask(hsv):
     S = hsv[:, :, 1]
     V = hsv[:, :, 2]
     m = ((V < WALL_V_HARD) | ((V < WALL_V_SOFT) & (S < WALL_S_MAX)))
+    if MAGENTA_IS_WALL:
+        # the magenta parking walls are solid obstacles too - treat them as wall
+        m = m | (mask(hsv, "magenta", clean=False) > 0)
     m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, _WK)
     return m > 0
 

@@ -73,6 +73,12 @@ WALL_V_SOFT = 62        # up to this it is a wall ONLY if desaturated
 WALL_S_MAX = 90         # coloured lines exceed this and are rejected
 WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
 
+# MAGENTA COUNTS AS A WALL. KyivRoboMagic do the same - in their process_hsv the
+# purple parking-lot pixels are added to left_wall/right_wall until the parking
+# phase begins. We have no parking walls to calibrate against yet, so magenta
+# stays a wall for the whole run and the car simply avoids the parking lot.
+MAGENTA_IS_WALL = True
+
 # ==========================================================================
 # WALL DENSITY METHOD  (KyivRoboMagic style - the proven fallback)
 # ==========================================================================
