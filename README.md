@@ -293,7 +293,52 @@ other/                     # BOM, rulebook, misc
 
 **Team The Red Castle** — HMK AI and Robotics Club.
 
-_(to fill: member names + roles, e.g. mechanical, electronics, software.)_
+<table>
+  <tr>
+    <td align="center" width="25%">
+      <img src="t-photos/ahmad-kalthom.jpg" width="170" alt="Ahmad Kalthom"><br>
+      <b>Ahmad Kalthom</b><br>
+      <sub>Coach</sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="t-photos/jolian-wassof.jpg" width="170" alt="Jolian Wassof"><br>
+      <b>Jolian Wassof</b><br>
+      <sub>Team member</sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="t-photos/omar-shammout.jpg" width="170" alt="Omar Shammout"><br>
+      <b>Omar Shammout</b><br>
+      <sub>Team member</sub>
+    </td>
+    <td align="center" width="25%">
+      <img src="t-photos/louay-rashwan.jpg" width="170" alt="Louay Rashwan"><br>
+      <b>Louay Rashwan</b><br>
+      <sub>Team member</sub>
+    </td>
+  </tr>
+</table>
+
+### Ahmad Kalthom — Coach
+> _Bio: _
+
+📧 _email: _
+
+### Jolian Wassof — Team member
+> _Bio: _
+
+📧 _email: _
+
+### Omar Shammout — Team member
+> _Bio: _
+
+📧 _email: _
+
+### Louay Rashwan — Team member
+> _Bio: _
+
+📧 _email: _
+
+<sub>Photos go in [`t-photos/`](t-photos) using the filenames referenced above.</sub>
 
 Built on a Raspberry Pi 4 with an OV5647 wide-angle camera. Reference study: Team
 KyivRoboMagic (Ukraine, WRO 2024).

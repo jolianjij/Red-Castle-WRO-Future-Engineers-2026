@@ -10,18 +10,21 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [x] Public repo pushed
 
 ## 🔴 Mandatory for judging
-- [ ] 📷 `v-photos/` — 6 vehicle photos (front, back, left, right, top, bottom)
-- [ ] 📷 `t-photos/` — 2 team photos (official + fun)
+- [x] 📷 `v-photos/` — 6 vehicle photos (front, back, left, right, top, bottom)
+- [ ] 📷 `t-photos/` — 2 group photos (`team-official.jpg`, `team-fun.jpg`)
 - [ ] 🎥 `video/video.md` — driving video links (Open + Obstacle, one take each)
-- [ ] 🖼️ `schemes/` — wiring diagram image (Pi ↔ L9110S ↔ servo ↔ power, common ground)
+- [x] 🖼️ `schemes/` — wiring diagram image (Pi ↔ L9110S ↔ servo ↔ power, common ground)
 - [ ] 🧩 `models/` — actual CAD/STL files of the printed parts
-- [ ] ✍️ Team names + roles in `README.md` (🤖 give me the names)
+- [x] ✍️ Team names + roles in `README.md`
+- [ ] 📷 Member photos → `t-photos/` (ahmad-kalthom.jpg, jolian-wassof.jpg, omar-shammout.jpg, louay-rashwan.jpg)
+- [ ] ✍️ Bio + email for each member (placeholders are in README §12)
 
 ## 🟡 Recommended (higher documentation score)
 - [ ] 🤖 Wiring pin-table / ASCII schematic in `schemes/` (text backup to the image)
 - [ ] 🤖 Assembly / build-steps section
 - [ ] 🤖 Engineering journal (design process: brownout fix, no-diff steering, focus/exposure)
-- [ ] 🤖 Finish BOM specifics (battery, motor, servo, wheels) — needs your confirmation
+- [x] 🤖 BOM: battery (3×18650), buck converter, SG90 servo confirmed from the wiring diagram
+- [ ] 🤖 BOM: drive motor model + wheel diameter + total cost still needed
 - [ ] 🤖 Commit reference `colors.json` + `servo_center.txt` (pull from Pi once tuning is final)
 
 ## ⚙️ To actually compete (not GitHub, but required)
@@ -31,8 +34,9 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [ ] Record the runs for the video
 
 ## Info Claude needs from you
-- [ ] Team members' names + roles
-- [ ] Battery voltage & type
+- [x] ~~Team members' names + roles~~ — done
+- [x] ~~Battery voltage & type~~ — 3×18650 in series
+- [x] ~~Steering servo model~~ — SG90
 - [ ] Drive motor model/voltage
-- [ ] Steering servo model
-- [ ] Wheel/tire sizes
+- [ ] Wheel/tire diameter
+- [ ] Each member's bio + email
