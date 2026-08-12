@@ -107,18 +107,22 @@ GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
 #     if (direction == 1)       dir = (left_wall  - 0.5) * 75;
 #     else if (direction == -1) dir = (0.5 - right_wall) * 75;
 #
-# SCALING, done properly. Their half-image is 160x120 = 19200 px but they divide
-# by 160*80 = 12800, so their "wall" value maxes at 1.5, not 1.0, and their 0.5
-# setpoint is really 33% dark. In terms of the TRUE dark fraction f:
-#     dir = (1.5f - 0.5) * 75 = 112.5f - 37.5
-#     sensitivity 112.5 per unit f against a +-45 clamp  =  2.5 x clamp
-# Matching that shape on our +-20 clamp gives  OUTER_KP = 20 * 2.5 = 50.
-# (We previously ran 160 - over 3x more aggressive than the proven design, which
-# saturated at err 0.125 where theirs saturates at 0.4. That is bang-bang.)
-OUTER_TARGET = 0.14     # desired outer-wall fill. Bigger = hug the outer wall
-                        # closer. This is the ONLY position setpoint.
-OUTER_KP = 50.0         # proportional gain, scaled from their 75 (see above)
-OUTER_KD = 15.0         # OUR IMPROVEMENT: they used pure P, which oscillates and
+# GAIN IS SET FROM MEASUREMENT, NOT BY COPYING THEIR NUMBER.
+# Copying their gain does not transfer: it assumes our density responds to
+# distance the way theirs did, and it does not (different camera height/FOV).
+#
+# CALIBRATED on the field, car parallel to the outer wall:
+#     29 cm -> 0.2044      19 cm -> 0.2619
+#     slope  = 0.00575 density per cm closer
+# Choosing full lock at ~22 cm of deviation gives KP = 20 / (0.00575 * 22) ~= 160.
+#     KP=160 : 5 cm off -> 4.6 deg,  10 cm off -> 9.2 deg,  full lock at 21.7 cm
+# (KP=50, the "faithful" scaling of their 75, gives only 2.9 deg at 10 cm off and
+#  would need 70 cm of error to reach full lock - wider than the corridor.)
+OUTER_TARGET = 0.204    # MEASURED: this is the density at 29 cm from the outer
+                        # wall, the chosen driving line. Bigger = hug it closer.
+                        # (slope 0.00575/cm, so +0.0575 ~= 10 cm nearer.)
+OUTER_KP = 160.0        # from the calibration above, not from their number
+OUTER_KD = 45.0         # OUR IMPROVEMENT: they used pure P, which oscillates and
                         # saturates. The derivative term damps the weave.
 OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
 
