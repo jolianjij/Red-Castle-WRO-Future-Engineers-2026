@@ -651,7 +651,7 @@ other/                     # BOM, rulebook, misc
 
 **Education:** Computer and Automation Engineering, Damascus University
 **Focus areas:** Embedded Systems, Automatic Control
-📧 _email not provided_
+📧 ahmedkalthom977@gmail.com
 
 ### Jolian Wassof — Team member
 > Student at Al-Awael School, interested in artificial intelligence, robotics,
