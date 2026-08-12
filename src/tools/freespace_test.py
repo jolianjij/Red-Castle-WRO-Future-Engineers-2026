@@ -71,8 +71,9 @@ try:
             steer = 0.0
             msg = "NO GAP - blocked"
 
+        corner = "CORNER!" if front > R.FRONT_ENTER else "       "
         info = (f"[{i+1}/{frames}] {msg} | L={left:.2f} R={right:.2f} "
-                f"front={front:.2f} maxfree={free.max():.0f}/{R.PROC_H}")
+                f"front={front:.2f} {corner} maxfree={free.max():.0f}/{R.PROC_H}")
         print(info)
 
         # scale up + a profile strip underneath so it is readable

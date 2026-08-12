@@ -64,11 +64,18 @@ FREE_MIN_RUN = 6        # a wall must be >= this many consecutive dark rows.
                         # This is what stops the mat's dotted lines being read
                         # as a wall. Raise it if dots/marks cause false walls.
 FREE_SMOOTH = 9         # moving-average width over columns (noise smoothing)
-FREE_EDGE_IGNORE = 10   # ignore this many columns at each edge (fisheye is
-                        # worst there)
+FREE_EDGE_IGNORE = 20   # ignore this many columns at each edge (the fisheye is
+                        # worst there and can see PAST a wall at the extremes)
 
-GAP_OPEN_FRAC = 0.55    # a column counts as "open" if free >= this * PROC_H
-GAP_MIN_WIDTH = 12      # a gap narrower than this many columns is not drivable
+GAP_OPEN_FRAC = 0.80    # a column counts as "open" if free >= this * PROC_H.
+                        # MEASURED on the field: a wall 25 cm ahead scores 0.74,
+                        # 40 cm scores 0.82, clear track scores 0.94. 0.80 puts
+                        # the cut between "wall at 25-30 cm" and "clear".
+GAP_MIN_WIDTH = 60      # a gap narrower than this many columns is NOT drivable.
+                        # The car is ~20 cm wide, so a real opening occupies a
+                        # big fraction of the frame. MEASURED: with this at 12 a
+                        # 12-px fisheye sliver at the frame edge was mistaken for
+                        # an opening and produced a +23 deg steer into a wall.
 GAP_KP = 26.0           # steering gain on the gap-centre error
 GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
                         # ahead is blocked -> commit to the locked turn direction
@@ -78,8 +85,10 @@ GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
 # ==========================================================================
 FRONT_COLS = 0.40       # centre fraction of width treated as "ahead"
 FRONT_ROWS = 0.55       # upper fraction of ROI treated as "ahead"
-FRONT_ENTER = 0.45      # front fill this high -> a corner is here
-FRONT_EXIT = 0.22       # front cleared below this -> corner finished
+# MEASURED front values head-on to a wall: 0.15 far, 0.40 at 40 cm, 0.54 at 25 cm.
+# 'front' separates distance far better than left+right, so corner detection uses it.
+FRONT_ENTER = 0.38      # front fill this high -> a corner is here (fires ~40 cm out)
+FRONT_EXIT = 0.20       # front cleared below this -> corner finished
 CORNER_TOTAL = 0.55     # left+right fill meaning a wall is AHEAD (density method)
 
 MIN_CORNER_CYCLES = 6   # must be in the corner this long before it counts

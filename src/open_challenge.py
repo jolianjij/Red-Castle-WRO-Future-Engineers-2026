@@ -58,8 +58,9 @@ def main():
             n += 1
             proc, hsv = R.read_hsv(cam)
             left, right = R.wall_readings(hsv)
+            front = R.front_reading(hsv)
             blue, orange = R.line_counts(hsv)
-            laps.update(blue, orange, left, right)
+            laps.update(blue, orange, left, right, front)
 
             # single dispatch point - honours NAV_METHOD ("gap" or "density")
             steer, mode = R.navigate(hsv, left, right, laps, follower)

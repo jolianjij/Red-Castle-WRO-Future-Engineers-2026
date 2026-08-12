@@ -328,9 +328,14 @@ class LapTracker:
                 self._orange_next = self.cycle + LINE_DEBOUNCE
             self._orange_det = False
 
-    def update(self, blue_frac, orange_frac, left=0.0, right=0.0):
+    def update(self, blue_frac, orange_frac, left=0.0, right=0.0, front=None):
+        """front: pass front_reading(hsv). Measured on the field it separates
+        distance far better than left+right (0.15 far / 0.40 at 40 cm / 0.54 at
+        25 cm), so it is the preferred corner signal. If it is not supplied we
+        fall back to the old left+right density test."""
         self.cycle += 1
         self._line_edges(blue_frac, orange_frac)
+        self.front = front
 
         # direction hint from the coloured lines (only before it is locked)
         if self.direction == 0 and USE_LINES_FOR_DIRECTION:
@@ -340,13 +345,19 @@ class LapTracker:
                 self._lock_direction(-1, "blue line")
 
         now = time.monotonic()
-        total = left + right
+        # prefer the front-wall signal (better distance separation); fall back to
+        # the combined left+right density if front was not supplied
+        if front is not None:
+            enter, exit_, metric = FRONT_ENTER, FRONT_EXIT, front
+        else:
+            enter, exit_, metric = CORNER_TOTAL, CORNER_TOTAL * 0.75, left + right
+
         if not self.in_corner:
             # a wall has appeared ahead -> we are entering a corner.
             # TWO guards so one physical corner can never be counted twice:
             #   1. cycle debounce  2. minimum SECONDS since the last corner
             since = now - self._last_corner_t if self._last_corner_t else 1e9
-            if (total > CORNER_TOTAL
+            if (metric > enter
                     and self.cycle >= self._next_ok
                     and since >= CORNER_MIN_INTERVAL_S):
                 self.in_corner = True
@@ -362,7 +373,7 @@ class LapTracker:
                       f"(+{self.last_gap_s:.1f}s)")
         else:
             # left the corner once the way ahead is clear again
-            if total < CORNER_TOTAL * 0.75:
+            if metric < exit_:
                 self.in_corner = False
 
     def _lock_direction(self, d, why):

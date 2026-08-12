@@ -168,6 +168,52 @@ mis-interpreted as a hue-wrap and matched almost everything.
 `colors.json`, with each object staged in front of the camera; a validation step
 that renders every mask on a live capture to confirm cleanliness before driving.
 
+## 7b. Validating the free-space navigator with measured data
+
+**Approach.** Before letting the car drive on the new navigator we validated the
+*perception* alone with `tools/freespace_test.py`, which draws the detected
+mat/wall boundary and the chosen gap on a real frame **without touching the
+motor**. The car was placed at measured distances from a wall and each frame was
+recorded.
+
+**Measurements** (head-on to a wall, `front` = wall fill straight ahead,
+`free` = drivable depth in the wall-ward columns):
+
+| Distance to wall | `front` | `free` at wall columns | Steering produced |
+|---|---|---|---|
+| far (>60 cm) | 0.15 | 0.94 | 0° (correctly ignores) |
+| 40 cm | 0.40 | 0.82 | −6.5° (begins easing away) |
+| 25 cm | 0.51–0.54 | 0.74 | full turn once corrected |
+
+**Three defects this exposed — none of which a driving test would have shown
+safely:**
+
+1. **The "open" threshold was far too permissive.** `GAP_OPEN_FRAC = 0.55` meant a
+   wall only 25 cm ahead still scored 0.74 and counted as drivable, so the gap
+   spanned the whole frame and the car would have driven straight into the corner.
+   Raised to **0.80**, chosen from the measured spread above.
+2. **Corner detection used the wrong signal.** It compared `left + right` against
+   0.55; at 25 cm that read **0.54 — it would have missed the corner by 0.01**.
+   The `front` metric separates distance far better (0.15 / 0.40 / 0.51), so
+   corner detection now uses `front` with a threshold of 0.38, firing ~40 cm out.
+3. **A fisheye sliver was mistaken for an opening.** With a wall spanning the
+   whole view, a **12-pixel-wide** artifact at the extreme frame edge — where the
+   wide lens sees *past* the wall — was selected as the gap and produced a
+   **+23° steer into the wall**. Fixed by requiring a gap to be at least **60
+   columns** wide (the car is ~20 cm wide, so a real opening occupies a large
+   fraction of the frame) and by ignoring 20 edge columns instead of 10.
+
+**Result.** At 25 cm the navigator now reports `front=0.51 CORNER!` and
+`NO GAP - blocked`, and the full decision chain commands a committed **−35° turn
+with speed automatically reduced to 50 %**. Perception is also extremely stable:
+20 consecutive frames of a static scene produced *identical* readings, so there is
+no jitter entering the steering loop.
+
+**Lesson.** Validating perception separately from control, with the robot
+stationary at measured distances, found three failures that would each have caused
+a crash — and cost nothing but a few minutes. Numbers from the field, not intuition,
+set every threshold.
+
 ## 8. Software architecture
 
 We consolidated all hardware and vision logic into a single shared library
