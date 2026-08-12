@@ -56,6 +56,24 @@ PROC_W, PROC_H = 320, 160   # processing buffer size
 BLUR_KSIZE = 5          # median blur before HSV (0/1 = off) - kills sensor noise
 
 # ==========================================================================
+# WHAT COUNTS AS A WALL
+# ==========================================================================
+# A plain "value < 62" test also catches the BLUE and ORANGE corner lines and the
+# mat's printed dotted markings, because they are dark too. They were being
+# counted as walls on every frame - and unevenly between the two halves, so they
+# injected a steering bias (measured on a failure frame: left 0.164 -> 0.072,
+# right 0.256 -> 0.172 once removed).
+#
+# A real wall is either VERY dark, or dark AND desaturated. The first case matters
+# because HSV saturation is numerically unstable at very low brightness - a black
+# wall can report S>200 from noise, so a saturation test alone throws real walls
+# away (it discarded 99% of a nose-to-wall frame).
+WALL_V_HARD = 32        # below this it is a wall regardless of saturation
+WALL_V_SOFT = 62        # up to this it is a wall ONLY if desaturated
+WALL_S_MAX = 90         # coloured lines exceed this and are rejected
+WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
+
+# ==========================================================================
 # WALL DENSITY METHOD  (KyivRoboMagic style - the proven fallback)
 # ==========================================================================
 WALL_TARGET = 0.14      # outer-wall fill when nicely positioned

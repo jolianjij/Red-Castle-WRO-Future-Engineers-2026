@@ -145,6 +145,30 @@ def mask(hsv, name, clean=True):
     return m
 
 
+_WK = None
+
+
+def wall_mask(hsv):
+    """Pixels that are genuinely a WALL - not a coloured line, not a mat marking.
+
+    wall = (V < WALL_V_HARD)              very dark: definitely wall
+           or (V < WALL_V_SOFT and S < WALL_S_MAX)   dark AND desaturated
+    then a morphological open to drop the small printed dots.
+
+    The two-case test matters: HSV saturation is unreliable when V is tiny, so a
+    black wall can read S>200 from noise. Testing saturation alone rejects real
+    walls; testing brightness alone accepts the blue/orange lines.
+    """
+    global _WK
+    if _WK is None:
+        _WK = np.ones((WALL_OPEN_K, WALL_OPEN_K), np.uint8)
+    S = hsv[:, :, 1]
+    V = hsv[:, :, 2]
+    m = ((V < WALL_V_HARD) | ((V < WALL_V_SOFT) & (S < WALL_S_MAX)))
+    m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, _WK)
+    return m > 0
+
+
 def read_hsv(cam):
     """Grab a frame, crop the mat ROI, return (proc_bgr, hsv).
     A median blur is applied first - the short exposure + high gain makes the
@@ -171,7 +195,7 @@ def wall_base_rows(hsv, min_run=None):
     """
     if min_run is None:
         min_run = FREE_MIN_RUN
-    m = mask(hsv, "black") > 0
+    m = wall_mask(hsv)
     H, W = m.shape
     cs = np.cumsum(m.astype(np.int32), axis=0)
     win = np.zeros((H, W), dtype=np.int32)
@@ -226,7 +250,7 @@ def gap_steer(center_x):
 
 def wall_readings(hsv):
     """Return (left_wall, right_wall) as black-fraction of each ROI half."""
-    m = mask(hsv, "black")
+    m = wall_mask(hsv)
     half = PROC_W // 2
     area = half * PROC_H
     left = int(np.count_nonzero(m[:, :half])) / area
@@ -237,7 +261,7 @@ def wall_readings(hsv):
 def front_reading(hsv):
     """Black fill fraction straight AHEAD (centre columns, upper rows).
     High = a wall is close in front = we are at a corner."""
-    m = mask(hsv, "black")
+    m = wall_mask(hsv)
     c0 = int(PROC_W * (1 - FRONT_COLS) / 2)
     c1 = PROC_W - c0
     r1 = int(PROC_H * FRONT_ROWS)
