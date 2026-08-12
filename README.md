@@ -675,5 +675,4 @@ other/                     # BOM, rulebook, misc
 **Focus areas:** Robotics, Artificial Intelligence, Electronics
 📧 rashwanlouay@gmail.com
 
-Built on a Raspberry Pi 4 with an OV5647 wide-angle camera. Reference study: Team
-KyivRoboMagic (Ukraine, WRO 2024).
+Built on a Raspberry Pi 4 with an OV5647 wide-angle camera.
