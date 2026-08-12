@@ -5,7 +5,7 @@
 | Person | Role | File |
 |---|---|---|
 | **Ahmad Kalthom** | Coach | [`ahmad-kalthom.jpg`](ahmad-kalthom.jpg) |
-| **Jolian Wassof** | Team member | _pending — no individual photo yet_ |
+| **Jolian Wassof** | Team member | [`jolian-wassof.jpg`](jolian-wassof.jpg) |
 | **Omar Shammout** | Team member | [`omar-shammout.jpg`](omar-shammout.jpg) |
 | **Louay Rashwan** | Team member | [`louay-rashwan.jpg`](louay-rashwan.jpg) |
 
@@ -20,5 +20,4 @@ automatically.
 | [`team-official.jpg`](team-official.jpg) | official team photo — all four members |
 | [`team-fun.jpg`](team-fun.jpg) | fun / informal photo (the team "testing" the field the hard way) |
 
-## Still needed
-- [ ] An individual photo of **Jolian Wassof** to complete the member set.
+All member and group photos are complete.

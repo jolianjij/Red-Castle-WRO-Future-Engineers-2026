@@ -17,7 +17,7 @@ Two days to go. **📷 = only you can do it · 🤖 = Claude can do/commit.**
 - [ ] 🧩 `models/3d-parts/` — full Fusion 360 robot assembly + part files
 - [ ] 🧩 `models/printing/` — STL files + sliced plates with print settings
 - [x] ✍️ Team names + roles in `README.md`
-- [x] 📷 Member photos → Ahmad, Omar, Louay done — **Jolian's individual photo still missing**
+- [x] 📷 Member photos → all 4 members done (Ahmad, Jolian, Omar, Louay)
 - [x] ✍️ Bio + email for each member — filled in README §12
 
 ## 🟡 Recommended (higher documentation score)
