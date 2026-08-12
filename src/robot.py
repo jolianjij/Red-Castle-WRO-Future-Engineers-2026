@@ -551,6 +551,69 @@ def cruise_speed(base, steer):
 # One place decides how the car steers, so both challenges behave identically
 # and NAV_METHOD in config.py actually switches the strategy.
 # --------------------------------------------------------------------------
+class OuterWallFollower:
+    """PD on the distance to the OUTER wall ONLY.
+
+    This is the control law used by the strongest camera-only WRO teams. Why one
+    wall and not centring: in the Open Challenge the INNER walls are placed at
+    random distances each round, so the corridor width changes. Centring chases a
+    moving reference; the outer wall is the one constant on the track.
+
+      clockwise         -> outer wall is on the LEFT
+      counter-clockwise -> outer wall is on the RIGHT
+
+    error = (outer - OUTER_TARGET), signed so that "too close to the outer wall"
+    always steers away from it.
+    """
+
+    def __init__(self, kp=None, kd=None):
+        self.kp = OUTER_KP if kp is None else kp
+        self.kd = OUTER_KD if kd is None else kd
+        self._prev = 0.0
+
+    def steer(self, left, right, direction):
+        if direction >= 0:            # CW  - follow the LEFT wall
+            err = left - OUTER_TARGET
+        else:                         # CCW - follow the RIGHT wall
+            err = OUTER_TARGET - right
+        if abs(err) < OUTER_DEADBAND:
+            err = 0.0
+        out = self.kp * err + self.kd * (err - self._prev)
+        self._prev = err
+        return max(-STEER_MAX, min(STEER_MAX, out))
+
+
+class TurnSequencer:
+    """A scripted 90 deg corner turn, triggered by CROSSING THE LINE.
+
+    Deterministic by design: the line tells us we are physically at the corner,
+    so we hold full lock for a fixed time instead of waiting for a tuned
+    front-wall fraction to cross a threshold. Wall following is suspended while
+    the turn runs; the wall EMERGENCY still overrides it.
+    """
+
+    def __init__(self):
+        self.active = False
+        self._until = 0.0
+        self._dir = 0
+
+    def trigger(self, direction):
+        if direction == 0:
+            return
+        self.active = True
+        self._dir = direction
+        self._until = time.monotonic() + TURN_DURATION_S
+        print(f"[turn] scripted {'RIGHT' if direction > 0 else 'LEFT'} turn "
+              f"for {TURN_DURATION_S:.1f}s")
+
+    def update(self):
+        if self.active and time.monotonic() >= self._until:
+            self.active = False
+
+    def steer(self):
+        return STEER_MAX * TURN_LOCK_FRAC * (1.0 if self._dir > 0 else -1.0)
+
+
 def _apply_bias(steer):
     """Add the straight-line drift trim and re-clamp.
 
@@ -563,7 +626,7 @@ def _apply_bias(steer):
     return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
 
 
-def navigate(hsv, left, right, laps, follower):
+def navigate(hsv, left, right, laps, follower, outer=None, turner=None):
     """Return (steer_deg, mode_string) for this frame.
 
     Priority:
@@ -594,6 +657,13 @@ def navigate(hsv, left, right, laps, follower):
         if right > WALL_EMERGENCY:
             push -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.12)
         return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
+
+    # ---- NAV_METHOD "outer": scripted line-triggered turn, else outer-wall PD --
+    if NAV_METHOD == "outer":
+        turner.update()
+        if turner.active:
+            return turner.steer(), "turn"
+        return _apply_bias(outer.steer(left, right, laps.direction)), "outer"
 
     if laps.in_corner:
         bias = laps.turn_bias()

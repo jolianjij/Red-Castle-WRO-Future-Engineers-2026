@@ -22,11 +22,9 @@ SERVO_HZ = 50
 MOTOR_HZ = 1000
 
 STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
-STEER_MAX = 35          # deg - max steering deviation from centre.
-                        # 35 deg is the MECHANICAL limit of the Ackermann linkage.
-                        # We can use the full range because the rear axle has a
-                        # DIFFERENTIAL - without one, large angles scrubbed the
-                        # driven wheels and we had to cap this near 8 deg.
+STEER_MAX = 20          # deg - SOFTWARE steering limit actually used when driving.
+                        # The Ackermann linkage reaches 35 deg mechanically, but the
+                        # car is run at 20 for stability at full speed.
 SERVO_MIN_DUTY = 2.5    # duty at 0 deg
 SERVO_MAX_DUTY = 12.5   # duty at 180 deg
 
@@ -95,6 +93,27 @@ GAP_KP = 80.0           # steering gain on the gap-centre error.
                         # frames steered less than 2 deg - far too weak.
 GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
                         # ahead is blocked -> commit to the locked turn direction
+
+# ==========================================================================
+# OUTER-WALL METHOD  ("outer")  <-- the approach proven by the strongest
+# camera-only teams (KyivRoboMagic 2024 international final, Maverick 2025).
+# ==========================================================================
+# ONE reference, ONE error term: the distance to the OUTER wall.
+#   clockwise        -> the outer wall is on the LEFT
+#   counter-clockwise-> the outer wall is on the RIGHT
+# The inner walls are randomised each round, so they are never referenced at all.
+# There is no gap threshold and no front-wall threshold to tune.
+OUTER_TARGET = 0.14     # desired outer-wall fill. Bigger = hug the outer wall
+                        # closer. This is the ONLY position setpoint.
+OUTER_KP = 160.0        # proportional gain on (outer - OUTER_TARGET)
+OUTER_KD = 45.0         # derivative gain, damps the weave
+OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
+
+# CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
+# Crossing the driving-direction line means we are physically at the corner, so
+# the turn timing is deterministic instead of depending on a front-wall fraction.
+TURN_DURATION_S = 1.1   # how long to hold full lock through a 90 deg corner
+TURN_LOCK_FRAC = 1.0    # fraction of STEER_MAX to use during the turn
 
 # ==========================================================================
 # CORNERS / LAP COUNTING
@@ -190,10 +209,12 @@ PARK_KP = 90.0
 # COMPETITION SPECIAL CASES
 # Flip these at the venue without touching any logic.
 # ==========================================================================
-NAV_METHOD = "gap"      # "gap"     = free-space follow-the-gap (method B)
+NAV_METHOD = "outer"    # "outer"   = outer-wall PD + line-triggered turn (PROVEN)
+                        # "gap"     = free-space follow-the-gap
+                        # "density" = KyivRoboMagic wall-density fallback
                         # "density" = KyivRoboMagic wall-density (proven fallback)
 
-FORCE_DIRECTION = 1     # FORCED CLOCKWISE for this run (set back to 0 for auto)
+FORCE_DIRECTION = 0     # 0 = auto-detect from the first line seen (+ geometry)
                         # +1 = force clockwise, -1 = force counter-clockwise
                         # Use this if the judges tell you the run direction.
 

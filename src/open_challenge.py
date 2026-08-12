@@ -34,6 +34,8 @@ def main():
 
     laps = R.LapTracker()
     follower = R.WallFollower()
+    outer = R.OuterWallFollower()      # used when NAV_METHOD == "outer"
+    turner = R.TurnSequencer()         # scripted line-triggered corner turn
 
     # --- logging ---
     os.makedirs("logs", exist_ok=True)
@@ -61,10 +63,15 @@ def main():
             left, right = R.wall_readings(hsv)
             front = R.front_reading(hsv)
             blue, orange = R.line_counts(hsv)
+            q_before = laps.quadrant
             laps.update(blue, orange, left, right, front)
+            if laps.quadrant > q_before and R.NAV_METHOD == "outer":
+                turner.trigger(laps.direction)
 
             # single dispatch point - honours NAV_METHOD ("gap" or "density")
-            steer, mode = R.navigate(hsv, left, right, laps, follower)
+            # a counted quadrant means we just crossed the corner line ->
+            # fire the scripted turn (only used by NAV_METHOD == "outer")
+            steer, mode = R.navigate(hsv, left, right, laps, follower, outer, turner)
             speed = R.cruise_speed(CRUISE, steer)
             R.servo(steer)
             R.motor(speed)
