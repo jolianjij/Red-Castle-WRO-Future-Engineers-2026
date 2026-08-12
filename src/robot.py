@@ -293,17 +293,27 @@ class LapTracker:
         self.quadrant = 0
         self.cycle = 0
         self.in_corner = False
+        self.front = 0.0
         self._next_ok = 0
         # TIME-based guards (frame-rate independent - the reliable ones)
         self._last_corner_t = 0.0          # 0 = no corner counted yet
         self.last_gap_s = 0.0              # seconds between the last two corners
-        # optional colour cross-check
+        # colour line edge detection
         self.blue_state = 0
         self.orange_state = 0
         self._blue_det = False
         self._orange_det = False
         self._blue_next = 0
         self._orange_next = 0
+        # ---- SENSOR FUSION bookkeeping (visible in the log) ----
+        self.direction_source = "none"     # what locked the direction
+        self.direction_confirmed = False   # geometry AND lines agreed
+        self.corner_source = ""            # "geom", "line", or "geom+line"
+        self.line_hint = 0                 # what the colour lines say  (+1/-1/0)
+        self.geom_hint = 0                 # what the wall geometry says (+1/-1/0)
+        self.disagreements = 0             # times the two signals conflicted
+        self.corners_geom = 0              # corners first seen by geometry
+        self.corners_line = 0              # corners first seen by a line
 
     def _line_edges(self, blue_frac, orange_frac):
         if blue_frac > LINE_FRACTION:
@@ -335,44 +345,92 @@ class LapTracker:
         fall back to the old left+right density test."""
         self.cycle += 1
         self._line_edges(blue_frac, orange_frac)
-        self.front = front
-
-        # direction hint from the coloured lines (only before it is locked)
-        if self.direction == 0 and USE_LINES_FOR_DIRECTION:
-            if self.orange_state != 0:
-                self._lock_direction(1, "orange line")
-            elif self.blue_state != 0:
-                self._lock_direction(-1, "blue line")
-
+        self.front = front if front is not None else (left + right)
         now = time.monotonic()
-        # prefer the front-wall signal (better distance separation); fall back to
-        # the combined left+right density if front was not supplied
+
+        # ------------------------------------------------------------------
+        # SIGNAL 1 - colour lines.  WRO convention: orange first = clockwise,
+        # blue first = counter-clockwise.
+        # ------------------------------------------------------------------
+        line_now = 0
+        if USE_LINES_FOR_DIRECTION:
+            if self.orange_state != 0:
+                line_now = 1
+            elif self.blue_state != 0:
+                line_now = -1
+        if line_now and not self.line_hint:
+            self.line_hint = line_now
+
+        # ------------------------------------------------------------------
+        # SIGNAL 2 - wall geometry.  A wall ahead means a corner; the side with
+        # more free space is the way the track turns.
+        # ------------------------------------------------------------------
         if front is not None:
             enter, exit_, metric = FRONT_ENTER, FRONT_EXIT, front
         else:
             enter, exit_, metric = CORNER_TOTAL, CORNER_TOTAL * 0.75, left + right
+        geom_corner = metric > enter
+
+        # ------------------------------------------------------------------
+        # FUSION - direction.  Whichever signal arrives first locks it; the
+        # second one CONFIRMS it (or is logged as a disagreement). Once locked
+        # the direction never changes.
+        # ------------------------------------------------------------------
+        if self.direction == 0 and self.line_hint:
+            self._lock_direction(self.line_hint, "colour line")
+        if geom_corner and abs(left - right) >= GEOM_DIR_MIN_DIFF:
+            # only trust geometry for DIRECTION when one side is clearly more
+            # open; near-symmetric readings carry no information
+            g = -1 if left < right else 1
+            if not self.geom_hint:
+                self.geom_hint = g
+            if self.direction == 0:
+                self._lock_direction(g, "corner geometry")
+
+        if (self.line_hint and self.geom_hint and not self.direction_confirmed):
+            if self.line_hint == self.geom_hint:
+                self.direction_confirmed = True
+                print(f"[lap] direction CONFIRMED by both signals "
+                      f"({'CW' if self.direction > 0 else 'CCW'})")
+            else:
+                self.disagreements += 1
+                self.direction_confirmed = True   # decided; stop re-reporting
+                print(f"[lap] WARNING: signals disagree - line says "
+                      f"{'CW' if self.line_hint > 0 else 'CCW'}, geometry says "
+                      f"{'CW' if self.geom_hint > 0 else 'CCW'}. Keeping "
+                      f"{'CW' if self.direction > 0 else 'CCW'} "
+                      f"(locked by {self.direction_source}).")
+
+        # ------------------------------------------------------------------
+        # FUSION - corner counting.  EITHER signal can raise a corner; the time
+        # guard below means a corner seen by both is still counted only ONCE.
+        # ------------------------------------------------------------------
+        drive_line_edge = False
+        if USE_LINES_FOR_CORNERS and self.direction != 0:
+            # only the line matching our travel direction marks a lap corner
+            drive_line_edge = (self.orange_state == 2 if self.direction > 0
+                               else self.blue_state == 2)
 
         if not self.in_corner:
-            # a wall has appeared ahead -> we are entering a corner.
-            # TWO guards so one physical corner can never be counted twice:
-            #   1. cycle debounce  2. minimum SECONDS since the last corner
             since = now - self._last_corner_t if self._last_corner_t else 1e9
-            if (metric > enter
+            if ((geom_corner or drive_line_edge)
                     and self.cycle >= self._next_ok
                     and since >= CORNER_MIN_INTERVAL_S):
+                src = "geom+line" if (geom_corner and drive_line_edge) else (
+                      "geom" if geom_corner else "line")
+                self.corner_source = src
+                if geom_corner:
+                    self.corners_geom += 1
+                else:
+                    self.corners_line += 1
                 self.in_corner = True
                 self.quadrant += 1
                 self._next_ok = self.cycle + CORNER_DEBOUNCE
                 self.last_gap_s = 0.0 if since > 1e8 else since
                 self._last_corner_t = now
-                # lock the turn direction at the FIRST corner: turn toward open space
-                if self.direction == 0:
-                    self._lock_direction(-1 if left < right else 1,
-                                         "first corner geometry")
                 print(f"[lap] corner {self.quadrant}/{QUADRANTS_PER_RUN} "
-                      f"(+{self.last_gap_s:.1f}s)")
+                      f"via {src} (+{self.last_gap_s:.1f}s)")
         else:
-            # left the corner once the way ahead is clear again
             if metric < exit_:
                 self.in_corner = False
 
@@ -381,7 +439,16 @@ class LapTracker:
         car flipping from counter-clockwise to clockwise mid-run."""
         if self.direction == 0 and d != 0:
             self.direction = d
+            self.direction_source = why
             print(f"[lap] direction locked {'CW' if d > 0 else 'CCW'} ({why})")
+
+    def summary(self):
+        """One-line fusion report for the end of a run."""
+        return (f"direction={'CW' if self.direction > 0 else 'CCW' if self.direction else '?'}"
+                f" via {self.direction_source}"
+                f"{' (CONFIRMED by both)' if self.direction_confirmed else ''}"
+                f" | corners={self.quadrant} (geom {self.corners_geom}, line {self.corners_line})"
+                f" | disagreements={self.disagreements}")
 
     def stalled(self):
         """True if no corner has been seen for suspiciously long (log a warning)."""

@@ -353,6 +353,34 @@ flowchart TD
     M -- yes --> N([Stop: motor 0, servo centre])
 ```
 
+### 5.1b-2 Sensor fusion: geometry + colour lines
+
+Direction and lap counting use **two independent signals** that cross-check each
+other, so neither is a single point of failure:
+
+| Signal | Strength | Weakness | What it drives |
+|---|---|---|---|
+| **Wall geometry** (front-wall fill) | always available; needs no colour calibration | says little about *which way* the track turns when the view is symmetric | **corner detection & lap counting** |
+| **Colour lines** (orange = CW, blue = CCW) | the official WRO cue, unambiguous about direction | depends on colour tuning and lighting; may not be in frame | **direction** |
+
+**Fusion rules**
+- **Direction:** whichever signal arrives first locks it. The second either
+  **CONFIRMS** it (logged) or raises a **disagreement warning** — and the
+  direction never changes once locked.
+- **Corners:** *either* signal may raise a corner. The **time guard**
+  (`CORNER_MIN_INTERVAL_S`) means a corner seen by *both* is still counted
+  **once**, so fusion adds robustness without risking double counts. The log
+  records which source fired (`geom`, `line`, or `geom+line`).
+- **Geometry only votes on direction when it actually knows.** Measured head-on to
+  a corner, the two image halves read 0.26 vs 0.22 — a 0.04 difference that is
+  noise, not information. It produced a confident but arbitrary guess that fought
+  a correct colour cue. Geometry now requires `|left−right| ≥ GEOM_DIR_MIN_DIFF`
+  (0.08) before offering an opinion.
+
+Every run's log ends with a fusion summary, e.g.
+`direction=CCW via colour line | corners=12 (geom 11, line 1) | disagreements=0`,
+so after a run you can see exactly which sensor did the work.
+
 ### 5.1c Obstacle Challenge state machine
 
 Steering is decided by a strict **priority**, so a lower-priority behaviour can

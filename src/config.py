@@ -112,7 +112,19 @@ MAX_RUNTIME_S = 90      # SAFETY: hard stop after this long
 # ==========================================================================
 LINE_FRACTION = 0.020   # a line is "present" above this fraction of the ROI
 LINE_DEBOUNCE = 10      # cycles before the same line can trigger again
+# SENSOR FUSION. Both signals run together and cross-check each other:
+#   geometry (front wall)  - always available, never depends on colour tuning
+#   colour lines           - the official WRO cue (orange=CW, blue=CCW)
+# Direction: whichever arrives first locks it, the second CONFIRMS or warns.
+# Corners:   EITHER may raise one; the time guard means it is still counted once.
 USE_LINES_FOR_DIRECTION = True   # False = decide direction purely from geometry
+USE_LINES_FOR_CORNERS = True     # False = count corners from geometry only
+GEOM_DIR_MIN_DIFF = 0.08         # |left-right| must exceed this before the wall
+                                 # geometry is allowed an opinion on direction.
+                                 # MEASURED: head-on to a corner the two halves
+                                 # read 0.26 vs 0.22 (diff 0.04) - too symmetric
+                                 # to mean anything, and it produced a confident
+                                 # but arbitrary guess that fought the line cue.
 
 # ==========================================================================
 # OBSTACLE CHALLENGE - traffic signs

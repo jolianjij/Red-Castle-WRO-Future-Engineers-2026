@@ -95,6 +95,8 @@ def main():
         summary = (f"FINISHED ({reason}): quadrants={laps.quadrant} "
                    f"cycles={n} time={dt:.1f}s avg={1000*dt/max(n,1):.1f}ms/cycle")
         print(summary)
+        print("  fusion: " + laps.summary())
+        log.writerow(["#", laps.summary()])
         log.writerow([])
         log.writerow(["#", summary])
     except KeyboardInterrupt:
