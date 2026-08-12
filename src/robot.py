@@ -113,10 +113,11 @@ _K = np.ones((3, 3), np.uint8)
 _DEFAULT_COLORS = {
     "black":   [0, 179, 0, 255, 0, 70],
     "blue":    [90, 135, 60, 255, 70, 200],
-    "orange":  [8, 25, 45, 255, 70, 255],   # H clear of red(0-10); low S/V
-                                            # floors - this scene peaks at S=109
+    "orange":  [3, 22, 50, 165, 70, 255],   # MEASURED hue~5-8, S~90.  S ceiling
+                                            # 165 is what keeps red out of orange.
     "green":   [45, 90, 120, 255, 60, 240],
-    "red":     [170, 10, 120, 255, 60, 240],
+    "red":     [170, 5, 150, 255, 60, 255], # MEASURED hue~178, S~252. High S
+                                            # floor separates it from the line.
     "magenta": [130, 145, 177, 255, 93, 255],
 }
 if os.path.exists("colors.json"):
