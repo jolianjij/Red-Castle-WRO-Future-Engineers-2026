@@ -18,12 +18,12 @@
 - [x] 🧩 `models/printing/` — 5 sliced 3MF plates, ready to print
 - [x] ✍️ Team names + roles in `README.md`
 - [x] ✍️ Bio + email for each member — filled in README §12
-- [x] **Engineering Journal — `Engineering-Journal.pptx` and `.pdf`**, built in last year's template/structure with our current, accurate content
+- [x] **Engineering Journal — `Documentation.pdf`**, built in last year's template/structure with our current, accurate content (source: `build_pptx_journal.py` -> gitignored `Documentation.pptx` -> exported PDF)
 
 ## 🟡 Recommended (higher documentation score)
 - [ ] 🤖 Wiring pin-table / ASCII schematic in `schemes/` (text backup to the image)
 - [ ] 🤖 Assembly / build-steps section
-- [x] 🤖 Engineering journal narrative (design process, iterative debugging) — `ENGINEERING-JOURNAL.md`
+- [x] 🤖 Engineering journal narrative (design process, iterative debugging) — folded into `Documentation.pdf`'s Evolution section
 - [x] 🤖 BOM: battery (3×18650), buck converter, MG90S servo confirmed from the wiring diagram
 - [x] 🤖 BOM: N20 motor (12 V 200 rpm), differential, 25:20 gears, PLA+ Silk Silver / Bambu A1 / Fusion 360, Pi 2 GB
 - [x] 🤖 BOM: 20-part printed-parts table with quantities and fixed/moving status

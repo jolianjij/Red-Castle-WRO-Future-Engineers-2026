@@ -11,8 +11,8 @@ Documentation Requirements)**.
 | # | Requirement (rules §7) | Status |
 |---|---|---|
 | 1 | Documentation uploaded to a **public GitHub repository** | ✅ done |
-| 2 | **Hard copy** of the documentation submitted at the international final | ✅ print `Engineering-Journal.pdf` |
-| 3 | A structured **Engineering Journal (PDF or similar)** — Appendix C.2 | ✅ `Engineering-Journal.pptx` / `.pdf`, built via `build_pptx_journal.py` in last year's team template/structure |
+| 2 | **Hard copy** of the documentation submitted at the international final | ✅ print `Documentation.pdf` |
+| 3 | A structured **Engineering Journal (PDF or similar)** — Appendix C.2 | ✅ `Documentation.pdf`, built via `build_pptx_journal.py` in last year's team template/structure |
 | 4 | Discussion/motivation for **mobility**, **power & sense**, and **obstacle management** | ✅ README §3, §4, §5 |
 | 5 | Photos of the vehicle **from every side, top and bottom** | ✅ `v-photos/` (6 photos) |
 | 6 | **Team photo** | ✅ `t-photos/` (member + group photos) |

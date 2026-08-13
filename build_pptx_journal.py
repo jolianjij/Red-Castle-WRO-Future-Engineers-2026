@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-build_pptx_journal.py - builds Engineering-Journal.pptx from the repo's own
-documentation (README.md, ENGINEERING-JOURNAL.md, config.py, the BOM) and the
-available photos/renders, following the section structure used in the team's
-2025 documentation (Team -> Introduction -> Solution -> Mobility Management ->
+build_pptx_journal.py - builds the submitted Documentation.pdf from the
+repo's own content (README.md, config.py, the BOM) and the available
+photos/renders, following the section structure used in the team's 2025
+documentation (Team -> Introduction -> Solution -> Mobility Management ->
 Power and Sense Management -> Robot's Evolution -> Photos -> Links).
 
 Run:  python build_pptx_journal.py
-Produces: Engineering-Journal.pptx  (open in PowerPoint, or run
-          build_pptx_to_pdf.py / export manually to get the PDF for the
-          hard-copy submission).
+Produces: Documentation.pptx (gitignored working file -- open in PowerPoint
+          to review, or export to PDF manually). To regenerate the committed
+          Documentation.pdf, open Documentation.pptx in PowerPoint and use
+          File -> Export -> Create PDF/XPS, or run the equivalent PowerPoint
+          COM SaveAs(..., 32) from a script.
 """
 import os
 
@@ -1001,5 +1003,5 @@ textbox(s, Inches(0.7), Inches(5.05), Inches(11.9), Inches(1.8),
     "kept the project moving through every dead end along the way.",
     size=15, color=DARK)
 
-prs.save(os.path.join(ROOT, "Engineering-Journal.pptx"))
-print("saved -> Engineering-Journal.pptx  (%d slides)" % len(prs.slides))
+prs.save(os.path.join(ROOT, "Documentation.pptx"))
+print("saved -> Documentation.pptx  (%d slides) -- export to PDF and save as Documentation.pdf" % len(prs.slides))

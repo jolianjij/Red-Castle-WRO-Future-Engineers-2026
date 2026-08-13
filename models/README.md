@@ -33,7 +33,7 @@ An **N20 gear motor (12 V, 200 rpm)** drives the axle through a **25:20 spur
 pair (1.25:1)** into the differential. The differential lets the driven wheels
 turn at different speeds through a corner, which is what allows the full ±35°
 of steering — an earlier solid axle scrubbed and forced the software limit
-down to ~8°. See [`../ENGINEERING-JOURNAL.md`](../ENGINEERING-JOURNAL.md).
+down to ~8°. See [`../Documentation.pdf`](../Documentation.pdf).
 
 ## Chassis
 

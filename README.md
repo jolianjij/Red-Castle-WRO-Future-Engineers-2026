@@ -128,7 +128,7 @@ pair (1.25:1 reduction)** into a **differential**.
 > roughly **8°**, which kept traction but left the car unable to corner properly.
 > Fitting a **differential** removed the constraint at its source: the wheels can
 > now rotate at different speeds, so we run the **full ±35°** of the linkage and
-> corner tightly without scrub. See [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md).
+> corner tightly without scrub. See [`Documentation.pdf`](Documentation.pdf) §5.
 
 The motor is driven by an **L9110S** dual H-bridge:
 
@@ -640,7 +640,7 @@ parts, fasteners and battery combined).
 The interesting part of this project was making one camera and a cheap drivetrain
 reliable. The full design log — sensor choice, the power-brownout debugging, the
 motor stall, the no-differential steering decision, and the camera focus/exposure
-tuning — is in **[`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md)**.
+tuning — is in the Evolution section of **[`Documentation.pdf`](Documentation.pdf)**.
 
 ## 10. Results & future work
 
@@ -651,7 +651,7 @@ contact. Both driving directions are demonstrated in the submitted video.
 
 The decisive fix was not in the controller but in the perception: the wall
 detector had been counting the blue and orange corner lines, and the mat's printed
-markings, as walls — see [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md). Once
+markings, as walls — see [`Documentation.pdf`](Documentation.pdf) §5. Once
 corrected, every distance constant was re-measured, so the control setpoints are
 now real distances (driving line 40 cm from the outer wall, emergency at 18 cm,
 full steering lock at 20 cm of error) rather than tuned pixel fractions.
@@ -681,8 +681,7 @@ field, and the wall test is being tightened against it.
 
 ```
 README.md                 # this engineering document
-ENGINEERING-JOURNAL.md     # design process & problem-solving log, problem->investigation->solution
-Engineering-Journal.pdf    # printable engineering journal (hard-copy submission)
+Documentation.pdf          # printable engineering journal (hard-copy submission)
 CHECKLIST.md               # submission checklist
 src/                       # control software (core + tools/)
 models/                    # 3D-printable parts + source CAD
