@@ -26,4 +26,4 @@
 - [x] Show the whole track so judges can see the vehicle stays inside the walls.
 - [x] Make it obvious the run is autonomous (hands visible and away after the start).
 - [x] Upload as **public or unlisted**, then paste the links above.
-- [ ] Verify the links open in a private/incognito window before submitting.
+- [x] Verify the links open in a private/incognito window before submitting.
