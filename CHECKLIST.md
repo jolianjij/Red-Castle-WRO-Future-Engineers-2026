@@ -24,7 +24,7 @@
 - [ ] 🤖 Wiring pin-table / ASCII schematic in `schemes/` (text backup to the image)
 - [ ] 🤖 Assembly / build-steps section
 - [x] 🤖 Engineering journal narrative (design process, iterative debugging) — `ENGINEERING-JOURNAL.md`
-- [x] 🤖 BOM: battery (3×18650), buck converter, SG90 servo confirmed from the wiring diagram
+- [x] 🤖 BOM: battery (3×18650), buck converter, MG90S servo confirmed from the wiring diagram
 - [x] 🤖 BOM: N20 motor (12 V 200 rpm), differential, 25:20 gears, PLA+ Silk Silver / Bambu A1 / Fusion 360, Pi 2 GB
 - [x] 🤖 BOM: 20-part printed-parts table with quantities and fixed/moving status
 - [x] 🤖 BOM: fasteners (M3×8 ×18, M3×20 ×4) and brass spacers (M-F 25 mm ×4, F-F 20 mm ×4)

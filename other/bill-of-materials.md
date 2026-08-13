@@ -15,7 +15,7 @@
 | 6 | **N20 gear motor** | 12 V, **200 rpm**, brushed micro gear motor — rear-axle drive | 1 |
 | 6a | **Differential** | rear axle differential — lets the driven wheels turn at different speeds | 1 |
 | 6b | Transmission gears | **25:20** spur pair (1.25:1 reduction), motor pinion → differential | 1 set |
-| 7 | **SG90** steering servo | 9 g micro servo; signal → GPIO13, powered from the Pi's 5 V | 1 |
+| 7 | **MG90S** steering servo | ~13 g metal-gear micro servo; signal → GPIO13, powered from the Pi's 5 V | 1 |
 | 8 | Drive wheels + tires | rear, on the differential axle, **4.7 cm** diameter | 2 |
 | 9 | Steering wheels (front) + Ackermann linkage | 3D-printed knuckles + tie-rod + servo horn | 1 set |
 

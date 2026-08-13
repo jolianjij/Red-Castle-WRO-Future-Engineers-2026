@@ -17,7 +17,7 @@ motor and gear cluster on the right.
   <img src="renders/chassis-top-steering-left.png" width="280" alt="Chassis, steering turned">
 </p>
 
-A single SG90 servo drives a central bell-crank through a tie-rod to both
+A single MG90S servo drives a central bell-crank through a tie-rod to both
 steering knuckles, so the inner wheel turns more sharply than the outer one
 through a corner. Mechanical limit **±35°**.
 

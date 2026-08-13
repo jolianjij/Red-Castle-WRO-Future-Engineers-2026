@@ -28,7 +28,7 @@ A rocker switch in the battery line is the master on/off.
 
 | Signal | Pi pin (BCM) | Goes to |
 |---|---|---|
-| Steering servo PWM | **GPIO13** | SG90 servo signal (orange/white) |
+| Steering servo PWM | **GPIO13** | MG90S servo signal (orange/white) |
 | Motor `A-IA` | **GPIO24** | L9110S input — PWM here = **forward** |
 | Motor `A-IB` | **GPIO23** | L9110S input — PWM here = **reverse** |
 | Start button | GPIO9 | push button to GND (optional, not required by the code) |

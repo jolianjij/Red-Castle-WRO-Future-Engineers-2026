@@ -471,7 +471,7 @@ textbox(s, Inches(1.0), Inches(6.15), Inches(11.3), Inches(1.0),
 s = add_slide(); bg(s)
 header_bar(s, "3. Mobility Management", "3.1  The Steering Assembly", number=num())
 textbox(s, Inches(0.6), Inches(1.3), Inches(6.6), Inches(5.7),
-    "Steering is Ackermann-style, driven by a single SG90 micro servo (GPIO13, "
+    "Steering is Ackermann-style, driven by a single MG90S micro servo (GPIO13, "
     "which is a hardware-PWM pin — a smoother, lower-jitter signal than a "
     "software-timed one).\n\n"
     "The servo turns a central bell-crank, which pushes a tie-rod out to both "
@@ -646,8 +646,8 @@ bullets(s, Inches(0.7), Inches(1.35), Inches(11.9), Inches(5.7), [
     "L9110S dual H-bridge motor driver — a compact two-pin-per-motor interface, "
     "chosen for its small size and simple PWM control, sitting on its own supply "
     "rail straight from the battery.",
-    "SG90 micro servo — 9 g, powered from the Pi's 5 V rail, driving the Ackermann "
-    "steering linkage.",
+    "MG90S micro servo — ~13 g, metal gear train, powered from the Pi's 5 V rail, "
+    "driving the Ackermann steering linkage.",
 ], size=15.5, gap=16)
 
 # ==========================================================================
@@ -672,11 +672,12 @@ rationale_rows = [
      "L298N's extra current headroom is wasted on a single N20 and it takes "
      "far more board space; L9110S needs only two GPIO pins and fits the "
      "chassis footprint we had."),
-    ("Servo", "SG90 micro servo, GPIO13 (HW-PWM)",
-     "MG90S metal-gear servo",
-     "The steering linkage's load never approached the point where MG90S's "
-     "extra torque or durability would matter; SG90 is lighter and cheap "
-     "enough to keep spares on hand."),
+    ("Servo", "MG90S micro servo, GPIO13 (HW-PWM)",
+     "SG90 micro servo",
+     "SG90's plastic gear train is the common failure point under repeated "
+     "full-lock steering — every scripted turn and wall-emergency escape "
+     "drives it to the end of travel. MG90S's metal gears take that abuse "
+     "in the same footprint and mounting, for a small weight and cost increase."),
     ("Battery", "3 x 18650 Li-ion, series (~11.1 V)",
      "2S/3S LiPo pack",
      "18650 cells swap individually without a balance charger, and 11.1 V "

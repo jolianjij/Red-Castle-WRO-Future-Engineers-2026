@@ -63,7 +63,7 @@ handling, a clean park, and — importantly — **thorough engineering documenta
 |---|---|
 | **Compute** | Raspberry Pi 4 Model B, **2 GB RAM** (Raspberry Pi OS *Bookworm*, 64-bit) |
 | **Sensor** | **OV5647 Wide-angle** camera (5 MP, ~120° FOV, **fixed focus**) — sole sensor |
-| **Steering** | **Ackermann** front steering, SG90 servo on **GPIO13**, **±35° max** |
+| **Steering** | **Ackermann** front steering, MG90S servo on **GPIO13**, **±35° max** |
 | **Drive** | **N20 gear motor** (12 V, 200 rpm) → **25:20 gear pair** → **differential** on the rear axle |
 | **Driver** | **L9110S** H-bridge on **GPIO24 / GPIO23** |
 | **Power** | 3 × 18650 (series) → motor driver directly; separate buck converter → Pi; common ground |
@@ -104,8 +104,10 @@ easy access to the wiring.
 </p>
 
 ### 3.2 Steering — Ackermann
-Front-wheel **Ackermann steering** driven by a single SG90 servo (GPIO13, a
-hardware-PWM pin for a smooth, low-jitter signal). The servo drives a central
+Front-wheel **Ackermann steering** driven by a single MG90S servo (GPIO13, a
+hardware-PWM pin for a smooth, low-jitter signal). Metal gears over the plain
+SG90 hold up better to the full-lock steering the scripted turns and wall-
+emergency escapes both drive it to repeatedly. The servo drives a central
 bell-crank and tie-rod to both steering knuckles, so the **inner wheel turns more
 sharply than the outer one** through a corner — each wheel follows its own turning
 radius instead of fighting the other.
@@ -232,7 +234,7 @@ Sizing the pack: what draws current, how much, and for how long.
 |---|---|---|---|---|
 | Raspberry Pi 4 (2 GB) | 5 V (buck) | ~0.6 A | ~1.2 A | rises while the vision loop runs |
 | OV5647 camera | 3.3 V via CSI | ~0.25 A | ~0.25 A | powered by the Pi, no separate rail |
-| SG90 steering servo | 5 V (buck) | ~0.15 A | ~0.7 A | peak only during a fast steering step |
+| MG90S steering servo | 5 V (buck) | ~0.15 A | ~0.7 A | peak only during a fast steering step |
 | N20 drive motor | 12 V (battery) | ~0.15 A | ~0.8 A | limited by the L9110S's ~0.8 A ceiling |
 | L9110S quiescent | 12 V | ~0.01 A | — | negligible |
 
@@ -516,7 +518,7 @@ flowchart LR
         PI[Raspberry Pi 4<br/>robot.py loop]
     end
     subgraph ACT[Actuation]
-        SRV[SG90 servo<br/>Ackermann]
+        SRV[MG90S servo<br/>Ackermann]
         MOT[N20 motor] --> GEAR[25:20] --> DIFF[Differential] --> WHL[Rear wheels]
     end
     BUCK --> PI

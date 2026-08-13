@@ -14,6 +14,10 @@ material) — reproduced as a table in [`../README.md`](../README.md).
 └── Mechanical-BOM.docx          source bill of materials
 ```
 
+Individual per-part renders (17 of 20, used as the BOM photo column) are in
+[`../renders/parts/`](../renders/parts) and shown in the BOM table in
+[`../README.md`](../README.md#bill-of-materials--3d-printed-parts).
+
 > **Still to add:** the full Fusion 360 robot assembly file (`.f3d` / `.step`),
-> the differential + steering assembly-with-pictures notes, and BOM photos for
-> each part.
+> the differential + steering assembly-with-pictures notes, and renders for
+> the last 2 parts (battery slider p2, wheel-mount-to-shaft).
