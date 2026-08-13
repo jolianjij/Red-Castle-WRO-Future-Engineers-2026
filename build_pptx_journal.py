@@ -487,10 +487,10 @@ textbox(s, Inches(0.6), Inches(1.3), Inches(6.6), Inches(5.7),
     "the true centre position — the field-calibrated trim is stored in "
     "servo_center.txt (currently -9°) and applied automatically.",
     size=14.5, color=DARK)
-picture_fit(s, img("front-steering-linkage.png"), Inches(7.5), Inches(1.35),
-           Inches(5.2), Inches(2.7), "Front steering linkage, top view")
-picture_fit(s, img("chassis-top-steering-left.png"), Inches(7.5), Inches(4.25),
-           Inches(5.2), Inches(2.7), "Steering turned, showing the linkage sweep")
+picture_fit(s, img("front-steering-linkage.png"), Inches(7.5), Inches(1.3),
+           Inches(5.2), Inches(2.55), "Front steering linkage, top view")
+picture_fit(s, img("chassis-top-steering-left.png"), Inches(7.5), Inches(4.35),
+           Inches(5.2), Inches(2.55), "Steering turned, showing the linkage sweep")
 
 # ==========================================================================
 # 3.2 DRIVING ASSEMBLY
@@ -516,10 +516,10 @@ textbox(s, Inches(0.6), Inches(1.3), Inches(6.6), Inches(5.7),
     "a corner cost so much traction we had to cap steering near 8° just to keep "
     "the car from stalling mid-turn.",
     size=14, color=DARK)
-picture_fit(s, img("rear-axle-differential-mesh.png"), Inches(7.5), Inches(1.35),
-           Inches(5.2), Inches(2.7), "N20 motor driving the differential gear mesh")
-picture_fit(s, img("rear-axle-differential-front.png"), Inches(7.5), Inches(4.25),
-           Inches(5.2), Inches(2.7), "Rear axle, front view")
+picture_fit(s, img("rear-axle-differential-mesh.png"), Inches(7.5), Inches(1.3),
+           Inches(5.2), Inches(2.55), "N20 motor driving the differential gear mesh")
+picture_fit(s, img("rear-axle-differential-front.png"), Inches(7.5), Inches(4.35),
+           Inches(5.2), Inches(2.55), "Rear axle, front view")
 
 # ==========================================================================
 # 3.3 ROBOT'S BODY / 3D DESIGN
@@ -533,8 +533,8 @@ textbox(s, Inches(0.6), Inches(1.3), Inches(11.9), Inches(0.85),
     "and central over the wheelbase.",
     size=14.5, color=DARK)
 picture_fit(s, img("full-assembly.png"), Inches(1.4), Inches(2.2),
-           Inches(10.5), Inches(3.2), "Full car assembly")
-textbox(s, Inches(0.6), Inches(5.55), Inches(11.9), Inches(1.5),
+           Inches(10.5), Inches(2.85), "Full car assembly")
+textbox(s, Inches(0.6), Inches(5.65), Inches(11.9), Inches(1.5),
     "Mass 407 g, overall footprint 14.2 x 9.3 x 15 cm, wheelbase 9.4 cm, rear "
     "track 8.5 cm — a wheelbase-to-track ratio close to 1:1, a stable "
     "proportion for cornering without tipping risk at this size.",
