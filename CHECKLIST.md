@@ -32,7 +32,7 @@
 - [x] 📏 Measurements: mass (407 g), wheel diameter (4.7 cm), wheelbase (9.4 cm), track (8.5 cm), dimensions (14.2×9.3×15 cm), camera height/tilt, servo trim (−9°)
 - [x] 🤖 Commit reference `colors.json`, `camera_settings.json`, `servo_center.txt` in `src/`
 - [ ] 📏 Measured (timed) real max speed — deliberately left as the theoretical figure; not being chased further
-- [ ] 📷 BOM part photos (one per printed part — placeholders are in `models/README.md`)
+- [x] 🤖 BOM part photos — 17/20 printed parts photographed individually in `models/renders/parts/` and filled into the BOM table; 2 gaps remain (battery slider p2, wheel-mount-to-shaft) noted at the bottom of `models/README.md`
 - [ ] 📷 Full Fusion 360 assembly file (`.f3d`/`.step`)
 - [ ] 🤖 Tag a `v1.0` GitHub release once everything below is settled
 
@@ -49,5 +49,5 @@
 - [ ] Total build cost — ~~needed~~ **received: ≈ $120** ✓
 - [ ] Fastener/spacer BOM — ~~needed~~ **received** ✓
 - [ ] Servo trim — ~~needed~~ **received: −9°** ✓
-- [ ] BOM part photos + Fusion assembly file (mentioned as coming)
+- [ ] Fusion assembly file — ~~BOM part photos~~ **received, 17/20 filled** ✓ (2 small gaps noted above)
 - [ ] Real measured max speed — explicitly not required per your instruction

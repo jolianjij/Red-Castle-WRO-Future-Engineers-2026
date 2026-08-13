@@ -60,25 +60,25 @@ All printed parts, quantities, and whether each is a fixed or moving part
 
 | Part | Qty | Fixed / Moving | Photo |
 |---|---|---|---|
-| Base | 1 | Fixed | _<photo: base plate>_ |
-| Middle plate | 1 | Fixed | _<photo: middle plate>_ |
-| Top plate | 1 | Fixed | _<photo: top plate>_ |
-| Camera holder | 1 | Fixed | _<photo: camera holder>_ |
-| Battery slider p1 | 1 | Fixed | _<photo: battery slider p1>_ |
-| Battery slider p2 | 1 | Moving | _<photo: battery slider p2>_ |
-| N20 motor holder | 1 | Fixed | _<photo: N20 holder>_ |
-| N20 gear | 1 | Moving | _<photo: N20 gear>_ |
-| Inner differential gear | 2 | Moving | _<photo: inner differential gear>_ |
-| Outer differential gear | 1 | Moving | _<photo: outer differential gear>_ |
-| Differential outer shell | 1 | Fixed | _<photo: differential outer shell>_ |
-| Inner gear with long shaft | 1 | Moving | _<photo: inner gear, long shaft>_ |
-| Inner gear with short shaft | 1 | Moving | _<photo: inner gear, short shaft>_ |
-| Ring | 2 | Moving | _<photo: ring>_ |
-| Steering base | 1 | Moving | _<photo: steering base>_ |
-| Steering base servo mount | 1 | Moving | _<photo: steering base servo mount>_ |
-| Steering nut | 2 | Moving | _<photo: steering nut>_ |
-| Steering wheel mount | 2 | Moving | _<photo: steering wheel mount>_ |
-| Wheel | 4 | Moving | _<photo: wheel>_ |
+| Base | 1 | Fixed | <img src="renders/parts/base.png" width="110"> |
+| Middle plate | 1 | Fixed | <img src="renders/parts/middle-plate.png" width="110"> |
+| Top plate | 1 | Fixed | <img src="renders/parts/top-plate.png" width="110"> |
+| Camera holder | 1 | Fixed | <img src="renders/parts/camera-holder.png" width="110"> |
+| Battery slider p1 | 1 | Fixed | <img src="renders/parts/battery-slider.png" width="110"> |
+| Battery slider p2 | 1 | Moving | _<photo: battery slider p2 — mating half not yet photographed separately>_ |
+| N20 motor holder | 1 | Fixed | <img src="renders/parts/n20-motor-holder.png" width="110"> |
+| N20 gear | 1 | Moving | <img src="renders/parts/n20-gear.png" width="110"> |
+| Inner differential gear | 2 | Moving | <img src="renders/parts/inner-differential-gear.png" width="110"> |
+| Outer differential gear | 1 | Moving | <img src="renders/parts/outer-differential-gear.png" width="110"> |
+| Differential outer shell | 1 | Fixed | <img src="renders/parts/differential-outer-shell.png" width="110"> |
+| Inner gear with long shaft | 1 | Moving | <img src="renders/parts/inner-gear-long-shaft.png" width="110"> |
+| Inner gear with short shaft | 1 | Moving | <img src="renders/parts/inner-gear-short-shaft.png" width="110"> |
+| Ring | 2 | Moving | <img src="renders/parts/ring.png" width="110"> |
+| Steering base | 1 | Moving | <img src="renders/parts/steering-base.png" width="110"> |
+| Steering base servo mount | 1 | Moving | <img src="renders/parts/steering-base-servo-mount.png" width="110"> |
+| Steering nut | 2 | Moving | <img src="renders/parts/steering-nut.png" width="110"> |
+| Steering wheel mount | 2 | Moving | <img src="renders/parts/steering-wheel-mount.png" width="110"> |
+| Wheel | 4 | Moving | <img src="renders/parts/wheel.png" width="110"> |
 | Wheel mount to shaft | 4 | Moving | _<photo: wheel mount to shaft>_ |
 
 **Print note:** moving parts need lubrication to reduce friction — we use
@@ -98,9 +98,10 @@ Vaseline on all mating surfaces listed as "Moving" above.
 ```
 models/
 ├── renders/       # CAD renders (above)
+│   └── parts/     # individual per-part renders, used in the BOM photo column
 ├── 3d-parts/      # source CAD — individual part STLs, by subassembly, + Mechanical-BOM.docx
 └── printing/      # 5 pre-sliced 3MF plates, ready to print on the Bambu Lab A1
 ```
 
-> **To add:** the full Fusion 360 assembly file and photos for the BOM table
-> above.
+> **To add:** the full Fusion 360 assembly file, a separate photo for battery
+> slider p2 (its mating half), and a photo for the wheel-to-shaft mount.

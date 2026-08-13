@@ -17,7 +17,8 @@ from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+from pptx.oxml.ns import qn
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,6 +27,11 @@ DARK = RGBColor(0x1A, 0x1A, 0x1A)
 GREY = RGBColor(0x55, 0x55, 0x55)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 LIGHT = RGBColor(0xF3, 0xF0, 0xEE)
+AMBER = RGBColor(0xE4, 0x9B, 0x1F)
+GREEN = RGBColor(0x2E, 0x7D, 0x32)
+FLOW_DECISION = RGBColor(0xFB, 0xEC, 0xD9)
+FLOW_ACTION = RGBColor(0xEF, 0xE3, 0xE1)
+FLOW_TERM = RGBColor(0xA4, 0x1D, 0x24)
 
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
@@ -37,7 +43,8 @@ BLANK = prs.slide_layouts[6]
 
 
 def img(name):
-    for sub in ("v-photos", "t-photos", "models/renders", "schemes", "other"):
+    for sub in ("v-photos", "t-photos", "models/renders", "models/renders/parts",
+                "schemes", "other", "other/testing-photos"):
         p = os.path.join(ROOT, sub, name)
         if os.path.exists(p):
             return p
@@ -138,6 +145,64 @@ def num():
 
 
 # ==========================================================================
+# FLOWCHART HELPERS (native pptx shapes, no external renderer needed)
+# ==========================================================================
+def flow_box(slide, cx, cy, w, h, text, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+             fill=FLOW_ACTION, line=RED, size=9.5, textcolor=DARK, bold=False):
+    l, t = int(cx - w / 2), int(cy - h / 2)
+    sh = slide.shapes.add_shape(shape, l, t, int(w), int(h))
+    sh.fill.solid(); sh.fill.fore_color.rgb = fill
+    sh.line.color.rgb = line; sh.line.width = Pt(1.25)
+    sh.shadow.inherit = False
+    tf = sh.text_frame
+    tf.word_wrap = True
+    tf.margin_left = Pt(3); tf.margin_right = Pt(3)
+    tf.margin_top = Pt(1); tf.margin_bottom = Pt(1)
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    for i, line_txt in enumerate(text.split("\n")):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.text = line_txt
+        p.alignment = PP_ALIGN.CENTER
+        for r in p.runs:
+            r.font.size = Pt(size)
+            r.font.color.rgb = textcolor
+            r.font.bold = bold
+            r.font.name = "Calibri"
+    return {"c": (cx, cy), "l": (l, cy), "r": (l + w, cy),
+            "t": (cx, t), "b": (cx, t + h), "w": w, "h": h}
+
+
+def flow_arrow(slide, pts, color=GREY, label=None, dashed=False):
+    pts = [(int(x), int(y)) for x, y in pts]
+    for i in range(len(pts) - 1):
+        x1, y1 = pts[i]
+        x2, y2 = pts[i + 1]
+        if x1 == x2 and y1 == y2:
+            continue
+        conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, x1, y1, x2, y2)
+        conn.line.color.rgb = color
+        conn.line.width = Pt(1.25)
+        ln = conn.line._get_or_add_ln()
+        if dashed:
+            ln.append(ln.makeelement(qn("a:prstDash"), {"val": "dash"}))
+        if i == len(pts) - 2:
+            ln.append(ln.makeelement(qn("a:tailEnd"), {"type": "triangle", "w": "med", "len": "med"}))
+    if label:
+        mi = (len(pts) - 1) // 2
+        mx = (pts[mi][0] + pts[mi + 1][0]) / 2
+        my = (pts[mi][1] + pts[mi + 1][1]) / 2
+        box = slide.shapes.add_textbox(int(mx - Inches(0.55)), int(my - Inches(0.14)),
+                                        Inches(1.1), Inches(0.26))
+        tf = box.text_frame; tf.word_wrap = False
+        tf.margin_left = 0; tf.margin_right = 0; tf.margin_top = 0; tf.margin_bottom = 0
+        p = tf.paragraphs[0]; p.text = label; p.alignment = PP_ALIGN.CENTER
+        for r in p.runs:
+            r.font.size = Pt(9); r.font.bold = True; r.font.color.rgb = color; r.font.name = "Calibri"
+        box.fill.solid(); box.fill.fore_color.rgb = WHITE
+        box.line.fill.background()
+
+
+# ==========================================================================
 # COVER
 # ==========================================================================
 s = add_slide(); bg(s, DARK)
@@ -164,25 +229,26 @@ header_bar(s, "Table of Contents")
 toc = [
     "1.  Introduction",
     "2.  Solution",
-    "      2.1  Open Challenge",
-    "      2.2  Obstacle Challenge",
+    "      2.1  Open Challenge   2.2  Obstacle Challenge",
+    "      2.3  Control-Loop Flowchart (Sense & Decide / Act & Loop)",
+    "      2.4  Obstacle Challenge Priority Flowchart",
     "3.  Mobility Management",
-    "      3.1  The Steering Assembly",
-    "      3.2  The Driving Assembly",
-    "      3.3  The Robot's Body / 3D Design",
+    "      3.1  The Steering Assembly   3.2  The Driving Assembly",
+    "      3.3  The Robot's Body / 3D Design   3.3b  Printed Parts Gallery",
     "      3.4  Mobility Measurement",
     "4.  Power and Sense Management",
-    "      4.1  The Robot's Power Source",
-    "      4.2  Main Components",
-    "      4.3  Wiring Diagram",
-    "      4.4  Sensing",
+    "      4.1  The Robot's Power Source   4.2  Main Components",
+    "      4.2b  Why We Chose Each Component",
+    "      4.3  Wiring Diagram   4.4  Sensing",
     "5.  The Robot's Evolution",
-    "      5.1  Past   5.2  Present   5.3  Future",
+    "      5.1  Past   5.1a  Camera Decision — Proof",
+    "      5.1b/c  Vision Testing — Flip, Colour, Masking, Calibration",
+    "      5.2  Present   5.3  Future",
     "6.  The Vehicle's Photos",
     "7.  Team",
     "8.  Links and Credits",
 ]
-bullets(s, Inches(0.9), Inches(1.4), Inches(11), Inches(5.8), toc, size=17, gap=8)
+bullets(s, Inches(0.9), Inches(1.4), Inches(11), Inches(5.9), toc, size=15.5, gap=7)
 
 # ==========================================================================
 # 1. INTRODUCTION
@@ -268,6 +334,138 @@ bullets(s, Inches(0.7), Inches(2.3), Inches(11.9), Inches(4.6), [
 ], size=15, gap=14)
 
 # ==========================================================================
+# 2.3 CONTROL-LOOP FLOWCHART I
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "2. Solution", "2.3  Control-Loop Flowchart — Sense & Decide", number=num())
+textbox(s, Inches(0.5), Inches(1.12), Inches(12.3), Inches(0.3),
+    "Every frame runs the same read -> decide -> act loop. navigate() in robot.py picks the "
+    "steering command in this strict priority order.", size=12.5, italic=True, color=GREY)
+
+LX = Inches(2.55)
+RX = Inches(9.9)
+A = flow_box(s, LX, Inches(1.62), Inches(2.1), Inches(0.34), "Start", shape=MSO_SHAPE.OVAL,
+             fill=FLOW_TERM, line=FLOW_TERM, textcolor=WHITE, size=10, bold=True)
+B = flow_box(s, LX, Inches(2.18), Inches(3.1), Inches(0.46), "Capture frame\n(OV5647, 180° flip)")
+C = flow_box(s, LX, Inches(2.76), Inches(3.1), Inches(0.46), "Crop mat ROI -> 320x160,\nmedian blur, convert HSV")
+D = flow_box(s, LX, Inches(3.34), Inches(3.1), Inches(0.46), "Measure L/R wall density,\nfront density, line fractions")
+E = flow_box(s, LX, Inches(3.92), Inches(3.1), Inches(0.46), "LapTracker.update:\ndirection + lap counting")
+F = flow_box(s, LX, Inches(4.62), Inches(3.1), Inches(0.62), "Either wall past\nWALL_EMERGENCY?",
+             shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+H = flow_box(s, LX, Inches(5.34), Inches(3.1), Inches(0.6), "Scripted turn\nactive?",
+             shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+J = flow_box(s, LX, Inches(6.04), Inches(3.1), Inches(0.6), "Front wall very close\n& direction known?",
+             shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+L = flow_box(s, LX, Inches(6.68), Inches(3.1), Inches(0.42), "Outer-wall PD control:\nhold distance to ONE wall",
+             fill=RGBColor(0xE3, 0xEE, 0xE2))
+
+G = flow_box(s, RX, Inches(4.62), Inches(2.9), Inches(0.5), "Proportional escape;\nfull lock if BOTH walls close")
+I = flow_box(s, RX, Inches(5.34), Inches(2.9), Inches(0.5), "Hold full lock in the\nlocked direction")
+K = flow_box(s, RX, Inches(6.04), Inches(2.9), Inches(0.5), "Trigger the turn anyway\n(geometry backup)")
+
+flow_arrow(s, [A["b"], B["t"]])
+flow_arrow(s, [B["b"], C["t"]])
+flow_arrow(s, [C["b"], D["t"]])
+flow_arrow(s, [D["b"], E["t"]])
+flow_arrow(s, [E["b"], F["t"]])
+flow_arrow(s, [F["b"], H["t"]], label="no")
+flow_arrow(s, [H["b"], J["t"]], label="no")
+flow_arrow(s, [J["b"], L["t"]], label="no")
+flow_arrow(s, [F["r"], G["l"]], label="yes")
+flow_arrow(s, [H["r"], I["l"]], label="yes")
+flow_arrow(s, [J["r"], K["l"]], label="yes")
+
+note = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.4), Inches(7.12), Inches(10.6), Inches(0.3))
+note.fill.solid(); note.fill.fore_color.rgb = LIGHT
+note.line.color.rgb = RED; note.line.width = Pt(1)
+ln = note.line._get_or_add_ln(); ln.append(ln.makeelement(qn("a:prstDash"), {"val": "dash"}))
+note.shadow.inherit = False
+tf = note.text_frame; tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+p = tf.paragraphs[0]; p.text = "G, I, K or L → the steering command continues on “Control-Loop Flowchart — Act & Loop”"
+p.alignment = PP_ALIGN.CENTER
+for r in p.runs:
+    r.font.size = Pt(11); r.font.italic = True; r.font.color.rgb = RED; r.font.name = "Calibri"
+
+# ==========================================================================
+# 2.3b CONTROL-LOOP FLOWCHART II
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "2. Solution", "2.3  Control-Loop Flowchart — Act & Loop", number=num())
+textbox(s, Inches(0.5), Inches(1.12), Inches(12.3), Inches(0.3),
+    "Continues from the steering command chosen on the previous slide (G, I, K or L).",
+    size=12.5, italic=True, color=GREY)
+
+CX = Inches(6.6)
+M0 = flow_box(s, CX, Inches(1.75), Inches(3.4), Inches(0.4), "steering command", shape=MSO_SHAPE.OVAL,
+              fill=WHITE, line=GREY, textcolor=GREY, size=10)
+M = flow_box(s, CX, Inches(2.4), Inches(4.2), Inches(0.46), "Clamp to STEER_MAX, set servo")
+N = flow_box(s, CX, Inches(3.0), Inches(4.2), Inches(0.46), "Scale speed down with steering\neffort, set motor")
+O = flow_box(s, CX, Inches(3.6), Inches(4.2), Inches(0.46), "Log the frame to CSV")
+P = flow_box(s, CX, Inches(4.35), Inches(4.2), Inches(0.65), "Lap count satisfied\nand timer expired?",
+             shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+Q = flow_box(s, CX, Inches(5.15), Inches(3.0), Inches(0.42), "Stop: motor 0, servo centre",
+             shape=MSO_SHAPE.OVAL, fill=FLOW_TERM, line=FLOW_TERM, textcolor=WHITE, size=10.5, bold=True)
+
+flow_arrow(s, [M0["b"], M["t"]])
+flow_arrow(s, [M["b"], N["t"]])
+flow_arrow(s, [N["b"], O["t"]])
+flow_arrow(s, [O["b"], P["t"]])
+flow_arrow(s, [P["b"], Q["t"]], label="yes")
+loopX = Inches(10.6)
+flow_arrow(s, [P["r"], (loopX, P["c"][1]), (loopX, M0["c"][1]), M0["r"]], label="no — next frame", dashed=True)
+
+textbox(s, Inches(1.2), Inches(5.9), Inches(10.9), Inches(1.2),
+    "This priority order is what makes a wall emergency unconditional: it is checked first, "
+    "every frame, before the turn state or the lane-keeping law ever gets a say. The scripted "
+    "turn and the geometry backup only run when no wall is already too close.",
+    size=13.5, color=DARK, italic=True)
+
+# ==========================================================================
+# 2.4 OBSTACLE CHALLENGE PRIORITY FLOWCHART
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "2. Solution", "2.4  Obstacle Challenge — Priority Flowchart", number=num())
+textbox(s, Inches(0.5), Inches(1.12), Inches(12.3), Inches(0.3),
+    "Steering is decided by a strict priority, so a lower-priority behaviour can never "
+    "override safety.", size=12.5, italic=True, color=GREY)
+
+OCX = Inches(6.6)
+oA = flow_box(s, OCX, Inches(1.75), Inches(2.6), Inches(0.36), "Every frame", shape=MSO_SHAPE.OVAL,
+              fill=FLOW_TERM, line=FLOW_TERM, textcolor=WHITE, size=10, bold=True)
+oB = flow_box(s, OCX, Inches(2.35), Inches(3.4), Inches(0.55), "Sign visible?",
+              shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+
+cC = flow_box(s, Inches(2.6), Inches(3.35), Inches(3.5), Inches(0.6),
+              "Steer to place it correctly:\nred on our right, green on our left")
+cD = flow_box(s, Inches(6.6), Inches(3.35), Inches(3.5), Inches(0.6),
+              "No, but seen recently:\nhold last manoeuvre (SIGN_MEMORY)")
+cE = flow_box(s, Inches(10.6), Inches(3.35), Inches(3.4), Inches(0.6),
+              "No sign at all:\nfall back to outer-wall lane keeping")
+
+oF = flow_box(s, OCX, Inches(4.4), Inches(3.6), Inches(0.6), "Outer wall past\nWALL_EMERGENCY?",
+              shape=MSO_SHAPE.DIAMOND, fill=FLOW_DECISION)
+oG = flow_box(s, Inches(4.3), Inches(5.35), Inches(4.6), Inches(0.55),
+              "Full lock away from the wall —\noverrides everything, also turns corners",
+              fill=RGBColor(0xF7, 0xE0, 0xDF))
+oH = flow_box(s, Inches(9.3), Inches(5.35), Inches(4.2), Inches(0.55), "Use the steering chosen above",
+              fill=RGBColor(0xE3, 0xEE, 0xE2))
+
+flow_arrow(s, [oA["b"], oB["t"]])
+flow_arrow(s, [oB["l"], (Inches(2.6), oB["c"][1]), cC["t"]], label="yes")
+flow_arrow(s, [oB["b"], cD["t"]], label="no, recent")
+flow_arrow(s, [oB["r"], (Inches(10.6), oB["c"][1]), cE["t"]], label="no")
+flow_arrow(s, [cC["b"], (cC["c"][0], Inches(3.9)), (OCX, Inches(3.9)), oF["t"]])
+flow_arrow(s, [cD["b"], oF["t"]])
+flow_arrow(s, [cE["b"], (cE["c"][0], Inches(3.9)), (OCX, Inches(3.9)), oF["t"]])
+flow_arrow(s, [oF["l"], (Inches(4.3), oF["c"][1]), oG["t"]], label="yes")
+flow_arrow(s, [oF["r"], (Inches(9.3), oF["c"][1]), oH["t"]], label="no")
+
+textbox(s, Inches(1.0), Inches(6.15), Inches(11.3), Inches(1.0),
+    "Priority, highest to lowest: (1) wall override — also turns every corner, "
+    "(2) sign steering, (3) sign-hold memory for detection flicker, (4) outer-wall lane "
+    "keeping between signs.", size=13, color=GREY, italic=True)
+
+# ==========================================================================
 # 3.1 STEERING ASSEMBLY
 # ==========================================================================
 s = add_slide(); bg(s)
@@ -341,6 +539,40 @@ textbox(s, Inches(0.6), Inches(5.55), Inches(11.9), Inches(1.5),
     "track 8.5 cm — a wheelbase-to-track ratio close to 1:1, a stable "
     "proportion for cornering without tipping risk at this size.",
     size=13.5, color=GREY, italic=True)
+
+# ==========================================================================
+# 3.3b PRINTED PARTS GALLERY
+# ==========================================================================
+part_photos = [
+    ("base.png", "Base"), ("middle-plate.png", "Middle plate"),
+    ("top-plate.png", "Top plate"), ("camera-holder.png", "Camera holder"),
+    ("battery-slider.png", "Battery slider"), ("n20-motor-holder.png", "N20 motor holder"),
+    ("n20-gear.png", "N20 gear"), ("inner-differential-gear.png", "Inner differential gear"),
+    ("outer-differential-gear.png", "Outer differential gear"),
+]
+part_photos_2 = [
+    ("differential-outer-shell.png", "Differential outer shell"),
+    ("inner-gear-long-shaft.png", "Inner gear, long shaft"),
+    ("inner-gear-short-shaft.png", "Inner gear, short shaft"),
+    ("ring.png", "Ring"), ("steering-base.png", "Steering base"),
+    ("steering-base-servo-mount.png", "Steering base servo mount"),
+    ("steering-nut.png", "Steering nut"), ("steering-wheel-mount.png", "Steering wheel mount"),
+    ("wheel.png", "Wheel"),
+]
+for page_num, plist in enumerate((part_photos, part_photos_2), start=1):
+    s = add_slide(); bg(s)
+    header_bar(s, "3. Mobility Management",
+               "3.3b  Printed Parts — Individual Renders (%d/2)" % page_num, number=num())
+    cols = 3
+    pw, ph = Inches(3.9), Inches(1.5)
+    gx = Inches(0.25)
+    row_pitch = Inches(2.0)
+    x0, y0 = Inches(0.7), Inches(1.2)
+    for i, (fname, label) in enumerate(plist):
+        c, r = i % cols, i // cols
+        l = x0 + c * (pw + gx)
+        t = y0 + r * row_pitch
+        picture_fit(s, img(fname), l, t, pw, ph, label)
 
 # ==========================================================================
 # 3.4 MOBILITY MEASUREMENT
@@ -417,6 +649,76 @@ bullets(s, Inches(0.7), Inches(1.35), Inches(11.9), Inches(5.7), [
     "SG90 micro servo — 9 g, powered from the Pi's 5 V rail, driving the Ackermann "
     "steering linkage.",
 ], size=15.5, gap=16)
+
+# ==========================================================================
+# 4.2b WHY WE CHOSE EACH COMPONENT
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "4. Power and Sense Management", "4.2b  Why We Chose Each Component", number=num())
+
+rationale_rows = [
+    ("Camera", "OV5647 fixed-focus, wide FOV",
+     "Pi Camera Module 3 (autofocus)",
+     "Autofocus hunted and lost distant signs to blur (proof: 5.1a). A ground "
+     "robot never needs to refocus, so fixed focus cost us nothing and bought "
+     "a depth of field wide enough for the near mat and a far sign at once."),
+    ("Motor", "N20, 12 V, 200 rpm geared DC",
+     "Same footprint, higher-rpm N20",
+     "A faster variant trades torque for speed; we needed the torque to pull "
+     "the 407 g car from rest repeatedly without stalling more than we needed "
+     "extra top speed."),
+    ("Driver", "L9110S dual H-bridge",
+     "L298N dual H-bridge",
+     "L298N's extra current headroom is wasted on a single N20 and it takes "
+     "far more board space; L9110S needs only two GPIO pins and fits the "
+     "chassis footprint we had."),
+    ("Servo", "SG90 micro servo, GPIO13 (HW-PWM)",
+     "MG90S metal-gear servo",
+     "The steering linkage's load never approached the point where MG90S's "
+     "extra torque or durability would matter; SG90 is lighter and cheap "
+     "enough to keep spares on hand."),
+    ("Battery", "3 x 18650 Li-ion, series (~11.1 V)",
+     "2S/3S LiPo pack",
+     "18650 cells swap individually without a balance charger, and 11.1 V "
+     "nominal clears the buck converter's dropout with margin without "
+     "oversizing the pack."),
+    ("Differential", "Custom 3D-printed bevel differential",
+     "Solid axle (our first build) / off-the-shelf RC diff",
+     "A solid axle scrubbed the outer wheel through every corner and capped "
+     "steering near 8°. An off-the-shelf diff didn't match the 25:20 gear "
+     "pitch already tooled for the N20, so we designed our own."),
+]
+tbl_l, tbl_t = Inches(0.5), Inches(1.25)
+tbl_w, tbl_h = Inches(12.35), Inches(5.85)
+gtbl = s.shapes.add_table(len(rationale_rows) + 1, 4, tbl_l, tbl_t, tbl_w, tbl_h).table
+col_w = [Inches(1.55), Inches(3.15), Inches(2.95), Inches(4.7)]
+for i, w in enumerate(col_w):
+    gtbl.columns[i].width = w
+headers = ["Component", "What we chose", "Alternative considered", "Why"]
+for i, htext in enumerate(headers):
+    cell = gtbl.cell(0, i)
+    cell.text = htext
+    cell.fill.solid(); cell.fill.fore_color.rgb = RED
+    for p in cell.text_frame.paragraphs:
+        p.alignment = PP_ALIGN.LEFT
+        for r in p.runs:
+            r.font.size = Pt(12); r.font.bold = True; r.font.color.rgb = WHITE; r.font.name = "Calibri"
+for ri, row in enumerate(rationale_rows, start=1):
+    for ci, text in enumerate(row):
+        cell = gtbl.cell(ri, ci)
+        cell.text = text
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = LIGHT if ri % 2 == 0 else WHITE
+        cell.margin_left = Pt(5); cell.margin_right = Pt(5)
+        cell.margin_top = Pt(3); cell.margin_bottom = Pt(3)
+        cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+        for p in cell.text_frame.paragraphs:
+            p.alignment = PP_ALIGN.LEFT
+            for r in p.runs:
+                r.font.size = Pt(10.5 if ci == 3 else 11)
+                r.font.bold = (ci == 0)
+                r.font.color.rgb = DARK
+                r.font.name = "Calibri"
 
 # ==========================================================================
 # 4.3 WIRING DIAGRAM
@@ -504,6 +806,79 @@ textbox(s, Inches(0.7), Inches(1.3), Inches(11.9), Inches(5.9),
     "wheels turning but left the car unable to corner tightly enough to follow "
     "the track. It was a workaround for a mechanical problem, not a fix for it.",
     size=14.5, color=DARK)
+
+# ==========================================================================
+# 5.1a CAMERA DECISION - VISUAL PROOF
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "5. The Robot's Evolution", "5.1a  Camera Decision — Proof, Not Just a Claim", number=num())
+textbox(s, Inches(0.6), Inches(1.12), Inches(12.1), Inches(0.35),
+    "Same track, same lighting, same lens height — only the camera module changed. Both "
+    "frames are straight off the Pi, unedited.", size=13, italic=True, color=GREY)
+picture_fit(s, img("before-module3-blurry.jpg"), Inches(0.6), Inches(1.5),
+           Inches(5.95), Inches(3.85), "BEFORE — Camera Module 3 (autofocus), focused on the near mat")
+picture_fit(s, img("after-ov5647-sharp.jpg"), Inches(6.75), Inches(1.5),
+           Inches(5.95), Inches(3.85), "AFTER — OV5647 (fixed focus), same distance and framing")
+textbox(s, Inches(0.6), Inches(5.9), Inches(12.1), Inches(1.35),
+    "The Module 3's shallow depth of field could hold either the near mat or a distant "
+    "sign in focus, never both — a focus sweep across f/2.0-equivalent apertures confirmed "
+    "it wasn't a tuning problem. Blur desaturates colour enough that the HSV sign masks "
+    "lost far signs entirely. The OV5647's smaller sensor and fixed focus trade autofocus "
+    "(never needed by a ground robot) for a depth of field wide enough to keep the whole "
+    "corridor sharp at once.", size=13, color=DARK)
+
+# ==========================================================================
+# 5.1b VISION TESTING PROCESS
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "5. The Robot's Evolution", "5.1b  Vision Testing — Flip & Colour Tuning", number=num())
+picture_fit(s, img("raw-before-180-flip.jpg"), Inches(0.5), Inches(1.15),
+           Inches(4.0), Inches(2.3), "Raw sensor — mounted upside-down")
+picture_fit(s, img("after-180-flip.jpg"), Inches(4.65), Inches(1.15),
+           Inches(4.0), Inches(2.3), "After the 180° software flip")
+picture_fit(s, img("color-tuning-v-channel.png"), Inches(8.8), Inches(1.15),
+           Inches(4.0), Inches(2.3), "HSV Value-channel scan, tuning")
+textbox(s, Inches(0.5), Inches(3.85), Inches(12.3), Inches(0.55),
+    "The camera mounts physically upside-down on its mast, so robot.py rotates every "
+    "frame 180° before anything else touches it — real capture on the left, corrected on the right.",
+    size=12.5, color=DARK)
+picture_fit(s, img("color-tuning-green-sign-mask.png"), Inches(0.5), Inches(4.45),
+           Inches(4.0), Inches(2.5), "colors.json green-sign mask, live tuning")
+textbox(s, Inches(4.75), Inches(4.45), Inches(8.05), Inches(2.75),
+    "Colour thresholds are not guessed once and left alone — colour_tuner.py runs against "
+    "the live camera so every HSV band (blue line, orange line, red sign, green sign, "
+    "magenta gate) is set against the real mat under the real, locked exposure. Each "
+    "iteration is checked against a visible mask overlay like the one on the left, so a "
+    "threshold that looks right in isolation but bleeds onto the mat itself is caught "
+    "before it reaches the car.\n\n"
+    "This is the same loop that caught the sign-detection bug in the Present section: the "
+    "mat/wall boundary fringe read as green at S 96-111, merging with the real sign (S "
+    "135+) into one mis-shaped blob — visible only once we started saving the mask, not "
+    "from the numbers alone.",
+    size=12.5, color=DARK)
+
+# ==========================================================================
+# 5.1c VISION TESTING - MASKING AND CALCULATION
+# ==========================================================================
+s = add_slide(); bg(s)
+header_bar(s, "5. The Robot's Evolution", "5.1c  Vision Testing — Wall Masking & Distance Calibration", number=num())
+picture_fit(s, img("wall-line-mask-overlay.png"), Inches(0.5), Inches(1.15),
+           Inches(4.55), Inches(4.0), "shadow_check.py — red = wall, green = free mat")
+picture_fit(s, img("wall-boundary-calculation.png"), Inches(5.25), Inches(1.15),
+           Inches(3.55), Inches(4.0), "freespace_test.py — gap, steer, boundary")
+picture_fit(s, img("distance-calibration-40cm.png"), Inches(9.0), Inches(1.15),
+           Inches(3.75), Inches(1.85), "Calibration at a taped 40 cm")
+picture_fit(s, img("distance-calibration-25cm.png"), Inches(9.0), Inches(3.45),
+           Inches(3.75), Inches(1.85), "Calibration at a taped 25 cm")
+textbox(s, Inches(0.5), Inches(5.85), Inches(12.3), Inches(1.45),
+    "Every distance constant in config.py traces back to frames like these: the car is "
+    "placed at a taped, ruler-measured distance from the wall and freespace_test.py logs "
+    "the wall-density reading at that exact spot — 40 cm measured 0.1032, 25 cm measured "
+    "0.1783 — so OUTER_TARGET is a real calibration curve, not a guessed constant. The "
+    "left-hand overlay is the same diagnostic used to catch the wall-detector counting the "
+    "blue/orange corner lines and the mat's own printed marks as wall (§9 of the "
+    "engineering journal) — red pixels are what the code currently calls \"wall\".",
+    size=12.5, color=DARK)
 
 # ==========================================================================
 # 5.2 EVOLUTION - PRESENT
