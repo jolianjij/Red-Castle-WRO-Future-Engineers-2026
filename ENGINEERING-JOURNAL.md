@@ -17,11 +17,11 @@ parking lot. A single camera can perceive all of it, which removes cost, weight,
 wiring and failure modes. The trade-off — the camera must be *very* well
 configured — became the focus of our work.
 
-**Reference study.** We analysed Team **KyivRoboMagic** (Ukraine, WRO 2024
-International Final), who reached the world final with a camera-only car. Their
-approach — HSV masks, wall-following by counting dark (wall) pixels in the left vs
-right image halves, a proportional steering law, and orange/blue line counting for
-laps — validated our direction and gave us a proven baseline to build on.
+**Reference study.** We researched other camera-only Future Engineers builds that
+reached the international final. The common approach — HSV masks, wall-following
+by counting dark (wall) pixels in the left vs right image halves, a proportional
+steering law, and orange/blue line counting for laps — validated our direction and
+gave us a proven baseline to build on.
 
 ## 2. Camera: mounting and settings
 

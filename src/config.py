@@ -73,14 +73,14 @@ WALL_V_SOFT = 62        # up to this it is a wall ONLY if desaturated
 WALL_S_MAX = 90         # coloured lines exceed this and are rejected
 WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
 
-# MAGENTA COUNTS AS A WALL. KyivRoboMagic do the same - in their process_hsv the
-# purple parking-lot pixels are added to left_wall/right_wall until the parking
-# phase begins. We have no parking walls to calibrate against yet, so magenta
-# stays a wall for the whole run and the car simply avoids the parking lot.
+# MAGENTA COUNTS AS A WALL. The purple/magenta parking-lot pixels are added to
+# left_wall/right_wall until the parking phase begins. We have no parking walls
+# to calibrate against yet, so magenta stays a wall for the whole run and the
+# car simply avoids the parking lot.
 MAGENTA_IS_WALL = True
 
 # ==========================================================================
-# WALL DENSITY METHOD  (KyivRoboMagic style - the proven fallback)
+# WALL DENSITY METHOD  (proportional wall-density control - the proven fallback)
 # ==========================================================================
 WALL_TARGET = 0.14      # outer-wall fill when nicely positioned
 WALL_EMERGENCY = 0.213  # ~18 cm from the wall (22 cm of margin below the 40 cm
@@ -120,21 +120,21 @@ GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
                         # ahead is blocked -> commit to the locked turn direction
 
 # ==========================================================================
-# OUTER-WALL METHOD  ("outer")  <-- the approach proven by the strongest
-# camera-only teams (KyivRoboMagic 2024 international final, Maverick 2025).
+# OUTER-WALL METHOD  ("outer")  <-- the strongest camera-only strategy: track
+# ONE wall instead of trying to centre between two.
 # ==========================================================================
 # ONE reference, ONE error term: the distance to the OUTER wall.
 #   clockwise        -> the outer wall is on the LEFT
 #   counter-clockwise-> the outer wall is on the RIGHT
 # The inner walls are randomised each round, so they are never referenced at all.
 # There is no gap threshold and no front-wall threshold to tune.
-# This IS the KyivRoboMagic control law (read from their actual source):
-#     if (direction == 1)       dir = (left_wall  - 0.5) * 75;
-#     else if (direction == -1) dir = (0.5 - right_wall) * 75;
+# The control law is a single proportional term per direction:
+#     CW  : dir = (left_wall  - TARGET) * kp
+#     CCW : dir = (TARGET - right_wall) * kp
 #
-# GAIN IS SET FROM MEASUREMENT, NOT BY COPYING THEIR NUMBER.
-# Copying their gain does not transfer: it assumes our density responds to
-# distance the way theirs did, and it does not (different camera height/FOV).
+# GAIN IS SET FROM OUR OWN MEASUREMENT ON OUR OWN CAMERA, not copied from any
+# published number - our density-vs-distance response depends on our exact
+# camera height/FOV/mount, so a borrowed gain would not transfer.
 #
 # CALIBRATED with the CORRECTED wall mask (lines no longer counted as walls),
 # car parallel to the outer wall, gap measured car-side -> wall-face:
@@ -260,11 +260,10 @@ PARK_KP = 90.0
 # ==========================================================================
 NAV_METHOD = "outer"    # "outer"   = outer-wall PD + line-triggered turn (PROVEN)
                         # "gap"     = free-space follow-the-gap
-                        # "density" = KyivRoboMagic wall-density fallback
-                        # "density" = KyivRoboMagic wall-density (proven fallback)
+                        # "density" = proportional wall-density fallback
 
-FORCE_DIRECTION = 0     # 0 = auto-detect from the first corner line seen.
-                        # Set +1 (CW) or -1 (CCW) only to override at a venue.
+FORCE_DIRECTION = 0     # 0 = auto-detect from the first corner line seen (+ geometry
+                        # backup). Set +1 (CW) or -1 (CCW) only to override at a venue.
                         # +1 = force clockwise, -1 = force counter-clockwise
                         # Use this if the judges tell you the run direction.
 

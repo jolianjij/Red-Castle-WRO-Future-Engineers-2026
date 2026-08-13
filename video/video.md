@@ -16,14 +16,14 @@
 
 ## Our videos
 
-- **Open Challenge:** _<add YouTube URL>_
-- **Obstacle Challenge:** _<add YouTube URL>_
+- **Open Challenge:** https://youtu.be/GmrX7NhcAxE
+- **Obstacle Challenge:** https://youtu.be/ujbImlpQH6g
 
 ## Filming checklist
 
-- [ ] Record the **full run** — from the start signal to the finish/park.
-- [ ] Keep at least **30 seconds of continuous driving** in frame.
-- [ ] Show the whole track so judges can see the vehicle stays inside the walls.
-- [ ] Make it obvious the run is autonomous (hands visible and away after the start).
-- [ ] Upload as **public or unlisted**, then paste the links above.
+- [x] Record the **full run** — from the start signal to the finish/park.
+- [x] Keep at least **30 seconds of continuous driving** in frame.
+- [x] Show the whole track so judges can see the vehicle stays inside the walls.
+- [x] Make it obvious the run is autonomous (hands visible and away after the start).
+- [x] Upload as **public or unlisted**, then paste the links above.
 - [ ] Verify the links open in a private/incognito window before submitting.

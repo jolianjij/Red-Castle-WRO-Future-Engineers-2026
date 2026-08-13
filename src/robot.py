@@ -719,7 +719,7 @@ def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
                 push = min(push, normal)
         return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
 
-    # ---- NAV_METHOD "outer": the KyivRoboMagic law + a scripted corner turn ----
+    # ---- NAV_METHOD "outer": single-wall PD control + a scripted corner turn ----
     if NAV_METHOD == "outer":
         turner.update(front if front is not None else front_reading(hsv))
         if turner.active:

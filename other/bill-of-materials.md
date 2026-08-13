@@ -39,13 +39,11 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 | 18 | Heat-shrink / connectors | tidy the power joints | as needed |
 | 19 | M2 / M3 screws, nuts, standoffs | mount Pi, driver, servo, camera mast | assortment |
 
-## 3D-printed parts (in `models/`)
-| # | Part | Notes |
-|---|---|---|
-| 20 | Chassis / base plate | holds Pi, battery, driver, motor |
-| 21 | Camera mast | rigid, holds camera at **12.5 cm**, tilt **~15° down** |
-| 22 | Steering knuckles + tie-rod | Ackermann front steering |
-| 23 | Motor & servo mounts | |
+## 3D-printed parts
+
+20 printed parts across 5 subassemblies (chassis, steering, rear drive/differential,
+wheels, battery slider) — full quantities, fixed/moving status and source files
+are in **[`../models/README.md`](../models/README.md)**. All parts are PLA+.
 
 ## Tools (not shipped, but needed to build)
 - 3D printer + filament (PLA/PETG)

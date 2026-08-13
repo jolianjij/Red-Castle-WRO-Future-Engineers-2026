@@ -2,8 +2,8 @@
 """
 legacy_open.py - LAST YEAR'S Open Challenge code, ported to this year's hardware.
 
-This is a faithful port of the team's 2025 OpenChallenge.py (itself a Python port
-of KyivRoboMagic's C++). The CONTROL LOGIC AND ALL ITS CONSTANTS ARE UNCHANGED:
+This is a faithful port of the team's 2025 OpenChallenge.py. The CONTROL LOGIC
+AND ALL ITS CONSTANTS ARE UNCHANGED:
 
     ROI            bottom half of 480 rows, every 2nd pixel -> 120 x 320
     wall metric    pixels with value < 70, counted per half, divided by 160*80

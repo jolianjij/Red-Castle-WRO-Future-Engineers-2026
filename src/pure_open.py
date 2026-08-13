@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pure_open.py - KyivRoboMagic's logic and NOTHING else. A diagnostic build.
+pure_open.py - the single-wall control law and NOTHING else. A diagnostic build.
 
 No emergency override. No gap follower. No turn sequencer. No lap counting.
 No steering trim. Just the one control law, so we can see whether it works:
@@ -8,9 +8,9 @@ No steering trim. Just the one control law, so we can see whether it works:
     CW  : steer = (left_wall  - TARGET) * GAIN
     CCW : steer = (TARGET - right_wall) * GAIN
 
-Corners are handled the way they handle them: IMPLICITLY. Approaching a corner,
-the wall ahead raises the outer-wall density, which drives the steering into the
-turn - and the sign comes out right in both directions.
+Corners are handled IMPLICITLY, with no dedicated corner code at all: approaching
+a corner, the wall ahead raises the outer-wall density, which drives the steering
+into the turn - and the sign comes out right in both directions.
 
 It saves an annotated frame whenever the steering exceeds SAVE_ANGLE, so we can
 look at exactly what the camera saw at the moments that matter.
