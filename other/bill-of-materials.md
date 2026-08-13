@@ -1,7 +1,5 @@
 # Bill of Materials — Team The Red Castle (WRO 2026 Future Engineers)
 
-Items marked **(CONFIRM)** need the exact part/spec filled in.
-
 ## Electronics — compute & sensing
 | # | Component | Spec / notes | Qty |
 |---|---|---|---|
@@ -18,7 +16,7 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 | 6a | **Differential** | rear axle differential — lets the driven wheels turn at different speeds | 1 |
 | 6b | Transmission gears | **25:20** spur pair (1.25:1 reduction), motor pinion → differential | 1 set |
 | 7 | **SG90** steering servo | 9 g micro servo; signal → GPIO13, powered from the Pi's 5 V | 1 |
-| 8 | Drive wheels + tires | rear, on the differential axle **(diameter to measure)** | 2 |
+| 8 | Drive wheels + tires | rear, on the differential axle, **4.7 cm** diameter | 2 |
 | 9 | Steering wheels (front) + Ackermann linkage | 3D-printed knuckles + tie-rod + servo horn | 1 set |
 
 ## Power
@@ -37,7 +35,10 @@ Items marked **(CONFIRM)** need the exact part/spec filled in.
 |---|---|---|---|
 | 17 | Jumper wires (M-F, F-F) | signal + power; **common ground** Pi↔driver↔battery | pack |
 | 18 | Heat-shrink / connectors | tidy the power joints | as needed |
-| 19 | M2 / M3 screws, nuts, standoffs | mount Pi, driver, servo, camera mast | assortment |
+| 19 | M3 × 8 mm screws | mounting the printed chassis parts | 18 |
+| 20 | M3 × 20 mm screws | mounting the printed chassis parts | 4 |
+| 21 | Brass standoff, male–female, 25 mm | Pi mounting stack | 4 |
+| 22 | Brass standoff, female–female, 20 mm | Pi mounting stack | 4 |
 
 ## 3D-printed parts
 
@@ -61,12 +62,9 @@ are in **[`../models/README.md`](../models/README.md)**. All parts are PLA+.
 | Material | **PLA+ Silk Silver** |
 | Sliced plates | print-ready plates with settings in [`../models/printing/`](../models/printing) |
 
-### Still to confirm
-1. **Wheel/tire** diameter.
-2. **Wheelbase** (front↔rear axle) and **track** (rear wheel↔wheel).
-3. **Robot mass** and **measured max speed**.
-4. **Camera height / tilt** — currently documented as 12.5 cm / ~15° down.
-5. **Total cost** of the build.
+## Total build cost
+
+**≈ $120**, electronics, printed parts (filament), fasteners and battery combined.
 
 ### Power note
 Three 18650 cells in series give ~11.1 V nominal (12.6 V fully charged). The

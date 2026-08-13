@@ -5,11 +5,13 @@
 <h1 align="center">Team The Red Castle — WRO 2026 Future Engineers</h1>
 
 An autonomous, self-driving model car for the **World Robot Olympiad 2026,
-Future Engineers** category. It completes the **Open Challenge** (three laps of a
-track with a randomised wall layout) and the **Obstacle Challenge** (three laps
-avoiding red and green traffic signs, then parallel-parks) using a **single
-camera as its only sensor** — no LiDAR, no ultrasonic rangefinders, no wheel
-encoders, no IMU.
+Future Engineers** category. The mission is the **Open Challenge** (three laps of
+a track with a randomised wall layout) and the **Obstacle Challenge** (three laps
+avoiding red and green traffic signs, then parking in a marked bay), driven by a
+**single camera as its only sensor** — no LiDAR, no ultrasonic rangefinders, no
+wheel encoders, no IMU. The Open Challenge runs the full mission; the Obstacle
+Challenge currently completes the driving and sign-passing portion, with the
+parking manoeuvre still being wired in — see [§10](#10-results--future-work).
 
 > **Design thesis:** everything the car needs to know — where the walls are, which
 > way to lap, where the traffic signs are, and where the parking lot is — is
@@ -25,7 +27,8 @@ encoders, no IMU.
 3. [Mobility management](#3-mobility-management)
 4. [Power & sense management](#4-power--sense-management)
 5. [Software & obstacle management](#5-software--obstacle-management)
-   · [flowchart](#51b-control-loop-flowchart) · [state machine](#51c-obstacle-challenge-state-machine)
+   · [flowchart](#51b-control-loop-flowchart) · [direction & laps](#51b-2-direction-and-lap-counting)
+   · [obstacle priority](#51c-obstacle-challenge-priority)
    · [subsystem map](#56-how-the-subsystems-fit-together)
    · [testing & metrics](#57-testing-tuning-and-validation)
    · [risks](#58-risks-and-mitigations)
@@ -85,9 +88,6 @@ _Vehicle photos: [`v-photos/`](v-photos) · driving video: [`video/video.md`](vi
 | Overall dimensions (L × W × H) | **14.2 × 9.3 × 15 cm** |
 | Print material | PLA+ Silk Silver |
 | Printer / CAD | Bambu Lab A1 / Fusion 360 |
-
-_Measured max speed on the mat is still to be timed — the figure above is the
-motor's theoretical no-load ceiling (§3.4)._
 
 ## 3. Mobility management
 
@@ -169,9 +169,9 @@ v = π × 0.047 m × 160 rpm / 60 = 0.394 m/s  ≈ 39 cm/s  (no-load ceiling)
 ```
 
 That is the motor's theoretical maximum with nothing slowing it down. The real
-figure is lower once tyre friction, the differential, and the car's 407 g mass are
-accounted for — a timed run over a measured distance is a pending test, and the
-result will replace this estimate in the specifications table above.
+running speed is lower once tyre friction, the differential, and the car's 407 g
+mass are accounted for — the 100% cruise setting in software is what actually
+runs during a lap, with `cruise_speed()` easing it back further under steering.
 
 **Why gear down at all?** The 1.25:1 reduction trades ~20 % of top speed for
 ~25 % more torque at the axle (torque scales with the reduction, speed inversely).
@@ -328,124 +328,173 @@ src/obstacle_challenge.py  Obstacle Challenge main
 ```
 
 ### 5.1 Vision pipeline
-`capture → 180° flip → crop the mat ROI → resize 320×160 → HSV`. HSV is computed
-with `cv2.COLOR_BGR2HSV` everywhere so thresholds transfer between the tuner and
-the challenge code. Six colours are thresholded from `colors.json` (produced by
-`tools/color_tuner.py`):
+`capture → 180° flip → crop the mat ROI → resize 320×160 → median blur → HSV`.
+HSV is computed with `cv2.COLOR_BGR2HSV` everywhere so thresholds transfer between
+the tuner and the challenge code. Six colours are thresholded from `colors.json`
+(produced by `tools/color_tuner.py`, values shown are our measured ranges):
 
-- **black** → walls (dark-pixel density per image half → `left_wall`, `right_wall`)
-- **blue / orange** → corner lines (driving direction + lap counting)
-- **green / red** → traffic signs
-- **magenta** → parking lot
+| Colour | Used for | HSV range (H, S, V) |
+|---|---|---|
+| black | walls | a **two-tier** test, not a single threshold — see below |
+| blue | corner line (CCW) | H 96–135, S 60–255, V 70–200 |
+| orange | corner line (CW) | H 2–13, S 72–170, V 70–255 |
+| green | traffic sign | H 30–95, S 140–255, V 30–170 |
+| red | traffic sign | H 170–5 (wraps), S 150–255, V 60–255 |
+| magenta | parking lot | H 130–145, S 177–255, V 93–255 |
+
+**Wall detection is a two-tier test, not a brightness threshold.** A single
+"value < 62" test also lit up the blue/orange lines and the mat's printed dotted
+markings, because they're dark too — and unevenly between the two frame halves,
+which injected a steering bias. A real wall is either **very dark** (V < 32,
+regardless of saturation) **or dark and desaturated** (V < 62 **and** S < 90).
+The two-case test matters because HSV saturation is numerically unstable at very
+low brightness — a black wall can report S > 200 from sensor noise, so testing
+saturation alone throws real walls away. The magenta parking-lot pixels are also
+counted as wall until the parking phase, since we have no parking-specific
+calibration yet.
+
+**Where colours are searched matters as much as their range.** Corner lines are
+painted on the mat, so they can only appear in the image's lower portion —
+searching the *whole* frame let bluish wall/background pixels near the top
+trigger a false blue-line reading on ~40% of frames in one test run. Line search
+is now restricted to the bottom 45% of the region of interest.
 
 ### 5.1b Control-loop flowchart
 
-Every frame runs the same loop. The only difference between challenges is which
-decision block sits in the middle.
+Every frame runs the same read → decide → act loop; `navigate()` in `robot.py` is
+the single point that picks the steering command, in strict priority order.
 
 ```mermaid
 flowchart TD
-    A([Start / button]) --> B[Capture frame<br/>OV5647, 180 deg flip]
-    B --> C[Crop mat ROI<br/>resize 320x160, median blur]
-    C --> D[Convert to HSV]
-    D --> E[Segment: walls, lines, signs]
-    E --> F[Measure: left/right wall,<br/>front wall, free-space profile]
-    F --> G{Corner ahead?<br/>front &gt; FRONT_ENTER}
-    G -- yes --> H[Lock direction on 1st corner<br/>count quadrant<br/>commit turn]
-    G -- no --> I[Steering decision<br/>see state machine]
-    H --> J[Clamp to STEER_MAX<br/>set servo]
-    I --> J
-    J --> K[Scale speed by steering effort<br/>set motor]
-    K --> L[Log row to CSV]
-    L --> M{12 quadrants<br/>or timeout?}
-    M -- no --> B
-    M -- yes --> N([Stop: motor 0, servo centre])
+    A([Start]) --> B[Capture frame<br/>OV5647, 180 deg flip]
+    B --> C[Crop mat ROI, resize 320x160,<br/>median blur, convert to HSV]
+    C --> D[Measure left/right wall density,<br/>front density, line fractions]
+    D --> E[LapTracker.update:<br/>direction + lap counting]
+    E --> F{Either wall past<br/>WALL_EMERGENCY?}
+    F -- yes --> G[Proportional escape,<br/>full lock if BOTH walls close]
+    F -- no --> H{Scripted turn<br/>active?}
+    H -- yes --> I[Hold full lock in the<br/>locked direction]
+    H -- no --> J{Front wall very close<br/>and direction known?}
+    J -- yes --> K[Trigger the turn anyway<br/>-- geometry backup]
+    J -- no --> L[Outer-wall PD control:<br/>hold target distance to ONE wall]
+    G --> M[Clamp to STEER_MAX, set servo]
+    I --> M
+    K --> M
+    L --> M
+    M --> N[Scale speed down with<br/>steering effort, set motor]
+    N --> O[Log the frame to CSV]
+    O --> P{Lap count satisfied<br/>and timer expired?}
+    P -- no --> B
+    P -- yes --> Q([Stop: motor 0, servo centre])
 ```
 
-### 5.1b-2 Sensor fusion: geometry + colour lines
+### 5.1b-2 Direction and lap counting
 
-Direction and lap counting use **two independent signals** that cross-check each
-other, so neither is a single point of failure:
+Direction is decided **once**, from the corner lines, and is never re-decided —
+that is what stops the car flipping from clockwise to counter-clockwise mid-run.
 
-| Signal | Strength | Weakness | What it drives |
-|---|---|---|---|
-| **Wall geometry** (front-wall fill) | always available; needs no colour calibration | says little about *which way* the track turns when the view is symmetric | **corner detection & lap counting** |
-| **Colour lines** (orange = CW, blue = CCW) | the official WRO cue, unambiguous about direction | depends on colour tuning and lighting; may not be in frame | **direction** |
+- **The first time a corner line is seen**, whichever colour has the larger pixel
+  count in that frame sets the direction: orange bigger → clockwise, blue bigger
+  → counter-clockwise. From that point `direction` is fixed for the whole run.
+- **Wall geometry is a second opinion, not a vote.** At the same moment, if the
+  two frame halves differ by at least `GEOM_DIR_MIN_DIFF` (0.08), we check
+  whether geometry agrees. If it does, the log records a confirmation; if not, a
+  disagreement is logged but the line's decision stands. This threshold exists
+  because, measured head-on to a corner, the two halves read 0.26 vs 0.22 — a
+  0.04 difference that is noise, not information, and it once produced a
+  confident but wrong guess against a correct line reading.
+- **Lap counting only runs once direction is known**, and only from a **line
+  crossing**: a colour going from present to absent (a falling edge) counts one
+  *quadrant* — but only if the line lockout timer has expired. That timer
+  restarts on every count, so one physical crossing is read exactly once even if
+  the mask flickers.
+- **What this means honestly:** if the corner lines are never detected for an
+  entire run, direction never locks and laps never count — wall-following still
+  works (it defaults to the clockwise convention), but the run won't finish
+  itself. `FORCE_DIRECTION` in `config.py` is the manual override for this case:
+  set it before a run if lighting or colour tuning is in doubt.
+- **Front-wall geometry has one job at this level**: if the car is already
+  driving in a known direction and a wall gets very close ahead
+  (`FRONT_TURN_BACKUP`) without a scripted turn already running, it triggers the
+  turn anyway so a missed line can't drive the car into the wall. This backup
+  protects the car, not the lap count — it does not add a quadrant.
 
-**Fusion rules**
-- **Direction:** whichever signal arrives first locks it. The second either
-  **CONFIRMS** it (logged) or raises a **disagreement warning** — and the
-  direction never changes once locked.
-- **Corners:** *either* signal may raise a corner. The **time guard**
-  (`CORNER_MIN_INTERVAL_S`) means a corner seen by *both* is still counted
-  **once**, so fusion adds robustness without risking double counts. The log
-  records which source fired (`geom`, `line`, or `geom+line`).
-- **Geometry only votes on direction when it actually knows.** Measured head-on to
-  a corner, the two image halves read 0.26 vs 0.22 — a 0.04 difference that is
-  noise, not information. It produced a confident but arbitrary guess that fought
-  a correct colour cue. Geometry now requires `|left−right| ≥ GEOM_DIR_MIN_DIFF`
-  (0.08) before offering an opinion.
+Every run's log ends with a summary line, e.g. `direction=CCW via bigger line
+(blue 0.061) | corners=11 (geom 0, line 11) | disagreements=0`, so a run can be
+read back and checked without re-watching it.
 
-Every run's log ends with a fusion summary, e.g.
-`direction=CCW via colour line | corners=12 (geom 11, line 1) | disagreements=0`,
-so after a run you can see exactly which sensor did the work.
+### 5.1c Obstacle Challenge priority
 
-### 5.1c Obstacle Challenge state machine
-
-Steering is decided by a strict **priority**, so a lower-priority behaviour can
-never override safety. The rationale for each level is in the right-hand column.
+Obstacle Challenge steering is decided by a strict **priority**, so a
+lower-priority behaviour can never override safety.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> WALL_FOLLOW
-    WALL_FOLLOW --> WALL_EMERGENCY: wall closer than WALL_EMERGENCY
-    WALL_EMERGENCY --> WALL_FOLLOW: wall cleared
-    WALL_FOLLOW --> PASS_SIGN: red/green sign detected
-    PASS_SIGN --> WALL_EMERGENCY: wall too close while passing
-    PASS_SIGN --> WALL_FOLLOW: sign cleared
-    WALL_FOLLOW --> CORNER: front wall detected
-    CORNER --> WALL_FOLLOW: corner completed (quadrant++)
-    WALL_FOLLOW --> PARK: 12 quadrants reached
-    PARK --> [*]: magenta area > PARK_STOP_AREA
+flowchart TD
+    A[Every frame] --> B{Sign visible?}
+    B -- yes --> C[Steer to place it correctly:<br/>red on our right, green on our left]
+    B -- no, but seen recently --> D[Hold the last manoeuvre<br/>-- SIGN_MEMORY frames]
+    B -- no --> E[Fall back to outer-wall<br/>lane keeping]
+    C --> F{Outer wall past<br/>WALL_EMERGENCY?}
+    D --> F
+    E --> F
+    F -- yes --> G[Full lock away from the wall<br/>-- overrides everything, also turns corners]
+    F -- no --> H[Use the steering from above]
 ```
 
-| Priority | State | Why it sits at this level |
+| Priority | Behaviour | Why it sits at this level |
 |---|---|---|
-| 1 (highest) | `WALL_EMERGENCY` | Touching a wall ends the run. Nothing may override it — not even an obstacle manoeuvre. |
-| 2 | `PARK` | Once 3 laps are done the mission goal changes; parking outranks ordinary navigation. |
-| 3 | `PASS_SIGN` | Sign obedience scores points, so it outranks plain lane keeping — but never safety. |
-| 4 | `CORNER` | A committed turn, entered from wall geometry rather than colour (colour proved unreliable). |
-| 5 (lowest) | `WALL_FOLLOW` | The default behaviour when nothing else applies. |
+| 1 (highest) | Wall override | Touching a wall ends the run; nothing may override it, and it is also what turns the car through each corner. |
+| 2 | Sign steering | Passing signs correctly scores points, so it outranks plain lane keeping. |
+| 3 | Sign-hold memory | Detection flickers frame to frame (measured: one sign's contour area went 61 → 851 → 0 → 1060 across four frames) — holding the last command for a few frames stops that flicker breaking a pass. |
+| 4 (lowest) | Lane keeping | The same outer-wall PD law as the Open Challenge, used only when no sign is in view or remembered. |
 
-**Edge cases handled explicitly**
-- *Corner counted twice in consecutive frames* → a **time guard**
-  (`CORNER_MIN_INTERVAL_S`) plus a cycle debounce; a physical corner cannot recur
-  within ~1.2 s.
-- *Direction flip mid-run* → direction is **locked once** and never re-decided.
-  Before the lock it can come from a corner line; after, never.
-- *Colour line never detected* → the first corner's **geometry** decides direction,
-  so the run does not depend on colour at all.
-- *Sign lost for a frame* → `PILLAR_MEMORY_CYCLES` keeps the manoeuvre committed.
-- *Robot stuck facing a wall* → `MAX_CORNER_CYCLES` forces the corner to complete.
-- *Anything unexpected* → `MAX_RUNTIME_S` stops the car safely.
+**Why lane keeping exists at all.** A design that steers only toward signs and
+relies on the wall override to fire "often enough" between them does not hold on
+our optics: measured mid-corridor readings of 0.112/0.129 against a 0.213
+override threshold, meaning the car would drive dead straight for 44% of a test
+run with nothing correcting it. Falling back to the same outer-wall controller
+proven in the Open Challenge closes that gap.
 
 ### 5.2 Open Challenge algorithm
-1. **Wall-follow** the continuous *outer* wall with a **PD** controller — clockwise
-   follows the left wall, counter-clockwise the right; either wall getting
-   dangerously close forces a hard steer away.
-2. **Direction** from the first corner line seen: **orange → clockwise**, **blue →
-   counter-clockwise**.
-3. **Lap counting** — a debounced falling edge on the driving-direction line counts
-   one *quadrant*; **12 quadrants = 3 laps**, then the car coasts and stops.
+
+1. **Direction** is set once, from the first corner line seen (§5.1b-2), and
+   never changes for the rest of the run.
+2. **Between corners**, a PD controller holds a fixed distance to the **outer**
+   wall only — the left wall clockwise, the right wall counter-clockwise. The
+   *inner* wall is never referenced, because its distance from the track centre
+   is randomised each round; the outer wall is the one constant.
+3. **At a corner**, crossing the driving-direction's line fires a **scripted
+   turn**: full steering lock in the known direction, held for at least 0.35 s
+   and at most 1.1 s, ending as soon as the way ahead reads clear rather than on
+   a fixed clock. A fixed-duration turn was tried first and over-rotated into the
+   inner wall in both directions (measured: inner-wall density climbed
+   0.126 → 0.195 → 0.278 during one such turn) — ending on "the corner is
+   clear" instead of "a timer expired" fixed that.
+4. **A wall emergency always wins**, in any state: if either wall crosses
+   `WALL_EMERGENCY`, the controller escapes proportionally to how close it is,
+   and if *both* walls are close at once (jammed facing a corner) it latches a
+   single escape direction instead of alternating between the two — an earlier
+   version let left and right readings cross each other frame to frame, which
+   flipped the command between +20° and −20° and made the car directionless
+   exactly when it needed decisive action.
+5. **Stop** once 11 quadrants are counted *and* the lap timer has expired, so the
+   car finishes driving through the last straight instead of halting on the line.
 
 ### 5.3 Obstacle Challenge algorithm
-A strict **per-frame priority** decides steering:
 
-1. **Wall emergency** — never crash a wall, even mid-dodge.
-2. **Park** (after 3 laps) — find the **magenta** lot, aim at it, stop when close.
-3. **Sign** — pass **red on the right**, **green on the left** (steer to push the
-   sign toward the correct frame edge; react harder as it nears).
-4. **Wall-follow** — the Open-Challenge behaviour otherwise.
+1. **If a sign is visible**, steer to place it on the correct side: the target
+   column is computed from the sign's position and how close it is, sliding
+   further toward the frame edge as the sign nears, so the car curves around it
+   rather than swerving late.
+2. **If a sign was visible recently but isn't this frame**, hold the last
+   command for a few frames instead of reacting to the drop-out — this is what
+   keeps a single flickered detection from aborting a pass halfway through.
+3. **If no sign is in view or remembered**, fall back to the same outer-wall
+   lane-keeping law as the Open Challenge, so the car doesn't simply coast
+   straight between signs.
+4. **A wall override sits above all three** — the same emergency threshold as
+   the Open Challenge, and it also does the job of turning the car through each
+   corner, since the Obstacle Challenge has no separate scripted-turn sequencer.
 
 ### 5.4 Speed
 Base speed is `CRUISE`; `cruise_speed()` **eases off in proportion to steering
@@ -484,7 +533,7 @@ flowchart LR
 | Interaction | Constraint it created |
 |---|---|
 | Motor ↔ Pi share one battery | Rails **must** be separated and grounds tied, or the Pi browns out (§4.1). |
-| Drivetrain ↔ steering software | A solid axle forced `STEER_MAX` down to ~8°; the differential lifted it to 35°. Mechanics set the software limit. |
+| Drivetrain ↔ steering software | A solid axle forced the steering limit down to ~8°; the differential raised the mechanical limit to 35°. We run the software limit at **20°** for stability at full speed — mechanics set the ceiling, tuning sets where under it we actually drive. |
 | Camera mount ↔ control loop | Mount height/tilt/rigidity determine what the controller can even measure; a loose mast is a control failure. |
 | Lighting ↔ colour thresholds | Auto-exposure made HSV drift, so exposure and white balance are **locked** and colours re-tuned on the real mat. |
 | Camera choice ↔ obstacle detection | Shallow depth of field blurred distant signs, so the sensor was swapped for a fixed-focus module. |
@@ -502,8 +551,11 @@ than guessed at (all in [`src/tools/`](src/tools)):
 | Motor path | `motor_debug.py` | separates a PWM fault from a power fault |
 | Camera image | `camera_tune.py` | exposure/gain/saturation, with a live `mean_sat / blown% / dark%` read-out |
 | Colour | `color_tuner.py` | each colour verified against its real object, mask checked for speckle |
-| Perception | `freespace_test.py` | draws the detected wall boundary and chosen gap on a real frame — **nothing drives**, so perception is validated before control |
-| Full run | `open_challenge.py` | logs every frame to `logs/*.csv` |
+| Wall vs shadow | `shadow_check.py` | splits dark pixels into a "tall solid run" (a real wall) vs a shallow spread (likely shadow), so a misreading can be diagnosed on the spot |
+| Outer-wall control | `outer_test.py` | moves the car by hand and prints what the controller *would* steer, before it is ever trusted at speed |
+| Full decision chain | `dryrun.py` | runs `navigate()` exactly as the challenge does, camera live, **motor never touched** |
+| Perception | `freespace_test.py` | draws the detected wall boundary and chosen gap on a real frame — nothing drives |
+| Full run | `open_challenge.py` / `obstacle_challenge.py` | logs every frame to `logs/*.csv` |
 
 **Metrics we record.** Every run writes a CSV row per frame — timestamp, cycle,
 direction, quadrant, in-corner flag, left/right wall, blue/orange line fractions,
@@ -530,13 +582,14 @@ calibration lives in JSON/text files, a tuning change never risks breaking code.
 | Motor current spike browns out the Pi | run ends, SD card can corrupt | separate rails, own buck converter, common ground (§4.1) |
 | Forward↔reverse slam destroys the regulator | hardware loss | `motor()` forces a coast + settle before any direction change |
 | Lighting changes at the venue | colour masks fail | exposure/AWB locked; colours re-tuned on site in minutes via `color_tuner.py` |
-| Corner line never detected | laps never counted | lap counting runs on **wall geometry**, colour is only a hint |
-| Direction mis-detected | car laps the wrong way | direction locked once; `FORCE_DIRECTION` in config overrides at the venue |
+| Corner line never detected all run | direction never locks, laps never count | **known limitation** — wall-following still runs (default clockwise), but the run won't self-finish; `FORCE_DIRECTION` in config is the manual override if colour is in doubt at the venue |
+| One corner line missed mid-run | that quadrant undercounts | the front-wall geometry backup still forces the physical turn, so the car doesn't crash — only the count is affected, not the turn |
+| Direction mis-detected | car laps the wrong way | decided once from the larger of the two line readings, cross-checked against wall geometry, then locked for the whole run |
 | Camera knocked out of alignment | permanent steering bias | rigid mast; left/right balance check before every run |
-| Mat markings read as a wall | false obstacle | boundary scan requires **N consecutive** dark rows (`FREE_MIN_RUN`) |
+| Mat markings or shadows read as a wall | false obstacle / steering bias | two-tier wall test (very dark, or dark **and** desaturated) rejects coloured lines and most shadow; `shadow_check.py` diagnoses any that still gets through — this was a live issue at two corners in field testing and is still being tightened |
 | Car stuck against a wall | run wasted | `MAX_CORNER_CYCLES` and `MAX_RUNTIME_S` force an exit/stop |
 | Fresh pack exceeds L9110S 12 V rating | driver overheats | monitored; noted in [`schemes/`](schemes) |
-| Algorithm underperforms on the day | lost points | `NAV_METHOD` switches between the free-space and proven density controller with one word |
+| Algorithm underperforms on the day | lost points | `NAV_METHOD` switches between the outer-wall controller, free-space follow-the-gap, and a proportional wall-density fallback with one word in `config.py` |
 
 ## 6. Calibration workflow
 
@@ -544,10 +597,14 @@ Two field calibrations, saved to files that `robot.py` loads at start:
 
 | Tool | Produces | Purpose |
 |---|---|---|
+| `tools/camera_tune.py` | `camera_settings.json` | lock exposure, gain, white balance, saturation |
 | `tools/color_tuner.py` | `colors.json` | tune each colour with the real object in view |
-| `tools/servo_center.py` | `servo_center.txt` | trim the steering so 0° = straight |
+| `tools/servo_center.py` | `servo_center.txt` | trim the steering so 0° = straight (current value: **−9°**) |
 | `tools/motor_speed_steps.py` | — | find the motor's usable speed range |
 | `tools/preview.py` | — | live camera view over VNC |
+
+All three generated files are committed in [`src/`](src) as the reference
+calibration for this build.
 
 ## 7. Build & run
 
@@ -573,7 +630,8 @@ python obstacle_challenge.py    # Obstacle Challenge
 ## 8. Bill of materials & cost
 
 Full component list: [`other/bill-of-materials.md`](other/bill-of-materials.md).
-Wiring: [`schemes/`](schemes). _(Total cost: to fill.)_
+Wiring: [`schemes/`](schemes). **Total build cost: ≈ $120** (electronics, printed
+parts, fasteners and battery combined).
 
 ## 9. Engineering process
 
@@ -587,29 +645,42 @@ tuning — is in **[`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md)**.
 **Open Challenge — complete.** The vehicle drives the full three laps and stops
 correctly **in both directions (clockwise and counter-clockwise)** with stable
 control, holding its line along the straights and taking the corners without
-contact.
+contact. Both driving directions are demonstrated in the submitted video.
 
 The decisive fix was not in the controller but in the perception: the wall
 detector had been counting the blue and orange corner lines, and the mat's printed
-markings, as walls - see [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md) §9.
-Once corrected, every distance constant was re-measured, so the control setpoints
-are now real distances (driving line 40 cm from the outer wall, emergency at
-18 cm, full steering lock at 20 cm of error) rather than tuned pixel fractions.
+markings, as walls — see [`ENGINEERING-JOURNAL.md`](ENGINEERING-JOURNAL.md). Once
+corrected, every distance constant was re-measured, so the control setpoints are
+now real distances (driving line 40 cm from the outer wall, emergency at 18 cm,
+full steering lock at 20 cm of error) rather than tuned pixel fractions.
 
-_Obstacle Challenge: in progress._
+**Obstacle Challenge — driving and sign-passing complete, parking not yet wired
+in.** Sign passing (red on the right, green on the left) and lane keeping between
+signs both run, with a short memory that holds a manoeuvre through a flickered
+detection instead of aborting it. The magenta parking lot is currently treated
+purely as a wall to avoid; detecting the gate and executing the approach is
+built into `config.py` as reserved constants but not yet connected into the main
+loop. The other known open issue is **shadow at two of the four corners**
+occasionally being read as part of the wall, which biases the density measurement
+there; `tools/shadow_check.py` was built specifically to separate a genuine wall
+(a tall, solid dark run) from a shadow (broad and shallow) and diagnose it in the
+field, and the wall test is being tightened against it.
 
 **Future work.**
-- Fit a small differential and raise `STEER_MAX` for tighter cornering.
-- Extend camera depth of field (or a fixed-focus wide module) so distant signs
-  stay sharp and detectable earlier.
-- Upgrade wall-following to a heading + offset controller; add sign tracking across
-  frames.
+- Wire the parking manoeuvre into the Obstacle Challenge's main loop.
+- Close out the corner-shadow misreading identified above.
+- Upgrade wall-following from a pure PD law to a heading + offset controller, so
+  the car holds a straighter line rather than correcting after it has already
+  drifted.
+- Track a sign's position across frames rather than per-frame, to smooth the
+  approach further than the current short-memory hold already does.
 
 ## 11. Repository map
 
 ```
 README.md                 # this engineering document
-ENGINEERING-JOURNAL.md     # design process & problem-solving log
+ENGINEERING-JOURNAL.md     # design process & problem-solving log, problem->investigation->solution
+Engineering-Journal.pdf    # printable engineering journal (hard-copy submission)
 CHECKLIST.md               # submission checklist
 src/                       # control software (core + tools/)
 models/                    # 3D-printable parts + source CAD

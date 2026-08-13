@@ -289,16 +289,112 @@ every tuning change, stop tuning and go and *look* at what the sensor is
 reporting. An annotated frame answered in one glance what hours of parameter
 changes could not, because the fault was never in the control law.
 
-## 10. Software architecture
+## 11. From follow-the-gap to a single reference wall
+
+**Problem.** Even after the line-vs-wall mask fix (§9), the free-space
+follow-the-gap controller from §7b was still choosing its target from the widest
+*open* region of the frame. On a track where the corridor width changes every
+round, "widest opening" is not a fixed reference — it moves depending on where the
+random inner wall happens to sit, so the same physical position could get two
+different commands on two different rounds.
+
+**Investigation.** We looked at what a single fixed reference would need to
+outperform a moving one, and realised the outer wall of the track is the one
+surface that is never randomised — the inner wall is what moves each round, not
+the outer one. A controller that always tracks a fixed distance to the outer wall
+only, and never looks at the inner wall at all, cannot be confused by where the
+inner wall happens to be.
+
+**Solution.** We replaced the gap-following steering with a proportional-derivative
+law on a single measurement: the density of the outer wall only (left wall
+clockwise, right wall counter-clockwise), holding it at a fixed target. The target
+and gain were set from a real calibration, not carried over from the earlier mask
+(§9 had already shown that old numbers do not transfer): car placed parallel to
+the outer wall at 40 cm and 25 cm, giving 0.1032 and 0.1783 respectively, a slope
+of 0.00501 density per centimetre. From that: driving line 40 cm, full lock at
+20 cm of steering error.
+
+**Corner turning changed too.** The gap method turned by steering toward wherever
+the "opening" appeared, which was noisy right at a corner. We replaced it with a
+**scripted turn triggered by the corner line**: crossing the driving-direction's
+line means the car is physically at the corner, so it holds full steering lock in
+that direction for a bounded time, ending as soon as the way ahead reads clear
+rather than after a fixed duration. A fixed 1.1 s turn was tried first and
+over-rotated into the inner wall in both directions (inner density climbed
+0.126 → 0.195 → 0.278 during one logged turn) before we switched to an
+early-exit condition.
+
+**A related bug: two escape commands fighting each other.** With both walls close
+at once — the car jammed nose-on to a corner — the emergency logic computed a
+push-left component and a push-right component and summed them. When both walls
+read almost identically close, the two nearly cancelled, so the car sat there
+producing a few degrees of steering instead of committing to an escape. The fix
+was to detect the both-walls-close case explicitly and latch a single escape
+direction (whichever side reads more open) instead of blending two opposing
+pushes.
+
+**Result.** The Open Challenge now completes in both directions on a controller
+with one setpoint, one gain pair, and a deterministic corner turn — a smaller
+design than the gap-following version, and one whose numbers are all measured
+distances rather than tuned image fractions.
+
+## 12. Obstacle Challenge: reusing the wall law, and a green sign that would not detect
+
+**Problem.** Early obstacle-challenge testing showed the car driving straight
+between traffic signs instead of following the corridor, and green signs were not
+being detected at all even with green clearly in front of the camera.
+
+**Investigation, straight-driving.** The design we started from steers only
+toward a detected sign; with none in view it commands zero and relies on a wall
+override firing often enough to keep the car roughly centred. Measured mid-corridor
+readings were 0.112 / 0.129 against a 0.213 override threshold — nowhere near
+close enough to trigger — so on a real run the car drove dead straight for 44% of
+the time with nothing correcting it.
+
+**Investigation, the green sign.** Sampling the actual pixels showed the mat/wall
+boundary — the fringe where black wall meets white mat — reads as green-ish at
+saturation 96–111. Below that, it merged with the real green sign into a single
+wide blob, which the "must be taller than wide" sign filter then rejected as not
+sign-shaped. The mat itself sits at saturation ~50; the real sign at saturation
+135 and above. The boundary fringe was sitting *between* the two, wide enough to
+break the shape filter.
+
+**Solution.**
+- Between signs, lane-keeping now reuses the same outer-wall PD law proven in the
+  Open Challenge (§11), instead of driving straight and hoping the override fires.
+- Green's saturation floor was raised until the boundary fringe fell below it and
+  only the sign remained, restoring a clean "taller than wide" blob.
+- A short memory (a handful of frames) now holds the last steering command when a
+  sign's detection drops out for a frame, because contour area was observed to
+  toggle sharply frame to frame during a real pass (61 → 851 → 0 → 1060) — without
+  the hold, that flicker aborted the manoeuvre mid-pass.
+
+**Open issues.**
+- Shadow at two of the four corners is occasionally read as part of the wall,
+  biasing the density reading there. The existing wall test already rejects most
+  shadow (a real wall is a tall, solid run of dark pixels; a shadow is broad and
+  shallow), which is why this only shows up at specific corners under specific
+  lighting rather than everywhere — but it is not fully closed out.
+  `tools/shadow_check.py` splits a frame's dark pixels into the "tall run" and
+  "shallow spread" categories so the two can be told apart in the field, and
+  tightening the test against this case is active work.
+- Parking is not yet wired into the Obstacle Challenge's main loop. Magenta is
+  currently treated purely as a wall to avoid (§9), and the parking constants
+  in `config.py` (target contour area, approach speed, gain) are reserved but
+  unused — detecting the gate and executing the approach is the next piece of
+  work, not a tuning pass on something already running.
+
+## 13. Software architecture
 
 We consolidated all hardware and vision logic into a single shared library
 (`src/robot.py`) imported by both challenge programs, so pins, the `servo()`/
 `motor()` safety, HSV masking, and the wall/line/sign analysers are defined **once**.
-Each challenge is a thin main loop: the Open Challenge is pure wall-follow + lap
-counting; the Obstacle Challenge is a strict priority state machine
-(wall-emergency → park → sign-pass → wall-follow). Calibration outputs
-(`colors.json`, `servo_center.txt`) are plain files the library loads at start, so
-re-tuning never touches code.
+Each challenge is a thin main loop built around a single priority-ordered dispatch
+function (`navigate()` for the Open Challenge; an equivalent ordered if-chain in
+the Obstacle Challenge): wall safety always outranks navigation, and navigation
+always outranks nothing — there is no state that sits above the wall check.
+Calibration outputs (`colors.json`, `camera_settings.json`, `servo_center.txt`)
+are plain files the library loads at start, so re-tuning never touches code.
 
 ---
 

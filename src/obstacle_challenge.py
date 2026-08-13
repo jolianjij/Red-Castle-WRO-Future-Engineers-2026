@@ -169,8 +169,8 @@ def main():
                 print(f"  t={t_ms/1000:5.1f}s dir={laps.direction:+d} q={laps.quadrant:2d} "
                       f"{mode:10s} L={left:.3f} R={right:.3f} steer={steer:+6.1f}")
 
-            # FILMING MODE: the lap counter never stops the run - drive until
-            # Ctrl+C. Set STOP_ON_LAPS = True to restore automatic finishing.
+            # stop automatically once the lap counter is satisfied; set
+            # STOP_ON_LAPS = False to drive until Ctrl+C instead (e.g. filming)
             if STOP_ON_LAPS and laps.ready_to_finish():
                 reason = f"{laps.quadrant} quadrants"
                 break

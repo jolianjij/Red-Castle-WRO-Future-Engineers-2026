@@ -1,31 +1,49 @@
 # models — 3D-printed parts and CAD
 
-## CAD renders
+## Full assembly
 
 <p align="center">
-  <img src="renders/chassis-top-steering-centered.png" width="300" alt="Chassis, steering centred">
-  <img src="renders/chassis-top-steering-left.png" width="300" alt="Chassis, steering turned">
+  <img src="renders/full-assembly.png" width="600" alt="Full car assembly, angled view">
 </p>
 
-| Render | Shows |
-|---|---|
-| [`chassis-top-steering-centered.png`](renders/chassis-top-steering-centered.png) | Full chassis from above, **steering centred** — Ackermann tie-rod, servo bay, rear axle |
-| [`chassis-top-steering-left.png`](renders/chassis-top-steering-left.png) | Same view with the **steering turned**, showing the linkage sweep and wheel angles |
-| [`chassis-top-plate.png`](renders/chassis-top-plate.png) | Base plate with the mounting-hole pattern (Pi, driver, battery) and the rear-axle cut-out |
-| [`chassis-side.png`](renders/chassis-side.png) | Side profile — ride height and wheelbase |
-| [`chassis-rear-axle.png`](renders/chassis-rear-axle.png) | Rear axle assembly — drive gear and axle supports |
+Front Ackermann steering axle on the left, rear differential axle with the N20
+motor and gear cluster on the right.
 
-### Design notes visible in the renders
-- **Ackermann front steering**: a single SG90 servo drives a central bell-crank
-  through a tie-rod to both steering knuckles, so the inner wheel turns more
-  sharply than the outer one through a corner. Mechanical limit **±35°**.
-- **Rear axle with a differential**: an **N20 gear motor (12 V, 200 rpm)** drives
-  the axle through a **25:20 spur pair (1.25:1)** into a **differential**, letting
-  the driven wheels turn at different speeds. This is what allows the full ±35° of
-  steering — an earlier solid axle scrubbed and forced the software limit down to
-  ~8°. See [`../ENGINEERING-JOURNAL.md`](../ENGINEERING-JOURNAL.md).
-- The base plate's hole grid carries the Raspberry Pi, the L9110S driver, the
-  buck converter and the battery holder; the camera mast bolts to the front.
+## Front steering assembly
+
+<p align="center">
+  <img src="renders/front-steering-linkage.png" width="420" alt="Front steering linkage, top view">
+  <img src="renders/chassis-top-steering-centered.png" width="280" alt="Chassis, steering centred">
+  <img src="renders/chassis-top-steering-left.png" width="280" alt="Chassis, steering turned">
+</p>
+
+A single SG90 servo drives a central bell-crank through a tie-rod to both
+steering knuckles, so the inner wheel turns more sharply than the outer one
+through a corner. Mechanical limit **±35°**.
+
+## Rear axle and differential
+
+<p align="center">
+  <img src="renders/rear-axle-differential-front.png" width="280" alt="Rear axle, front view">
+  <img src="renders/rear-axle-differential-top.png" width="280" alt="Rear axle, top view">
+  <img src="renders/rear-axle-differential-mesh.png" width="280" alt="Differential gear mesh detail">
+</p>
+
+An **N20 gear motor (12 V, 200 rpm)** drives the axle through a **25:20 spur
+pair (1.25:1)** into the differential. The differential lets the driven wheels
+turn at different speeds through a corner, which is what allows the full ±35°
+of steering — an earlier solid axle scrubbed and forced the software limit
+down to ~8°. See [`../ENGINEERING-JOURNAL.md`](../ENGINEERING-JOURNAL.md).
+
+## Chassis
+
+<p align="center">
+  <img src="renders/chassis-top-plate.png" width="300" alt="Base plate, mounting holes">
+  <img src="renders/chassis-side.png" width="230" alt="Side profile">
+</p>
+
+The base plate's hole grid carries the Raspberry Pi, the L9110S driver, the
+buck converter and the battery holder; the camera mast bolts to the front.
 
 ## Manufacturing
 
@@ -66,9 +84,14 @@ All printed parts, quantities, and whether each is a fixed or moving part
 **Print note:** moving parts need lubrication to reduce friction — we use
 Vaseline on all mating surfaces listed as "Moving" above.
 
-> **Fasteners, bearings, and bronze spacers:** the mechanical BOM currently
-> lists only the printed parts. Screw sizes/counts and spacer types per
-> assembly are still to be added.
+## Fasteners and spacers
+
+| Part | Spec | Qty |
+|---|---|---|
+| Screw | M3 × 8 mm | 18 |
+| Screw | M3 × 20 mm | 4 |
+| Standoff, male–female | brass, 25 mm | 4 |
+| Standoff, female–female | brass, 20 mm | 4 |
 
 ## Folder contents
 
@@ -79,5 +102,5 @@ models/
 └── printing/      # 5 pre-sliced 3MF plates, ready to print on the Bambu Lab A1
 ```
 
-> **To add:** the full Fusion 360 assembly file, the differential/steering
-> assembly notes and photos, and photos for the BOM table above.
+> **To add:** the full Fusion 360 assembly file and photos for the BOM table
+> above.
