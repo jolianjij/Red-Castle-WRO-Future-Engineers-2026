@@ -34,30 +34,36 @@ import robot as R
 # ==========================================================================
 # TUNABLES - everything you might want to change lives here
 # ==========================================================================
-CRUISE           = 55      # base speed %  (falls with steering, floor MIN_SPEED)
-FORCE_CW         = False   # False = detect direction from the first corner line.
+CRUISE           = 70    # base speed %  (falls with steering, floor MIN_SPEED)
+FORCE_CW         = True   # False = detect direction from the first corner line.
                            # Until a line is seen the car CENTRES between the
                            # walls, which is safe whichever way the track runs.
 
 # --- lane keeping when no sign is near ---
-LANE_DISTANCE_CM = 50.0    # hold this far from the OUTER wall between signs
+LANE_DISTANCE_CM = 30.0    # hold this far from the OUTER wall between signs
 # density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured)
 LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 
 # --- how hard the car reacts to a sign ---
-PILLAR_KP        = 0.111   # deg per unit of Err
+PILLAR_KP        = 0.3   # deg per unit of Err
 GREEN_TARGET_X   = 180.0   # column a GREEN sign is pushed toward (>160 = right)
 RED_TARGET_X     = 140.0   # column a RED sign is pushed toward  (<160 = left)
 Y_GAIN           = 2.0     # how much the target slides outward as a sign nears
 
 # --- what counts as a sign ---
-PILLAR_MIN_AREA  = 60      # min contour area (px) in the 320x160 buffer
+PILLAR_MIN_AREA  = 55      # min contour area (px) in the 320x160 buffer
 PILLAR_MIN_ASPECT= 1.0     # height/width must exceed this (signs are tall)
-SIGN_MEMORY      = 8       # frames to hold a manoeuvre after losing the sign
+SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
+                           # keeping for this long. Stops the wall follower
+                           # yanking the car back mid-pass.
+SIGN_STEER_HOLD_S= 0.5     # of that hold, keep steering as the sign commanded
+                           # for this long, then run straight for the remainder
 
 # --- when a sign counts as PASSED (for the order list) ---
 PASS_MIN_AREA    = 250     # it must have got at least this big (i.e. come close)
-PASS_LOST_FRAMES = 6       # ...and then be gone this many frames
+PASS_LOST_S      = 3.0     # ...and then be gone this long. A sign is recorded
+                           # once the hold above expires, so a brief dropout can
+                           # no longer register the same sign several times.
 PASS_COOLDOWN_S  = 0.8     # ignore a re-detection of the SAME colour within this
                            # long (absorbs flicker). Two real signs of the same
                            # colour are seconds apart, so keep this well under
@@ -119,7 +125,7 @@ class PassLogger:
         self.order = []
         self._kind = ""
         self._peak = 0
-        self._lost = 0
+        self._seen = 0.0
         self._last_kind = ""       # what was committed last
         self._last_t = -1e9        # NOT 0.0 - that blocked the very first commit
 
@@ -131,11 +137,9 @@ class PassLogger:
                 self._kind, self._peak = kind, int(area)
             else:
                 self._peak = max(self._peak, int(area))
-            self._lost = 0
-        elif self._kind:
-            self._lost += 1
-            if self._lost >= PASS_LOST_FRAMES:
-                self._commit(now)
+            self._seen = now
+        elif self._kind and (now - self._seen) >= PASS_LOST_S:
+            self._commit(now)
 
     def _commit(self, now):
         # the cooldown guards against the SAME sign being recorded twice when the
@@ -147,7 +151,7 @@ class PassLogger:
             self._last_kind, self._last_t = self._kind, now
             print(f"  >> PASSED {self._kind.upper()} "
                   f"(peak area {self._peak})  order so far: {self.order}")
-        self._kind, self._peak, self._lost = "", 0, 0
+        self._kind, self._peak = "", 0
 
     def finish(self, now):
         self._commit(now)
@@ -180,7 +184,7 @@ def main():
     laps = R.LapTracker()
     outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
-    hold = {"kind": "", "n": 0}
+    hold = {"kind": "", "t": -1e9, "steer": 0.0}
 
     if FORCE_CW:
         laps.direction = 1
@@ -228,11 +232,15 @@ def main():
                 kind, sx, sy, area, _ = sign
                 steer = sign_error(kind, sx, sy) * PILLAR_KP
                 mode = "sign-" + kind
-                hold["kind"], hold["n"] = kind, SIGN_MEMORY
-            elif hold["n"] > 0:
-                hold["n"] -= 1
+                hold["kind"], hold["t"], hold["steer"] = kind, now, steer
+            elif hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S:
+                # A sign was here recently. Do NOT hand back to lane keeping yet
+                # or the wall follower drags the car back across the pass.
                 kind, sx, sy, area = hold["kind"], 0.0, 0.0, 0
-                steer, mode = last_steer, "sign-hold"
+                if (now - hold["t"]) < SIGN_STEER_HOLD_S:
+                    steer, mode = hold["steer"], "sign-hold"
+                else:
+                    steer, mode = 0.0, "sign-clear"   # run straight past it
             else:
                 kind, sx, sy, area = "", 0.0, 0.0, 0
                 steer = outer.steer(left, right, laps.direction)
