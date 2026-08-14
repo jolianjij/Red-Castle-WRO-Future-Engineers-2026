@@ -50,11 +50,17 @@ def setup_hardware():
     _m2 = GPIO.PWM(MOTOR_IN2, MOTOR_HZ); _m2.start(0)
 
 
-def servo(angle):
-    """0 = straight (after trim), + right, - left, clamped +-STEER_MAX."""
+def servo(angle, limit=None):
+    """0 = straight (after trim), + right, - left.
+
+    Clamped to STEER_MAX by default. `limit` raises that ceiling for ONE call,
+    up to the linkage's real mechanical limit (STEER_MECH_MAX) - used by the
+    corner kick, which deliberately asks for more lock than normal driving.
+    """
     if INVERT_STEERING:
         angle = -angle
-    angle = max(-STEER_MAX, min(STEER_MAX, angle))
+    lim = STEER_MAX if limit is None else min(abs(limit), STEER_MECH_MAX)
+    angle = max(-lim, min(lim, angle))
     a = angle + SERVO_CENTER_TRIM + 90.0
     a = max(45.0, min(135.0, a))
     duty = SERVO_MIN_DUTY + (a / 180.0) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY)
@@ -119,12 +125,10 @@ _DEFAULT_COLORS = {
                                             # (a warm cream). H<=13 and S>=72 are
                                             # what separate the line from the mat;
                                             # S<=170 keeps the red pillar out.
-    "green":   [30, 95, 140, 255, 30, 170], # MEASURED. S>=140 is the key: the
-                                            # wall/mat boundary fringe sits at
-                                            # S96-111 and MERGED with the pillar
-                                            # below that, making one wide blob
-                                            # the "taller than wide" filter threw
-                                            # away. The mat itself is S~50.
+    "green":   [60, 95, 140, 255, 30, 170], # MEASURED H81-86 S152. The floor is 60,
+                                            # not 30: the RED pillar's fringe reaches
+                                            # H=30, and a 30 floor matched 74 px of it
+                                            # as "green" - enough to pass MIN_AREA.
     "red":     [174, 10, 170, 255, 60, 255], # MEASURED H~1 S~199. The wrap starts
                                             # at 174, ABOVE magenta at H170-172,
                                             # which red used to swallow whole.
@@ -389,8 +393,8 @@ class LapTracker:
         """
         now = time.monotonic()
 
-        # ---- blue ----
-        if blue_frac > LINE_FRACTION:
+        # ---- blue ----  (its OWN, higher, threshold - blue over-triggers)
+        if blue_frac > LINE_FRACTION_BLUE:
             self.blue_state = 1
             if now >= self._blue_next_t:      # not locked out -> arm it
                 self._blue_det = True
@@ -402,8 +406,8 @@ class LapTracker:
                 self.blue_reads += 1
             self._blue_det = False
 
-        # ---- orange ----
-        if orange_frac > LINE_FRACTION:
+        # ---- orange ----  (its OWN, lower, threshold - orange is faint)
+        if orange_frac > LINE_FRACTION_ORANGE:
             self.orange_state = 1
             if now >= self._orange_next_t:
                 self._orange_det = True
@@ -438,17 +442,29 @@ class LapTracker:
 
         # ---------------- PHASE 1: fix the direction, once ----------------
         if self.direction == 0:
-            line_seen = (blue_frac > LINE_FRACTION) or (orange_frac > LINE_FRACTION)
-            if line_seen:
-                # condition 1 - the BIGGER line wins
-                bigger = 1 if orange_frac > blue_frac else -1      # +1 CW, -1 CCW
+            # CONFIDENCE, not raw pixels: each colour is scored against ITS OWN
+            # threshold, so "faint orange that cleared its bar" can beat "lots of
+            # blue that barely cleared its higher bar". Comparing raw fractions
+            # is what let stray blue call a CW run CCW.
+            o_conf = orange_frac / LINE_FRACTION_ORANGE
+            b_conf = blue_frac / LINE_FRACTION_BLUE
+            win, lose = max(o_conf, b_conf), min(o_conf, b_conf)
+            bigger = 1 if o_conf > b_conf else -1                   # +1 CW, -1 CCW
+            # both lines convincing at once = ambiguous. Wait for a clearer frame
+            # rather than lock a direction that can never be undone.
+            ambiguous = (lose > 0.0 and win < lose * LINE_DIR_MIN_RATIO)
+            if win > 1.0:
                 self.line_hint = bigger
+            if win > 1.0 and ambiguous:
+                print(f"[lap] direction AMBIGUOUS (orange {o_conf:.2f}x vs "
+                      f"blue {b_conf:.2f}x of their own thresholds) - waiting")
+            elif win > 1.0:
                 # condition 2 - wall geometry, only when one side is clearly open
                 if abs(left - right) >= GEOM_DIR_MIN_DIFF:
                     self.geom_hint = -1 if left < right else 1
-                self._lock_direction(bigger, "bigger line "
-                                     f"({'orange' if bigger > 0 else 'blue'} "
-                                     f"{max(blue_frac, orange_frac):.3f})")
+                self._lock_direction(bigger,
+                                     f"{'orange' if bigger > 0 else 'blue'} line at "
+                                     f"{win:.2f}x its threshold")
                 if self.geom_hint:
                     if self.geom_hint == self.direction:
                         self.direction_confirmed = True
@@ -521,6 +537,78 @@ class LapTracker:
     def turn_bias(self):
         """Steering bias to apply while inside a corner (deg)."""
         return self.direction * STEER_MAX
+
+
+class CornerKick:
+    """A fixed, open-loop steering kick fired when a corner is counted.
+
+    WHY IT EXISTS
+    The last sign before a corner leaves the car pushed to one side of the
+    track. If it was pushed toward the INNER wall, the car enters the corner
+    pointing across it: the next section is not in frame at all, so every
+    closed-loop controller is reacting to a wall it is about to leave behind.
+    A short, hard, OPEN-LOOP turn in the corner's own direction swings the nose
+    round until the next section is visible, then normal control resumes.
+
+    WHICH SIGN TRIGGERS IT depends on direction, because "inner" does:
+
+        CW  - corners turn RIGHT, so the inner wall is on the RIGHT.
+              RED is passed on the car's right, pushing it toward that inner
+              wall  ->  trigger on RED, kick RIGHT.
+
+        CCW - corners turn LEFT, so the inner wall is on the LEFT.
+              GREEN is passed on the car's left, pushing it toward that inner
+              wall  ->  trigger on GREEN, kick LEFT.
+
+    Both trigger colours are constructor arguments, so if a venue proves the
+    opposite convention they are a one-line change and no logic moves.
+
+    The kick is deliberately open-loop and time-boxed: it is a manoeuvre, not a
+    controller. It may exceed STEER_MAX (that is the point - it asks for real
+    lock) but never exceeds the linkage's STEER_MECH_MAX.
+    """
+
+    def __init__(self, angle=30.0, duration_s=0.9, speed=55,
+                 sign_cw="red", sign_ccw="green", enabled=True):
+        self.angle = angle
+        self.duration_s = duration_s
+        self.speed = speed
+        self.sign_cw = sign_cw
+        self.sign_ccw = sign_ccw
+        self.enabled = enabled
+        self._until = 0.0
+        self._dir = 0
+        self.fired = 0            # how many kicks this run (shows in the summary)
+
+    def trigger_colour(self, direction):
+        """The sign colour that arms the kick for this driving direction."""
+        return self.sign_cw if direction >= 0 else self.sign_ccw
+
+    def maybe_fire(self, direction, last_sign, now):
+        """Call once on the frame a quadrant is counted. True if a kick started."""
+        if not self.enabled or direction == 0:
+            return False
+        if last_sign != self.trigger_colour(direction):
+            return False
+        self._until = now + self.duration_s
+        self._dir = 1 if direction > 0 else -1
+        self.fired += 1
+        print(f"[kick] corner exit: last sign was {last_sign.upper()} in "
+              f"{'CW' if direction > 0 else 'CCW'} -> "
+              f"{self.angle:.0f} deg {'RIGHT' if self._dir > 0 else 'LEFT'} "
+              f"for {self.duration_s:.1f}s")
+        return True
+
+    def active(self, now):
+        return now < self._until
+
+    def command(self):
+        """(steer, servo_limit, speed) while the kick is running.
+        +steer = right, so direction (+1 CW) already gives the correct sign."""
+        return self._dir * self.angle, self.angle, self.speed
+
+    def cancel(self):
+        self._until = 0.0
 
 
 # ==========================================================================

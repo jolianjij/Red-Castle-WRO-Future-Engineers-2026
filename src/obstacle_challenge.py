@@ -2,10 +2,13 @@
 """
 obstacle_challenge.py - WRO 2026 Obstacle Challenge (diagnostic build).
 
-Control priority, per frame:
-    1. WALL OVERRIDE   outer wall too close  -> full lock away (also turns corners)
-    2. SIGN            a red/green sign in view -> steer to place it correctly
-    3. LANE            nothing else -> outer-wall law (the Open Challenge one)
+Control priority, per frame - all of it in decide(), one function:
+    1. KICK   open-loop corner exit, fired when a corner is counted and the last
+              sign pushed the car toward the INNER wall. May exceed STEER_MAX.
+    2. WALL   outer wall too close -> full lock away (also turns corners)
+    3. SIGN   a red/green sign in view -> steer to place it correctly
+    4. HOLD   a sign was here in the last SIGN_HOLD_S -> don't hand back yet
+    5. LANE   nothing else -> outer-wall law (the Open Challenge one)
 
 Sign-positioning law:
     green : Err = -((GREEN_TARGET_X + y*Y_GAIN) - x)   push the sign RIGHT of frame
@@ -22,6 +25,7 @@ DIAGNOSTIC FEATURES
 
 Run:  cd ~/wro2026 && source .venv/bin/activate && python obstacle_challenge.py
 """
+import collections
 import csv
 import os
 import time
@@ -69,6 +73,21 @@ PASS_COOLDOWN_S  = 0.8     # ignore a re-detection of the SAME colour within thi
                            # colour are seconds apart, so keep this well under
                            # that or a genuine second sign gets swallowed.
 
+# --- CORNER-EXIT KICK ---------------------------------------------------
+# When a corner is counted AND the last sign seen was the one that pushed the
+# car toward the INNER wall, fire a fixed hard turn so the next section comes
+# into view. See robot.CornerKick for the full reasoning.
+#     CW  : inner wall is RIGHT, RED   pushes the car right -> kick RIGHT
+#     CCW : inner wall is LEFT,  GREEN pushes the car left  -> kick LEFT
+CORNER_KICK      = True    # False disables the whole behaviour
+KICK_ANGLE       = 30.0    # deg. May exceed STEER_MAX (20) - that is the point.
+                           # Hard ceiling is the linkage limit, STEER_MECH_MAX=35.
+KICK_TIME_S      = 0.9     # how long to hold it. Longer = tighter turn.
+KICK_SPEED       = 55      # % speed during the kick; slower turns in less space
+KICK_SIGN_CW     = "red"   # sign colour that arms the kick when running CW
+KICK_SIGN_CCW    = "green" # ...and when running CCW. Swap these if a venue
+                           # proves the opposite convention.
+
 # --- frame saving ---
 SAVE_FRAMES      = True
 SAVE_EVERY       = 3       # while a sign is in view, save every Nth frame
@@ -103,6 +122,90 @@ def find_sign(hsv):
             best = (kind, mm["m10"] / mm["m00"], mm["m01"] / mm["m00"],
                     area, (x, y, w, h))
     return best
+
+
+def wall_override(direction, left, right):
+    """Emergency steer, or None if neither wall is dangerously close.
+
+    Returns +STEER_MAX (hard right) or -STEER_MAX (hard left). The OUTER wall is
+    tested first, because that is the one the car is deliberately hugging:
+    in CW the outer wall is on the left, in CCW it is on the right.
+    """
+    outer_first = (("left", left), ("right", right)) if direction >= 0 \
+        else (("right", right), ("left", left))
+    for side, density in outer_first:
+        if density > R.WALL_EMERGENCY:
+            return R.STEER_MAX if side == "left" else -R.STEER_MAX
+    return None
+
+
+def opposes(a, b):
+    """True if two steering commands pull in opposite directions."""
+    return a is not None and b is not None and a * b < 0
+
+
+def clamp_steer(steer, servo_limit):
+    """Clamp to STEER_MAX, or to a raised (kick) ceiling that never exceeds the
+    linkage's mechanical limit."""
+    ceiling = R.STEER_MAX if servo_limit is None \
+        else min(servo_limit, R.STEER_MECH_MAX)
+    return max(-ceiling, min(ceiling, steer))
+
+
+# What one frame of decision-making produces.
+Decision = collections.namedtuple(
+    "Decision", "steer mode kind sx sy area servo_limit speed_cap")
+
+
+def decide(now, sign, hold, kick, outer, left, right, direction):
+    """THE CONTROL PRIORITY LADDER - the entire driving decision, in one place.
+
+    Highest priority first; EXACTLY ONE branch produces the answer:
+
+        1 KICK  open-loop corner exit. Outranks everything, because it is a
+                committed manoeuvre - except a wall closing from the far side.
+        2 WALL  emergency: the outer wall is too close.
+        3 SIGN  a red/green sign is in view -> steer to place it correctly.
+        4 HOLD  a sign was here very recently. Do NOT hand back to lane keeping
+                yet, or the wall follower drags the car back across the pass.
+        5 LANE  nothing else is happening -> outer-wall PD.
+
+    This is deliberately pure: no hardware, no camera, no globals it writes to
+    except `hold`. That is what lets tools/test_logic.py drive it directly, and
+    it means changing how the car decides never means reading the main loop.
+    """
+    wall = wall_override(direction, left, right)
+
+    # ---- 1. KICK ----
+    if kick.active(now):
+        k_steer, k_limit, k_speed = kick.command()
+        if not opposes(wall, k_steer):
+            return Decision(k_steer, "kick", "", 0.0, 0.0, 0, k_limit, k_speed)
+        kick.cancel()          # wall closing the other way - abandon the kick
+
+    # ---- 2. WALL ----
+    if wall is not None:
+        return Decision(wall, "wall-L" if wall > 0 else "wall-R",
+                        "", 0.0, 0.0, 0, None, None)
+
+    # ---- 3. SIGN ----
+    if sign is not None:
+        kind, sx, sy, area, _ = sign
+        steer = sign_error(kind, sx, sy) * PILLAR_KP
+        hold["kind"], hold["t"], hold["steer"] = kind, now, steer
+        return Decision(steer, "sign-" + kind, kind, sx, sy, area, None, None)
+
+    # ---- 4. HOLD ----
+    if hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S:
+        if (now - hold["t"]) < SIGN_STEER_HOLD_S:
+            steer, mode = hold["steer"], "sign-hold"
+        else:
+            steer, mode = 0.0, "sign-clear"      # run straight past it
+        return Decision(steer, mode, hold["kind"], 0.0, 0.0, 0, None, None)
+
+    # ---- 5. LANE ----
+    return Decision(outer.steer(left, right, direction), "lane",
+                    "", 0.0, 0.0, 0, None, None)
 
 
 def sign_error(kind, cx, cy):
@@ -184,7 +287,12 @@ def main():
     laps = R.LapTracker()
     outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
+    kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
+                        speed=KICK_SPEED, sign_cw=KICK_SIGN_CW,
+                        sign_ccw=KICK_SIGN_CCW, enabled=CORNER_KICK)
     hold = {"kind": "", "t": -1e9, "steer": 0.0}
+    last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
+                               # gap between the sign and the corner it precedes
 
     if FORCE_CW:
         laps.direction = 1
@@ -208,6 +316,11 @@ def main():
           f" min_area={PILLAR_MIN_AREA}")
     print(f"  wall      : override at {R.WALL_EMERGENCY}   magenta ignored"
           f" (MAGENTA_IS_WALL={R.MAGENTA_IS_WALL})")
+    print(f"  kick      : {'ON' if CORNER_KICK else 'OFF'}  {KICK_ANGLE:.0f}deg for"
+          f" {KICK_TIME_S:.1f}s @ {KICK_SPEED}%  "
+          f"(CW<-{KICK_SIGN_CW}, CCW<-{KICK_SIGN_CCW})")
+    print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f}  "
+          f"blue>{R.LINE_FRACTION_BLUE:.3f}  (separate thresholds)")
     print(f"  stop      : {'lap counter' if STOP_ON_LAPS else 'Ctrl+C only'}"
           f"   log -> {path}")
     input("Press Enter to START...")
@@ -222,46 +335,28 @@ def main():
             left, right = R.wall_readings(hsv)
             front = R.front_reading(hsv)
             blue, orange = R.line_counts(hsv)
+            q_before = laps.quadrant
             laps.update(blue, orange, left, right, front)
 
             sign = find_sign(hsv)
             passes.update(sign, now)
-
-            # ---- SIGN (primary) / LANE (default) ----
             if sign is not None:
-                kind, sx, sy, area, _ = sign
-                steer = sign_error(kind, sx, sy) * PILLAR_KP
-                mode = "sign-" + kind
-                hold["kind"], hold["t"], hold["steer"] = kind, now, steer
-            elif hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S:
-                # A sign was here recently. Do NOT hand back to lane keeping yet
-                # or the wall follower drags the car back across the pass.
-                kind, sx, sy, area = hold["kind"], 0.0, 0.0, 0
-                if (now - hold["t"]) < SIGN_STEER_HOLD_S:
-                    steer, mode = hold["steer"], "sign-hold"
-                else:
-                    steer, mode = 0.0, "sign-clear"   # run straight past it
-            else:
-                kind, sx, sy, area = "", 0.0, 0.0, 0
-                steer = outer.steer(left, right, laps.direction)
-                mode = "lane"
+                last_sign_kind = sign[0]
 
-            # ---- WALL OVERRIDE (highest priority) ----
-            if laps.direction >= 0:
-                if left > R.WALL_EMERGENCY:
-                    steer, mode = R.STEER_MAX, "wall-L"
-                elif right > R.WALL_EMERGENCY:
-                    steer, mode = -R.STEER_MAX, "wall-R"
-            else:
-                if right > R.WALL_EMERGENCY:
-                    steer, mode = -R.STEER_MAX, "wall-R"
-                elif left > R.WALL_EMERGENCY:
-                    steer, mode = R.STEER_MAX, "wall-L"
+            # A corner was just counted -> if the sign we last saw pushed us
+            # toward the inner wall, swing hard so the next section comes up.
+            if laps.quadrant > q_before:
+                if kick.maybe_fire(laps.direction, last_sign_kind, now):
+                    last_sign_kind = ""     # consumed; don't re-fire next corner
 
-            steer = max(-R.STEER_MAX, min(R.STEER_MAX, steer))
+            d = decide(now, sign, hold, kick, outer, left, right, laps.direction)
+            kind, sx, sy, area, mode = d.kind, d.sx, d.sy, d.area, d.mode
+
+            steer = clamp_steer(d.steer, d.servo_limit)
             last_steer = steer
-            speed = R.cruise_speed(CRUISE, steer)
-            R.servo(steer); R.motor(speed)
+            speed = d.speed_cap if d.speed_cap is not None \
+                else R.cruise_speed(CRUISE, steer)
+            R.servo(steer, limit=d.servo_limit); R.motor(speed)
 
             fname = ""
             if (SAVE_FRAMES and saves < MAX_SAVES
@@ -299,6 +394,8 @@ def main():
         print(f"\nFINISHED ({reason})  {dt:.1f}s  {n} frames  "
               f"{1000*dt/max(n,1):.1f} ms/cycle")
         print(f"  SIGN ORDER PASSED: {order if order else '(none)'}")
+        print(f"  corner kicks fired: {kick.fired}")
+        print(f"  lap fusion: {laps.summary()}")
         print(f"  frames saved: {saves} -> frames/")
         with open("sign_order.txt", "w") as f:
             f.write(",".join(order) + "\n")

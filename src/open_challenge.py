@@ -19,12 +19,49 @@ import time
 
 import robot as R
 
-# ---- tunables ----
-CRUISE = 100           # max speed
-FINISH_EXTRA_CYCLES = 60  # keep going a bit after the 12th quadrant, then stop
-MAX_RUNTIME_S = 150     # SAFETY net only. 3 laps measured ~5s/quadrant = ~60s,
-                        # so this is generous headroom, not a lap limit.
-DEBUG = True            # print a status line every 15 cycles
+# ==========================================================================
+# TUNABLES - everything you might want to change lives here.
+# Anything NOT in this block is shared with the Obstacle Challenge and lives
+# in config.py, so changing it there changes both runs.
+# ==========================================================================
+
+# --- speed ---
+CRUISE           = 100     # base speed %. Falls automatically with steering
+                           # (see R.cruise_speed), so this is the straight-line
+                           # figure, not the average.
+
+# --- direction ---
+FORCE_DIRECTION  = 0       # 0 = detect from the corner lines (normal).
+                           # +1 forces CW, -1 forces CCW. Only set this if the
+                           # judges tell you the run direction.
+
+# --- how far from the outer wall to drive ---
+LANE_DISTANCE_CM = 40.0    # hold this far from the OUTER wall on the straights.
+# density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured on this car)
+LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
+
+# --- corner lines (direction + lap counting) ---
+# These two are the reason a CW run could be read as CCW: one shared threshold
+# is unfair to orange, which is far fainter than blue on this camera. They live
+# in config.py because the Obstacle Challenge needs exactly the same values.
+#     R.LINE_FRACTION_ORANGE   lower bar - orange is hard to see
+#     R.LINE_FRACTION_BLUE     higher bar - blue over-triggers on background
+#     R.LINE_DIR_MIN_RATIO     how decisively one must beat the other to lock
+LINE_ROWS_OVERRIDE = None  # None = use config's LINE_ROWS (bottom 45% of ROI)
+
+# --- run control ---
+STOP_AFTER_QUADRANT = None # None = use config's value (11). 12 corners = 3 laps.
+MAX_RUNTIME_S    = 150     # SAFETY net only. 3 laps measured ~5 s/quadrant
+                           # = ~60 s, so this is headroom, not a lap limit.
+FINISH_EXTRA_CYCLES = 60   # keep going a bit after the last quadrant, then stop
+DEBUG            = True    # print a status line every DEBUG_EVERY cycles
+DEBUG_EVERY      = 15
+# ==========================================================================
+
+if LINE_ROWS_OVERRIDE is not None:
+    R.LINE_ROWS = LINE_ROWS_OVERRIDE
+if STOP_AFTER_QUADRANT is not None:
+    R.STOP_AFTER_QUADRANT = STOP_AFTER_QUADRANT
 
 
 def main():
@@ -33,8 +70,10 @@ def main():
     cam = R.open_camera()
 
     laps = R.LapTracker()
+    if FORCE_DIRECTION:
+        laps.direction = FORCE_DIRECTION
     follower = R.WallFollower()
-    outer = R.OuterWallFollower()      # used when NAV_METHOD == "outer"
+    outer = R.OuterWallFollower(target=LANE_TARGET)   # when NAV_METHOD=="outer"
     turner = R.TurnSequencer()         # scripted line-triggered corner turn
 
     # --- logging ---
@@ -46,6 +85,13 @@ def main():
                   "left", "right", "blue", "orange", "steer", "speed"])
     print(f"config: NAV_METHOD={R.NAV_METHOD} CRUISE={CRUISE} "
           f"STEER_MAX={R.STEER_MAX} trim={R.SERVO_CENTER_TRIM}")
+    print(f"  direction : {'FORCED ' + ('CW' if FORCE_DIRECTION > 0 else 'CCW')}"
+          if FORCE_DIRECTION else "  direction : auto from corner lines")
+    print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
+          f"(density {LANE_TARGET:.4f})")
+    print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f}  "
+          f"blue>{R.LINE_FRACTION_BLUE:.3f}  ratio>{R.LINE_DIR_MIN_RATIO:.2f}")
+    print(f"  stop      : after quadrant {R.STOP_AFTER_QUADRANT}")
     print(f"colors loaded: {list(R.COLORS.keys())}")
     print(f"logging -> {logpath}")
 
@@ -84,7 +130,7 @@ def main():
                           f"{left:.3f}", f"{right:.3f}", f"{blue:.3f}", f"{orange:.3f}",
                           f"{steer:.1f}", f"{speed:.0f}"])
 
-            if DEBUG and n % 15 == 0:
+            if DEBUG and DEBUG_EVERY and n % DEBUG_EVERY == 0:
                 logf.flush()
                 print(f"t={t_ms:5d}ms dir={laps.direction:+d} quad={laps.quadrant:2d} "
                       f"{mode:12s} L={left:.2f} R={right:.2f} steer={steer:+.0f}")

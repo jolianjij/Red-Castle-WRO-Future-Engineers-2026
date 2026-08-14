@@ -25,6 +25,9 @@ STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
 STEER_MAX = 20          # deg - SOFTWARE steering limit actually used when driving.
                         # The Ackermann linkage reaches 35 deg mechanically, but the
                         # car is run at 20 for stability at full speed.
+STEER_MECH_MAX = 35     # deg - the ACKERMANN LINKAGE's real mechanical limit. Only
+                        # deliberate manoeuvres that ask for it (the corner kick)
+                        # may go past STEER_MAX, and never past this.
 SERVO_MIN_DUTY = 2.5    # duty at 0 deg
 SERVO_MAX_DUTY = 12.5   # duty at 180 deg
 
@@ -214,7 +217,31 @@ MAX_RUNTIME_S = 90      # SAFETY: hard stop after this long
 # the bottom band removes that class of false positive geometrically, without
 # depending on colour tuning at all.
 LINE_ROWS = 0.45        # only the BOTTOM 45% of the ROI is searched for lines
-LINE_FRACTION = 0.020   # a line is "present" above this fraction of the line band
+
+# ---- PER-COLOUR LINE THRESHOLDS -----------------------------------------
+# One shared threshold does NOT work, because the two lines are not equally
+# easy to see on this camera:
+#   ORANGE is the hard one. It is a warm colour on a warm cream mat, so its
+#          saturation collapses with distance - measured S~41 far away against
+#          the S>=72 floor the mask needs, i.e. it simply vanishes until close.
+#   BLUE   is the easy one, and that is the problem: it over-triggers on bluish
+#          wall/background pixels, so a CW run could be read as CCW purely
+#          because blue crossed the bar first.
+# So orange gets a LOWER bar (easier to accept) and blue a HIGHER one (must be
+# convincing). Raise BLUE if a CW run is still called CCW; lower ORANGE if a
+# genuine orange crossing is missed.
+LINE_FRACTION_ORANGE = 0.012   # orange is faint -> accept it sooner
+LINE_FRACTION_BLUE   = 0.035   # blue over-triggers -> demand more of it
+
+# DIRECTION is decided by CONFIDENCE, not by raw pixel count. Comparing the raw
+# fractions is unfair when one colour is intrinsically fainter - blue wins on
+# pixels even when orange is the line actually being crossed. Confidence is
+# each colour's fraction divided by ITS OWN threshold, so both are measured in
+# "how far over my own bar am I", which is comparable.
+# The winner must also beat the loser by this ratio before the direction locks;
+# below it the frame is treated as ambiguous and the decision simply waits for a
+# clearer one. Raise it if the direction is still occasionally wrong.
+LINE_DIR_MIN_RATIO = 1.30
 
 # TIME lockout: once a line has been READ ONCE, that colour is ignored for this
 # many seconds. This is what stops one physical crossing being counted many
