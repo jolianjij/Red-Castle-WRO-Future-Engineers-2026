@@ -125,9 +125,11 @@ _DEFAULT_COLORS = {
                                             # below that, making one wide blob
                                             # the "taller than wide" filter threw
                                             # away. The mat itself is S~50.
-    "red":     [170, 5, 150, 255, 60, 255], # MEASURED hue~178, S~252. High S
-                                            # floor separates it from the line.
-    "magenta": [130, 145, 177, 255, 93, 255],
+    "red":     [174, 10, 170, 255, 60, 255], # MEASURED H~1 S~199. The wrap starts
+                                            # at 174, ABOVE magenta at H170-172,
+                                            # which red used to swallow whole.
+    "magenta": [163, 178, 95, 168, 90, 255],# MEASURED H170-172 S111-151. S ceiling
+                                            # 168 keeps the red pillar (S~199) out.
 }
 if os.path.exists("colors.json"):
     COLORS = json.load(open("colors.json"))
