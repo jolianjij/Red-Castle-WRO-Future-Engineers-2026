@@ -602,16 +602,22 @@ class OuterWallFollower:
     always steers away from it.
     """
 
-    def __init__(self, kp=None, kd=None):
+    def __init__(self, kp=None, kd=None, target=None):
         self.kp = OUTER_KP if kp is None else kp
         self.kd = OUTER_KD if kd is None else kd
+        self.target = OUTER_TARGET if target is None else target
         self._prev = 0.0
 
     def steer(self, left, right, direction):
-        if direction >= 0:            # CW  - follow the LEFT wall
-            err = left - OUTER_TARGET
-        else:                         # CCW - follow the RIGHT wall
-            err = OUTER_TARGET - right
+        if direction > 0:             # CW  - follow the LEFT wall
+            err = left - self.target
+        elif direction < 0:           # CCW - follow the RIGHT wall
+            err = self.target - right
+        else:
+            # Direction not known yet (no corner line crossed). Do NOT guess a
+            # side - centre between the two walls, which is safe either way, and
+            # switch to true outer-wall following the moment a line fixes it.
+            err = (left - right) * 0.5
         if abs(err) < OUTER_DEADBAND:
             err = 0.0
         out = self.kp * err + self.kd * (err - self._prev)

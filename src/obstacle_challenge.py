@@ -35,7 +35,14 @@ import robot as R
 # TUNABLES - everything you might want to change lives here
 # ==========================================================================
 CRUISE           = 55      # base speed %  (falls with steering, floor MIN_SPEED)
-FORCE_CW         = True    # True = drive clockwise without waiting for a line
+FORCE_CW         = False   # False = detect direction from the first corner line.
+                           # Until a line is seen the car CENTRES between the
+                           # walls, which is safe whichever way the track runs.
+
+# --- lane keeping when no sign is near ---
+LANE_DISTANCE_CM = 50.0    # hold this far from the OUTER wall between signs
+# density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured)
+LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 
 # --- how hard the car reacts to a sign ---
 PILLAR_KP        = 0.111   # deg per unit of Err
@@ -171,7 +178,7 @@ def main():
     R.setup_hardware(); R.servo(0)
     cam = R.open_camera()
     laps = R.LapTracker()
-    outer = R.OuterWallFollower()
+    outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
     hold = {"kind": "", "n": 0}
 
@@ -189,7 +196,10 @@ def main():
                   "area", "left", "right", "steer", "speed", "frame"])
 
     print("OBSTACLE (diagnostic)")
-    print(f"  direction : {'FORCED CW' if FORCE_CW else 'auto'}   CRUISE={CRUISE}")
+    print(f"  direction : {'FORCED CW' if FORCE_CW else 'auto from corner lines'}"
+          f"   CRUISE={CRUISE}")
+    print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall"
+          f" (density {LANE_TARGET:.4f})")
     print(f"  sign      : KP={PILLAR_KP} green->x{GREEN_TARGET_X} red->x{RED_TARGET_X}"
           f" min_area={PILLAR_MIN_AREA}")
     print(f"  wall      : override at {R.WALL_EMERGENCY}   magenta ignored"
