@@ -77,7 +77,7 @@ WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
 # left_wall/right_wall until the parking phase begins. We have no parking walls
 # to calibrate against yet, so magenta stays a wall for the whole run and the
 # car simply avoids the parking lot.
-MAGENTA_IS_WALL = True
+MAGENTA_IS_WALL = False
 
 # ==========================================================================
 # WALL DENSITY METHOD  (proportional wall-density control - the proven fallback)
