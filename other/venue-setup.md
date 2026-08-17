@@ -4,71 +4,60 @@ Everything needed on competition day, in the order you'll need it.
 
 ---
 
-## 1. Wired networking (no wireless allowed)
+## 1. Wired networking — one cable, laptop to Pi
 
-Both **SSH** and **VNC** already listen on every interface (`0.0.0.0:22` and
-`*:5900`), so nothing needs enabling — they start working the moment `eth0`
-has an address. The only question is where that address comes from.
+Laptop Ethernet port → Pi Ethernet port. Nothing else.
 
-### Cable straight from laptop to Pi (the usual case)
-
-There is no DHCP server on a bare cable, so the Pi carries a **fixed address**
-for exactly this situation:
+**Your laptop needs no setup.** Leave its wired adapter on *"Obtain an IP
+address automatically"* — the default — and just plug in. The Pi runs the
+address server itself, so it hands the laptop an address over the cable.
 
 | | |
 |---|---|
-| Pi | `192.168.50.1` / 24 — always on, set on the `Wired connection 1` profile |
-| Laptop | set the wired adapter to `192.168.50.2`, mask `255.255.255.0` |
+| Pi | `192.168.50.1` — fixed, always there |
+| Laptop | `192.168.50.10`+ — given out by the Pi |
+| Connect | `ssh pi@raspberrypi.local` |
+| VNC | `raspberrypi.local:5900` |
+| If `.local` fails | use `192.168.50.1` |
 
-No gateway or DNS needed. Modern Pi 4 Ethernet is auto-MDIX, so a **normal
-patch cable works** — no crossover cable.
-
-Setting the laptop side on Windows:
-
-```bash
-netsh interface ip set address name="Ethernet" static 192.168.50.2 255.255.255.0
-```
-
-To hand it back to DHCP afterwards:
-
-```bash
-netsh interface ip set address name="Ethernet" dhcp
-```
-
-### Venue switch with DHCP
-
-Just plug in — the profile is `method=auto`, so it takes a DHCP lease *and*
-keeps `192.168.50.1` as a second address. Either route works.
-
-### Connecting
+A **normal patch cable works** — Pi 4 Ethernet is auto-MDIX, so no crossover
+cable is needed. Plug in, wait about five seconds, then:
 
 ```bash
 ssh pi@raspberrypi.local
 ```
 
-`raspberrypi.local` works over the cable because **avahi** (mDNS) is running
-and Windows 10/11 resolve `.local` natively. If it ever fails, `192.168.50.1`
-is the fallback.
+`raspberrypi.local` resolves over the cable because **avahi** (mDNS) runs on the
+Pi and Windows 10/11 resolve `.local` natively.
 
-**VNC:** connect to `raspberrypi.local:5900`. It is `wayvnc` (the Wayland
-server Bookworm uses), already enabled at boot, authenticating with the normal
-Pi login.
+### How it is set up
+
+`eth0` uses NetworkManager's **shared** mode: a fixed `192.168.50.1/24` plus a
+`dnsmasq` handing out `192.168.50.10–254`, started automatically at boot. Both
+SSH and VNC already listen on every interface, so they need nothing enabling.
+
+> This makes the Pi the address server on that cable. That is exactly right for
+> a direct laptop link, but it means you should **not** plug this port into a
+> venue network that has its own DHCP server — two servers on one network fight.
+> If you ever need that instead:
+> `sudo nmcli con mod "Wired connection 1" ipv4.method auto`
 
 ### Turning the radios off
 
-Do this **only after** the cable is proven, and use the script — it refuses to
-run if Ethernet has no address, so it cannot lock you out:
+Do this **only after** the cable is proven, and use the script:
 
 ```bash
-./tools/venue_net.sh status
+./tools/venue_net.sh status      # says CONNECTED once the cable is in
 ./tools/venue_net.sh wifi-off
 ```
 
-`wifi-off` turns off Wi-Fi **and** Bluetooth. `./tools/venue_net.sh wifi-on`
-undoes it. If you ever lose both, a screen and keyboard on the Pi plus
-`nmcli radio wifi on` recovers it.
+`wifi-off` refuses unless the cable is **physically connected**. It checks the
+carrier, not the address — `eth0` keeps `192.168.50.1` even while unplugged, so
+an address alone proves nothing. It also refuses if the address server is not
+running, which would leave the laptop with no way in.
 
----
+`./tools/venue_net.sh wifi-on` undoes it. If you ever lose both, a screen and
+keyboard on the Pi plus `nmcli radio wifi on` recovers it.
 
 ## 2. Recalibrating for the venue's light
 
@@ -191,7 +180,7 @@ After editing `PROGRAM`, run `./autostart.sh restart` (or just power-cycle).
 | | |
 |---|---|
 | Pi over cable | `ssh pi@raspberrypi.local` or `192.168.50.1` |
-| Laptop wired adapter | `192.168.50.2 / 255.255.255.0` |
+| Laptop wired adapter | leave on automatic DHCP — the Pi gives it an address |
 | VNC | `raspberrypi.local:5900` |
 | Radios off / on | `./tools/venue_net.sh wifi-off` / `wifi-on` |
 | Recalibrate | `tune_colors.py` → `tune_walls.py --detector` → `tune_walls.py` |
