@@ -30,6 +30,25 @@ ssh pi@raspberrypi.local
 `raspberrypi.local` resolves over the cable because **avahi** (mDNS) runs on the
 Pi and Windows 10/11 resolve `.local` natively.
 
+### Wi-Fi and the cable together
+
+They do not conflict, and you do not have to choose:
+
+- **No cable** — Wi-Fi works exactly as normal. The Ethernet route exists but is
+  marked `linkdown`, so it carries nothing.
+- **Cable plugged in** — `192.168.50.x` goes over the cable, everything else
+  still goes over Wi-Fi. The Pi's default route stays on Wi-Fi either way.
+
+> **Testing at home, with both up:** the Pi advertises *both* of its addresses
+> over mDNS, so `raspberrypi.local` may resolve to the **Wi-Fi** one and you
+> will not actually be testing the cable. To prove the cable really works, use
+> the address explicitly:
+> ```bash
+> ssh pi@192.168.50.1
+> ```
+> At the venue this cannot happen, because Wi-Fi will be off and
+> `192.168.50.1` is the only address the Pi has.
+
 ### How it is set up
 
 `eth0` uses NetworkManager's **shared** mode: a fixed `192.168.50.1/24` plus a
