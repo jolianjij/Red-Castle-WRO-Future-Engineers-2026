@@ -211,6 +211,19 @@ if os.path.exists("colors.json"):
 else:
     COLORS = dict(_DEFAULT_COLORS)
 
+# ---- the WALL DETECTOR's own thresholds ----
+# NOTE: the wall detector does NOT use COLORS["black"] - it uses the three
+# numbers below (see wall_mask). COLORS["black"] survives only for the
+# shadow_check diagnostic. Tuning "black" therefore does NOT retune the walls;
+# tools/tune_walls.py does, by writing wall_settings.json here.
+if os.path.exists("wall_settings.json"):
+    _ws = json.load(open("wall_settings.json"))
+    WALL_V_HARD = int(_ws.get("WALL_V_HARD", WALL_V_HARD))
+    WALL_V_SOFT = int(_ws.get("WALL_V_SOFT", WALL_V_SOFT))
+    WALL_S_MAX = int(_ws.get("WALL_S_MAX", WALL_S_MAX))
+    print(f"[wall] wall_settings.json: V_HARD={WALL_V_HARD} "
+          f"V_SOFT={WALL_V_SOFT} S_MAX={WALL_S_MAX}")
+
 
 def mask(hsv, name, clean=True):
     """Binary mask for a tuned colour. clean=True removes speckle (open) and

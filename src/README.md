@@ -160,6 +160,9 @@ If it says the button reads PRESSED while you are not touching it, flip
 | `camera_tune.py` | lock exposure and white balance → `camera_settings.json` |
 | `servo_center.py` | find the steering centre → `servo_center.txt` |
 | `test.py` | move each piece of hardware on its own |
+| `tune_colors.py` | **venue:** re-lock the camera, then re-tune every colour. Headless — works over plain SSH. |
+| `tune_walls.py` | **venue:** `--detector` re-derives what counts as a wall in this light; with no flag it calibrates density ↔ centimetres |
+| `venue_net.sh` | switch to wired-only; refuses to disable Wi-Fi unless Ethernet is up |
 
 ---
 
@@ -168,6 +171,16 @@ If it says the button reads PRESSED while you are not touching it, flip
 ```bash
 cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
 ```
+
+Or use the runner, which picks the program from one line at the top of itself:
+
+```bash
+./run.sh
+```
+
+`./autostart.sh on` makes that run at every power-on, so at the start line you
+only need to power the car and press the button — no laptop and no network.
+Full competition-day procedure: [`other/venue-setup.md`](../other/venue-setup.md).
 
 Then press the button. Every run writes a CSV to `logs/`; the obstacle run
 also writes `sign_order.txt` and annotated frames to `frames/`.
