@@ -5,8 +5,8 @@ test_logic.py - offline tests for the decision logic. NO Pi, NO camera.
 Runs on a laptop. It stubs RPi.GPIO and picamera2 so robot.py imports, then
 drives the real classes with synthetic numbers and asserts on the results.
 
-py_compile only proves a file parses; it does not prove `navigate()` can run
-without a NameError. This does. Run it before every deploy.
+py_compile only proves a file parses; it does not prove decide() can run
+without a NameError. This does. Run it before every deploy:
 
     python src/tools/test_logic.py
 """
@@ -16,12 +16,14 @@ import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-# ---- stub the Pi-only modules so robot.py can be imported on a laptop ----
+# ---- stub the Pi-only modules so robot.py imports on a laptop ----
 gpio = types.ModuleType("RPi.GPIO")
-for _n in ("BCM", "OUT", "HIGH", "LOW"):
+for _n in ("BCM", "OUT", "IN", "HIGH", "LOW", "PUD_UP", "PUD_DOWN"):
     setattr(gpio, _n, 0)
 gpio.setmode = gpio.setwarnings = gpio.setup = gpio.cleanup = lambda *a, **k: None
 gpio.output = lambda *a, **k: None
+gpio.LEVEL = {"pin": 1}          # 1 = released with a pull-up
+gpio.input = lambda pin: gpio.LEVEL["pin"]
 
 
 class _PWM:
@@ -45,11 +47,13 @@ sys.modules["RPi"], sys.modules["RPi.GPIO"] = rpi, gpio
 pc2 = types.ModuleType("picamera2")
 pc2.Picamera2 = object
 sys.modules["picamera2"] = pc2
-lt = types.ModuleType("libcamera")
-lt.Transform = lambda **k: None
-sys.modules["libcamera"] = lt
+lc = types.ModuleType("libcamera")
+lc.Transform = lambda **k: None
+sys.modules["libcamera"] = lc
 
-import robot as R  # noqa: E402
+import robot as R            # noqa: E402
+import open_challenge as OPEN      # noqa: E402
+import obstacle_challenge as OBS   # noqa: E402
 
 FAILED = []
 
@@ -65,11 +69,16 @@ def section(t):
     print(f"\n=== {t} ===")
 
 
+def view(left=0.01, right=0.01, front=0.05, blue=0.0, orange=0.0):
+    """A fake camera reading."""
+    return R.View(None, None, left, right, front, blue, orange)
+
+
 # ==========================================================================
 section("per-colour line thresholds")
 print(f"  orange bar {R.LINE_FRACTION_ORANGE}   blue bar {R.LINE_FRACTION_BLUE}")
 
-# THE BUG THIS FIXES: a real orange crossing, with background blue bleeding in.
+# THE BUG THIS FIXES: a real orange crossing with background blue bleeding in.
 # Raw pixels say blue wins (0.030 > 0.025) -> the old code locked CCW on a CW
 # run. By confidence, orange is 2.08x its bar and blue only 0.86x of its own.
 t = R.LapTracker()
@@ -77,27 +86,55 @@ t.direction = 0
 t.update(blue_frac=0.030, orange_frac=0.025, left=0.10, right=0.05, front=0.15)
 check("orange crossing + blue bleed -> CW", t.direction, 1)
 
-# a genuine blue crossing must still lock CCW
 t = R.LapTracker()
 t.direction = 0
 t.update(blue_frac=0.090, orange_frac=0.002, left=0.05, right=0.10, front=0.15)
 check("clean blue crossing -> CCW", t.direction, -1)
 
-# blue below its higher bar, orange below its lower bar = no decision at all
 t = R.LapTracker()
 t.direction = 0
 t.update(blue_frac=0.030, orange_frac=0.008, left=0.05, right=0.05, front=0.10)
 check("both under their own bars -> undecided", t.direction, 0)
 
-# both convincing at once = ambiguous, must WAIT rather than guess
 t = R.LapTracker()
 t.direction = 0
 t.update(blue_frac=0.040, orange_frac=0.014, left=0.05, right=0.05, front=0.10)
 check("both convincing -> stays undecided", t.direction, 0)
-
-# ...and a later clean frame still resolves it
 t.update(blue_frac=0.001, orange_frac=0.030, left=0.10, right=0.05, front=0.10)
 check("...then a clean orange frame -> CW", t.direction, 1)
+
+# ==========================================================================
+section("wall emergency")
+check("clear track -> no emergency", R.wall_emergency(0.01, 0.01), None)
+e = R.wall_emergency(R.WALL_EMERGENCY + 0.001, 0.01)
+check("left wall just over -> steers RIGHT", e > 0, True)
+check("...starting at HALF lock, not zero",
+      abs(e - R.STEER_MAX * 0.5) < 0.5, True)
+e = R.wall_emergency(R.WALL_EMERGENCY + 0.12, 0.01)
+check("left wall deep in -> full lock right", round(e), R.STEER_MAX)
+e = R.wall_emergency(0.01, R.WALL_EMERGENCY + 0.12)
+check("right wall deep in -> full lock left", round(e), -R.STEER_MAX)
+
+# both walls close = facing a corner: the direction must LATCH, not flip
+R._esc["dir"] = 0
+a = R.wall_emergency(0.30, 0.28)
+b = R.wall_emergency(0.28, 0.30)      # L and R swap over
+check("both walls close -> latched, does not flip", a, b)
+R.wall_emergency(0.01, 0.01)          # clearing resets the latch
+check("latch resets when clear", R._esc["dir"], 0)
+
+
+class FakeOuter:
+    def __init__(self, out=0.0):
+        self.out = out
+
+    def steer(self, left, right, direction):
+        return self.out
+
+
+# the emergency must never be WEAKER than the normal controller in that sense
+e = R.wall_emergency(R.WALL_EMERGENCY + 0.001, 0.01, FakeOuter(18.0), 1)
+check("emergency floored by the normal command", e, 18.0)
 
 # ==========================================================================
 section("CornerKick - which sign arms it")
@@ -106,140 +143,181 @@ k = R.CornerKick(angle=30.0, duration_s=0.9, speed=55,
 check("CW trigger colour", k.trigger_colour(1), "red")
 check("CCW trigger colour", k.trigger_colour(-1), "green")
 
-now = 1000.0
-check("CW + red fires", k.maybe_fire(1, "red", now), True)
-check("kick is active", k.active(now + 0.5), True)
+NOW = 1000.0
+check("CW + red fires", k.maybe_fire(1, "red", NOW), True)
+check("kick is active", k.active(NOW + 0.5), True)
 steer, limit, speed = k.command()
 check("CW kick steers RIGHT (+)", steer > 0, True)
-check("CW kick angle", steer, 30.0)
 check("kick raises the servo ceiling", limit, 30.0)
 check("kick uses its own speed", speed, 55)
-check("kick expires", k.active(now + 1.0), False)
+check("kick expires", k.active(NOW + 1.0), False)
 
 k2 = R.CornerKick(sign_cw="red", sign_ccw="green")
-check("CCW + green fires", k2.maybe_fire(-1, "green", now), True)
+check("CCW + green fires", k2.maybe_fire(-1, "green", NOW), True)
 check("CCW kick steers LEFT (-)", k2.command()[0] < 0, True)
 
 k3 = R.CornerKick(sign_cw="red", sign_ccw="green")
-check("CW + green does NOT fire", k3.maybe_fire(1, "green", now), False)
-check("CCW + red does NOT fire", k3.maybe_fire(-1, "red", now), False)
-check("no sign does NOT fire", k3.maybe_fire(1, "", now), False)
-check("unknown direction does NOT fire", k3.maybe_fire(0, "red", now), False)
-
-k4 = R.CornerKick(sign_cw="red", sign_ccw="green", enabled=False)
-check("disabled never fires", k4.maybe_fire(1, "red", now), False)
+check("CW + green does NOT fire", k3.maybe_fire(1, "green", NOW), False)
+check("CCW + red does NOT fire", k3.maybe_fire(-1, "red", NOW), False)
+check("no sign does NOT fire", k3.maybe_fire(1, "", NOW), False)
+check("unknown direction does NOT fire", k3.maybe_fire(0, "red", NOW), False)
+check("disabled never fires",
+      R.CornerKick(enabled=False).maybe_fire(1, "red", NOW), False)
 
 # ==========================================================================
-section("servo() ceiling")
+section("servo ceiling")
 R.setup_hardware()
-R.servo(30.0)                      # no limit -> clamped to STEER_MAX
-check("30deg without limit clamps to STEER_MAX", R.STEER_MAX, 20)
-R.servo(30.0, limit=30.0)          # kick path -> allowed through
-R.servo(99.0, limit=99.0)          # never past the linkage limit
-print(f"  STEER_MAX={R.STEER_MAX}  STEER_MECH_MAX={R.STEER_MECH_MAX}")
-check("mech limit is the hard ceiling", R.STEER_MECH_MAX, 35)
+R.servo(30.0)                  # no limit -> clamped to STEER_MAX
+R.servo(30.0, limit=30.0)      # the kick path -> allowed through
+R.servo(99.0, limit=99.0)      # never past the linkage
+check("STEER_MAX", R.STEER_MAX, 20)
+check("STEER_MECH_MAX", R.STEER_MECH_MAX, 35)
+check("no limit -> STEER_MAX", OBS.clamp_steer(99.0, None), R.STEER_MAX)
+check("limit never beats the linkage", OBS.clamp_steer(99.0, 99.0), R.STEER_MECH_MAX)
+check("kick angle passes through", OBS.clamp_steer(30.0, 30.0), 30.0)
 
 # ==========================================================================
-section("obstacle priority ladder")
-import obstacle_challenge as OC  # noqa: E402
+section("BUTTON - start and emergency stop")
+gpio.LEVEL["pin"] = 1                       # released (pull-up)
+b = R.Button()
+check("released reads not-down", b.is_down(), False)
+gpio.LEVEL["pin"] = 0                       # pressed pulls to GND
+check("pressed reads down", b.is_down(), True)
 
-check("CW, left wall close -> hard right", OC.wall_override(1, 0.30, 0.01), R.STEER_MAX)
-check("CW, right wall close -> hard left", OC.wall_override(1, 0.01, 0.30), -R.STEER_MAX)
-check("CCW, right wall close -> hard left", OC.wall_override(-1, 0.01, 0.30), -R.STEER_MAX)
-check("clear track -> no override", OC.wall_override(1, 0.01, 0.01), None)
-check("opposes(+20,-30)", OC.opposes(20, -30), True)
-check("opposes(+20,+30)", OC.opposes(20, 30), False)
-check("opposes(None,+30)", OC.opposes(None, 30), False)
+# wired the other way round
+R.BUTTON_PULL_UP = False
+gpio.LEVEL["pin"] = 1
+check("pull-down wiring: HIGH is pressed", R.Button().is_down(), True)
+R.BUTTON_PULL_UP = True
 
-# the safety case: kick pulls right, a wall is closing from the right
-kk = R.CornerKick(sign_cw="red", sign_ccw="green")
-kk.maybe_fire(1, "red", now)
-wall = OC.wall_override(1, 0.01, 0.30)          # -> hard LEFT
-check("wall opposing the kick wins", OC.opposes(wall, kk.command()[0]), True)
+# the stop is EDGE triggered: holding it must not fire every frame
+gpio.LEVEL["pin"] = 1
+b = R.Button()
+b._ignore_until = 0.0
+import time as _t                            # noqa: E402
+gpio.LEVEL["pin"] = 0                        # press
+for _ in range(20):                          # let the debounce settle
+    b._debounced()
+    _t.sleep(0.005)
+fires = sum(1 for _ in range(10) if b.stop_pressed())
+check("one press = exactly one stop event", fires, 1)
+gpio.LEVEL["pin"] = 1                        # release
+for _ in range(20):
+    b._debounced()
+    _t.sleep(0.005)
+check("release does not fire", b.stop_pressed(), False)
+
+# the hold-off stops the START press being read as a STOP
+b2 = R.Button()
+b2._ignore_until = _t.monotonic() + 5.0
+gpio.LEVEL["pin"] = 0
+for _ in range(20):
+    b2._debounced()
+    _t.sleep(0.005)
+check("hold-off suppresses the start press", b2.stop_pressed(), False)
 
 # ==========================================================================
-section("decide() - the full ladder, in priority order")
+section("OPEN decide() - the ladder")
+laps = R.LapTracker()
+laps.direction = 1
+outer = FakeOuter(3.3)
+turner = R.TurnSequencer()
 
+d = OPEN.decide(view(left=0.05, right=0.05, front=0.05), laps, outer, turner)
+check("clear track -> lane", d.mode, "lane")
+check("lane = outer PD + drift trim", d.steer, R.apply_bias(3.3))
 
-class FakeOuter:
-    def steer(self, left, right, direction):
-        return 3.3
+d = OPEN.decide(view(left=0.40, right=0.01), laps, outer, turner)
+check("close wall -> emergency", d.mode, "emergency")
 
+turner.trigger(1)
+d = OPEN.decide(view(front=0.9), laps, outer, turner)
+check("scripted turn running -> turn", d.mode, "turn")
+check("CW turn steers right", d.steer > 0, True)
+turner.active = False
 
-fo = FakeOuter()
+d = OPEN.decide(view(front=R.FRONT_TURN_BACKUP + 0.05), laps, outer, turner)
+check("missed line, wall ahead -> turn-geom", d.mode, "turn-geom")
+
+# ==========================================================================
+section("OBSTACLE decide() - the ladder")
+outer = FakeOuter(3.3)
+kick = R.CornerKick(sign_cw="red", sign_ccw="green")
 T = 5000.0
 
 
-def fresh_hold():
+def hold0():
     return {"kind": "", "t": -1e9, "steer": 0.0}
 
 
-# 5. LANE - nothing happening
-kq = R.CornerKick(sign_cw="red", sign_ccw="green")
-d = OC.decide(T, None, fresh_hold(), kq, fo, 0.01, 0.01, 1)
+d = OBS.decide(T, view(), None, hold0(), kick, outer, 1)
 check("clear track -> lane", d.mode, "lane")
 check("lane uses the outer follower", d.steer, 3.3)
 
-# 4. HOLD - a sign was here 0.2s ago (inside SIGN_STEER_HOLD_S)
 h = {"kind": "red", "t": T - 0.2, "steer": -8.0}
-d = OC.decide(T, None, h, kq, fo, 0.01, 0.01, 1)
+d = OBS.decide(T, view(), None, h, kick, outer, 1)
 check("recent sign -> sign-hold", d.mode, "sign-hold")
 check("sign-hold keeps the sign's steer", d.steer, -8.0)
 
-# 4b. HOLD, later - past the steer hold, still inside SIGN_HOLD_S -> straight
 h = {"kind": "red", "t": T - 1.5, "steer": -8.0}
-d = OC.decide(T, None, h, kq, fo, 0.01, 0.01, 1)
+d = OBS.decide(T, view(), None, h, kick, outer, 1)
 check("hold elapsed -> sign-clear", d.mode, "sign-clear")
 check("sign-clear runs straight", d.steer, 0.0)
 
-# 4c. HOLD expired entirely -> back to lane
 h = {"kind": "red", "t": T - 5.0, "steer": -8.0}
-d = OC.decide(T, None, h, kq, fo, 0.01, 0.01, 1)
-check("hold fully expired -> lane", d.mode, "lane")
+check("hold fully expired -> lane",
+      OBS.decide(T, view(), None, h, kick, outer, 1).mode, "lane")
 
-# 3. SIGN in view beats hold and lane
 fake_sign = ("green", 100.0, 80.0, 900, (90, 60, 20, 40))
-hh = fresh_hold()
-d = OC.decide(T, fake_sign, hh, kq, fo, 0.01, 0.01, 1)
+hh = hold0()
+d = OBS.decide(T, view(), fake_sign, hh, kick, outer, 1)
 check("sign in view -> sign-green", d.mode, "sign-green")
 check("sign refreshes the hold", hh["kind"], "green")
 
-# 2. WALL beats a sign
-d = OC.decide(T, fake_sign, fresh_hold(), kq, fo, 0.30, 0.01, 1)
-check("wall beats sign", d.mode, "wall-L")
-check("wall steers hard right", d.steer, R.STEER_MAX)
+d = OBS.decide(T, view(left=0.40), fake_sign, hold0(), kick, outer, 1)
+check("wall beats sign", d.mode, "wall")
 
-# 1. KICK beats the wall when they agree
 k5 = R.CornerKick(angle=30.0, sign_cw="red", sign_ccw="green")
 k5.maybe_fire(1, "red", T)
-d = OC.decide(T + 0.1, fake_sign, fresh_hold(), k5, fo, 0.30, 0.01, 1)
+d = OBS.decide(T + 0.1, view(left=0.40), fake_sign, hold0(), k5, outer, 1)
 check("kick beats wall+sign", d.mode, "kick")
 check("kick angle passes through", d.steer, 30.0)
-check("kick raises the ceiling", d.servo_limit, 30.0)
 check("kick sets its own speed", d.speed_cap, 55)
-check("kick clamps to 30, not STEER_MAX", OC.clamp_steer(d.steer, d.servo_limit), 30.0)
 
-# 1b. ...but a wall closing from the OPPOSITE side aborts the kick
+# a wall closing from the OPPOSITE side must abort the kick
 k6 = R.CornerKick(angle=30.0, sign_cw="red", sign_ccw="green")
 k6.maybe_fire(1, "red", T)                       # kick pulls RIGHT
-d = OC.decide(T + 0.1, None, fresh_hold(), k6, fo, 0.01, 0.30, 1)  # wall on right
-check("opposing wall aborts the kick", d.mode, "wall-R")
+d = OBS.decide(T + 0.1, view(right=0.40), None, hold0(), k6, outer, 1)
+check("opposing wall aborts the kick", d.mode, "wall")
 check("kick was cancelled", k6.active(T + 0.2), False)
 
-# normal steering is still capped at STEER_MAX
-check("no limit -> clamped to STEER_MAX", OC.clamp_steer(99.0, None), R.STEER_MAX)
-check("limit never beats the linkage", OC.clamp_steer(99.0, 99.0), R.STEER_MECH_MAX)
+# ==========================================================================
+section("sign geometry and the pass logger")
+check("green is pushed RIGHT of frame", OBS.sign_error("green", 100.0, 80.0) < 0, True)
+check("red is pushed LEFT of frame", OBS.sign_error("red", 220.0, 80.0) > 0, True)
+
+pl = OBS.PassLogger()
+pl.update(("red", 0, 0, 3000, None), 100.0)
+pl.update(None, 100.0 + OBS.PASS_LOST_S + 0.1)
+check("a big red then gone -> recorded", pl.order, ["red"])
+pl.update(("green", 0, 0, 3000, None), 200.0)
+pl.update(None, 200.0 + OBS.PASS_LOST_S + 0.1)
+check("a different colour is never blocked", pl.order, ["red", "green"])
+pl2 = OBS.PassLogger()
+pl2.update(("red", 0, 0, 50, None), 300.0)       # too small to be a real pass
+pl2.update(None, 300.0 + OBS.PASS_LOST_S + 0.1)
+check("a distant speck is not a pass", pl2.order, [])
 
 # ==========================================================================
-section("open challenge imports and reads its tunables")
-import open_challenge as OPEN  # noqa: E402
-
-check("CRUISE present", isinstance(OPEN.CRUISE, int), True)
-check("LANE_TARGET computed", round(OPEN.LANE_TARGET, 4), 0.1032)
-print(f"  LANE_DISTANCE_CM={OPEN.LANE_DISTANCE_CM} -> LANE_TARGET={OPEN.LANE_TARGET:.4f}")
+section("both challenges expose the same shape")
+for mod, name in ((OPEN, "open_challenge"), (OBS, "obstacle_challenge")):
+    check(f"{name} has decide()", callable(mod.decide), True)
+    check(f"{name} has main()", callable(mod.main), True)
+    check(f"{name} has CRUISE", isinstance(mod.CRUISE, (int, float)), True)
+    check(f"{name} has LANE_TARGET", isinstance(mod.LANE_TARGET, float), True)
 
 # ==========================================================================
-print("\n" + "=" * 60)
+print("\n" + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")
     sys.exit(1)

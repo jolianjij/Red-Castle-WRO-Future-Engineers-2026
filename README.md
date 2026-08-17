@@ -66,6 +66,7 @@ handling, a clean park, and — importantly — **thorough engineering documenta
 | **Steering** | **Ackermann** front steering, MG90S servo on **GPIO13**, **±35° max** |
 | **Drive** | **N20 gear motor** (12 V, 200 rpm) → **25:20 gear pair** → **differential** on the rear axle |
 | **Driver** | **L9110S** H-bridge on **GPIO24 / GPIO23** |
+| **Control** | One push button on **GPIO19** — press to start, press again to stop |
 | **Power** | 3 × 18650 (series) → motor driver directly; separate buck converter → Pi; common ground |
 | **Chassis** | 3D printed in **PLA+ Silk Silver** on a **Bambu Lab A1**, designed in **Fusion 360** |
 | **Software** | Python 3, OpenCV, Picamera2 |
@@ -363,8 +364,10 @@ is now restricted to the bottom 45% of the region of interest.
 
 ### 5.1b Control-loop flowchart
 
-Every frame runs the same read → decide → act loop; `navigate()` in `robot.py` is
-the single point that picks the steering command, in strict priority order.
+Every frame runs the same **look → think → act** loop. Each challenge program
+owns its own `decide()` — one pure function holding the whole priority ladder,
+with no hardware or camera in it, so the entire brain can be unit-tested on a
+laptop (`tools/test_logic.py`).
 
 ```mermaid
 flowchart TD
@@ -555,8 +558,9 @@ than guessed at (all in [`src/tools/`](src/tools)):
 | Colour | `color_tuner.py` | each colour verified against its real object, mask checked for speckle |
 | Wall vs shadow | `shadow_check.py` | splits dark pixels into a "tall solid run" (a real wall) vs a shallow spread (likely shadow), so a misreading can be diagnosed on the spot |
 | Outer-wall control | `outer_test.py` | moves the car by hand and prints what the controller *would* steer, before it is ever trusted at speed |
-| Full decision chain | `dryrun.py` | runs `navigate()` exactly as the challenge does, camera live, **motor never touched** |
-| Perception | `freespace_test.py` | draws the detected wall boundary and chosen gap on a real frame — nothing drives |
+| Decision logic | `test_logic.py` | the whole brain on a laptop, no Pi — 50+ assertions over `decide()`, the lap tracker and the corner kick |
+| Full decision chain | `dryrun.py` | runs both challenges' `decide()` against the live camera, **motor never touched** |
+| Start/stop button | `button_test.py` | confirms the button's wiring and that one press produces exactly one event |
 | Full run | `open_challenge.py` / `obstacle_challenge.py` | logs every frame to `logs/*.csv` |
 
 **Metrics we record.** Every run writes a CSV row per frame — timestamp, cycle,
@@ -591,7 +595,8 @@ calibration lives in JSON/text files, a tuning change never risks breaking code.
 | Mat markings or shadows read as a wall | false obstacle / steering bias | two-tier wall test (very dark, or dark **and** desaturated) rejects coloured lines and most shadow; `shadow_check.py` diagnoses any that still gets through — this was a live issue at two corners in field testing and is still being tightened |
 | Car stuck against a wall | run wasted | `MAX_CORNER_CYCLES` and `MAX_RUNTIME_S` force an exit/stop |
 | Fresh pack exceeds L9110S 12 V rating | driver overheats | monitored; noted in [`schemes/`](schemes) |
-| Algorithm underperforms on the day | lost points | `NAV_METHOD` switches between the outer-wall controller, free-space follow-the-gap, and a proportional wall-density fallback with one word in `config.py` |
+| Algorithm underperforms on the day | lost points | every tunable sits in one block at the top of the challenge file — speed, lane distance in cm, sign gains — so behaviour is retuned at the venue without touching logic |
+| Car must be stopped mid-run | damage, or a wasted attempt | one button on GPIO19 starts the run and stops it at any moment; the loop polls it every frame |
 
 ## 6. Calibration workflow
 

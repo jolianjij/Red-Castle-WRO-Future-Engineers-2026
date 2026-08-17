@@ -28,7 +28,7 @@
 | 13 | Rocker power switch | master on/off in the battery line | 1 |
 | 14 | Screw terminal blocks | 2-pin, for the battery/power distribution joints | 2–3 |
 | 15 | Smoothing capacitor | ~1000 µF across L9110S `VCC`–`GND` (recommended) | 1 |
-| 16 | Push button | start button → GPIO9 (optional) | 1 |
+| 16 | Push button | start / emergency-stop button → **GPIO19** and GND. Uses the Pi's internal pull-up, so no resistor is needed. | 1 |
 
 ## Wiring & fasteners
 | # | Component | Spec / notes | Qty |

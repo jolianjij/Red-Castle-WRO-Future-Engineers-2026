@@ -14,6 +14,7 @@ Sign conventions (IMPORTANT):
   wall metric    : left_wall / right_wall = fraction (0..1) of that half of the
                    ROI that is 'black' (a wall). Bigger = wall is closer.
 """
+import collections
 import json
 import os
 import time
@@ -45,9 +46,77 @@ def setup_hardware():
     GPIO.setwarnings(False)
     for p in (SERVO_PIN, MOTOR_IN1, MOTOR_IN2):
         GPIO.setup(p, GPIO.OUT)
+    GPIO.setup(BUTTON_PIN, GPIO.IN,
+               pull_up_down=GPIO.PUD_UP if BUTTON_PULL_UP else GPIO.PUD_DOWN)
     _servo_pwm = GPIO.PWM(SERVO_PIN, SERVO_HZ); _servo_pwm.start(0)
     _m1 = GPIO.PWM(MOTOR_IN1, MOTOR_HZ); _m1.start(0)
     _m2 = GPIO.PWM(MOTOR_IN2, MOTOR_HZ); _m2.start(0)
+
+
+class Button:
+    """The one push button on BUTTON_PIN: starts the run, then stops it.
+
+    Two jobs, one button:
+        wait_for_start()  blocks until you press AND release. Nothing moves
+                          before this returns, which is what the rules want.
+        stop_pressed()    poll once per loop. True on a NEW press -> stop.
+
+    Both are EDGE triggered (they react to the moment of pressing, not to the
+    button being held), and debounced, so one physical press is one event. A
+    hold-off after the start press means letting go of it cannot be mistaken
+    for the stop press.
+    """
+
+    def __init__(self):
+        self._last_raw = self.is_down()
+        self._stable = self._last_raw
+        self._was_down = self._last_raw
+        self._changed_t = 0.0
+        self._ignore_until = 0.0
+
+    def is_down(self):
+        """True while the button is physically held."""
+        level = GPIO.input(BUTTON_PIN)
+        return (level == 0) if BUTTON_PULL_UP else (level == 1)
+
+    def _debounced(self):
+        """The button state, ignoring contact bounce."""
+        now = time.monotonic()
+        raw = self.is_down()
+        if raw != self._last_raw:
+            self._last_raw = raw
+            self._changed_t = now
+        elif (now - self._changed_t) >= BUTTON_DEBOUNCE_S:
+            self._stable = raw
+        return self._stable
+
+    def wait_for_start(self, what="run"):
+        """Block until pressed and released. Falls back to Enter if the button
+        is disabled in config (BUTTON_REQUIRED = False)."""
+        if not BUTTON_REQUIRED:
+            input(f"{what} ready (button disabled). Press Enter to START...")
+            return
+        if self.is_down():
+            print("  ! button reads PRESSED before you touched it - check "
+                  "BUTTON_PULL_UP in config.py (tools/button_test.py helps)")
+        print(f"{what} ready. PRESS THE BUTTON to start "
+              f"(press again at any time to stop)...")
+        while not self._debounced():          # wait for the press
+            time.sleep(0.01)
+        while self._debounced():              # ...and for the release
+            time.sleep(0.01)
+        self._ignore_until = time.monotonic() + BUTTON_HOLDOFF_S
+        print("  GO")
+
+    def stop_pressed(self):
+        """True ONCE, on a new press. Poll this every loop for the e-stop."""
+        if not BUTTON_REQUIRED:
+            return False
+        down = self._debounced()
+        was, self._was_down = self._was_down, down
+        if time.monotonic() < self._ignore_until:
+            return False          # still letting go of the START press
+        return down and not was   # the rising edge is the stop
 
 
 def servo(angle, limit=None):
@@ -202,69 +271,6 @@ def read_hsv(cam):
 # --------------------------------------------------------------------------
 # FREE-SPACE / FOLLOW-THE-GAP  (method "B")
 # --------------------------------------------------------------------------
-def wall_base_rows(hsv, min_run=None):
-    """For every column, the image row where the mat meets the wall.
-
-    Scans each column from the BOTTOM up and returns the lowest row that starts
-    a run of >= min_run consecutive wall pixels. Requiring a RUN is what stops
-    the mat's dotted lines / printed marks being mistaken for a wall.
-    Returns 0 for a column with no wall at all (open to the horizon).
-    """
-    if min_run is None:
-        min_run = FREE_MIN_RUN
-    m = wall_mask(hsv)
-    H, W = m.shape
-    cs = np.cumsum(m.astype(np.int32), axis=0)
-    win = np.zeros((H, W), dtype=np.int32)
-    # win[y] = number of wall pixels in rows (y-min_run+1 .. y)
-    win[min_run - 1:] = cs[min_run - 1:] - np.vstack(
-        [np.zeros((1, W), np.int32), cs[:H - min_run]])
-    full = win >= min_run
-    has = full.any(axis=0)
-    # lowest (largest y) row that completes a full run = the wall's base edge
-    ys = np.where(has, H - 1 - np.argmax(full[::-1], axis=0), 0)
-    return ys.astype(np.int32)
-
-
-def freespace_profile(hsv, min_run=None):
-    """free[x] in 0..PROC_H. BIG = open road ahead in that direction,
-    SMALL = a wall is close. This is the camera's 'pseudo-LiDAR' scan."""
-    base = wall_base_rows(hsv, min_run)
-    free = (PROC_H - base).astype(np.float32)
-    if FREE_SMOOTH > 1:
-        k = np.ones(FREE_SMOOTH, np.float32) / FREE_SMOOTH
-        free = np.convolve(free, k, mode="same")
-    return free
-
-
-def find_gap(free):
-    """Widest contiguous run of 'open' columns.
-    Returns (center_x, width, best_free) or None if nothing is drivable."""
-    thr = GAP_OPEN_FRAC * PROC_H
-    lo, hi = FREE_EDGE_IGNORE, len(free) - FREE_EDGE_IGNORE
-    open_cols = free >= thr
-    best_len, best_start, start = 0, 0, None
-    for x in range(lo, hi):
-        if open_cols[x]:
-            if start is None:
-                start = x
-        elif start is not None:
-            if x - start > best_len:
-                best_len, best_start = x - start, start
-            start = None
-    if start is not None and hi - start > best_len:
-        best_len, best_start = hi - start, start
-    if best_len < GAP_MIN_WIDTH:
-        return None
-    return best_start + best_len / 2.0, best_len, float(free[lo:hi].max())
-
-
-def gap_steer(center_x):
-    """Steer toward the centre of the widest gap."""
-    err = (center_x - PROC_W / 2.0) / (PROC_W / 2.0)     # -1 .. +1
-    return max(-STEER_MAX, min(STEER_MAX, GAP_KP * err))
-
-
 def wall_readings(hsv):
     """Return (left_wall, right_wall) as black-fraction of each ROI half."""
     m = wall_mask(hsv)
@@ -301,38 +307,26 @@ def line_counts(hsv):
     return b, o
 
 
-def find_pillars(hsv):
-    """Return the NEAREST valid pillar as (color, cx, cy_base, area) or None.
-    Valid = area>=PILLAR_MIN_AREA and taller than wide. Nearest = lowest base."""
-    best = None
-    for color in ("red", "green"):
-        m = mask(hsv, color)
-        m = cv2.dilate(cv2.erode(m, _K), _K)
-        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            a = cv2.contourArea(c)
-            if a < PILLAR_MIN_AREA:
-                continue
-            x, y, w, h = cv2.boundingRect(c)
-            if h <= w:                       # keep vertical shapes only
-                continue
-            cx = x + w // 2
-            cy_base = y + h                  # bottom of the pillar = closest point
-            if best is None or cy_base > best[2]:
-                best = (color, cx, cy_base, int(a))
-    return best
+# Everything the car can see in one frame.
+#   proc         the BGR image itself (for saving annotated frames)
+#   hsv          the same frame in HSV (for any extra colour work)
+#   left, right  fraction of that half of the image that is wall. BIGGER =
+#                CLOSER, because a nearer wall fills more of the picture.
+#   front        the same measure straight ahead - high means a corner
+#   blue, orange fraction of the bottom band that is each corner line
+View = collections.namedtuple("View", "proc hsv left right front blue orange")
 
 
-def magenta_area(hsv):
-    """Largest magenta (parking-gate) contour area, 0 if none."""
-    m = mask(hsv, "magenta")
-    m = cv2.dilate(cv2.erode(m, _K), _K)
-    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not cnts:
-        return 0, PROC_W // 2
-    c = max(cnts, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(c)
-    return int(cv2.contourArea(c)), x + w // 2
+def look(cam):
+    """Take one frame and measure everything from it.
+
+    This is the car's entire sense of the world, in one call, so a challenge
+    loop starts with a single readable line:   view = R.look(cam)
+    """
+    proc, hsv = read_hsv(cam)
+    left, right = wall_readings(hsv)
+    blue, orange = line_counts(hsv)
+    return View(proc, hsv, left, right, front_reading(hsv), blue, orange)
 
 
 # ==========================================================================
@@ -614,69 +608,11 @@ class CornerKick:
 # ==========================================================================
 # STEERING
 # ==========================================================================
-class WallFollower:
-    """PD wall-following that keeps the car CENTERED between the two side walls.
-       error = left_wall - right_wall  (>0 => left wall closer => steer right).
-       Centering keeps it off BOTH walls (fixes the inner-wall hugging).
-       Hard-steers away if either wall gets dangerously close."""
-
-    def __init__(self, kp=45.0, kd=18.0):
-        self.kp = kp
-        self.kd = kd
-        self._prev = 0.0
-        self._out = 0.0             # previous output, for slew limiting
-
-    def steer(self, left, right, direction=0):
-        err = left - right          # >0 => left wall closer => steer right
-
-        # deadband: ignore tiny imbalances so the car runs straight instead of
-        # twitching left/right (this was the main cause of the jittery, risky run)
-        if abs(err) < CENTER_DEADBAND:
-            err = 0.0
-
-        out = self.kp * err + self.kd * (err - self._prev)
-        self._prev = err
-
-        # emergency is PROPORTIONAL, not instant full lock: the closer the wall,
-        # the stronger the push away - blended on top of the PD output
-        if left > WALL_EMERGENCY:
-            out += STEER_MAX * min(1.0, (left - WALL_EMERGENCY) / 0.15)
-        if right > WALL_EMERGENCY:
-            out -= STEER_MAX * min(1.0, (right - WALL_EMERGENCY) / 0.15)
-
-        out = max(-STEER_MAX, min(STEER_MAX, out))
-
-        # slew limit: no instant lock-to-lock snaps (protects the servo + traction)
-        max_step = STEER_MAX * 0.35
-        out = max(self._out - max_step, min(self._out + max_step, out))
-        self._out = out
-        return out
-
-
-def pillar_steer(color, cx, cy_base, kp=90.0):
-    """Steer to pass red on the right / green on the left.
-       red  -> push pillar toward the LEFT edge  (car goes right)
-       green-> push pillar toward the RIGHT edge (car goes left)."""
-    if color == "red":
-        target_x = PILLAR_SIDE_MARGIN * PROC_W
-    else:
-        target_x = (1.0 - PILLAR_SIDE_MARGIN) * PROC_W
-    err = (cx - target_x) / PROC_W            # >0 -> steer right
-    prox = cy_base / PROC_H                    # closer pillar -> stronger reaction
-    out = kp * err * (0.4 + 0.6 * prox)
-    return max(-STEER_MAX, min(STEER_MAX, out))
-
-
 def cruise_speed(base, steer):
     """Slow down in proportion to steering effort (fast on straights)."""
     return max(MIN_SPEED, base * (1.0 - SPEED_CORNER_CUT * min(1.0, abs(steer) / STEER_MAX)))
 
 
-# --------------------------------------------------------------------------
-# NAVIGATION DISPATCH
-# One place decides how the car steers, so both challenges behave identically
-# and NAV_METHOD in config.py actually switches the strategy.
-# --------------------------------------------------------------------------
 class OuterWallFollower:
     """PD on the distance to the OUTER wall ONLY.
 
@@ -761,91 +697,49 @@ class TurnSequencer:
         return STEER_MAX * TURN_LOCK_FRAC * (1.0 if self._dir > 0 else -1.0)
 
 
-def _apply_bias(steer):
+def apply_bias(steer):
     """Add the straight-line drift trim and re-clamp.
 
-    ONLY for lane-keeping (gap / wall following). It must NOT be applied to
-    corner turns or emergency escapes, which need the full mechanical range:
-    a -4 deg trim on a CW corner turned +35 into +31, the car understeered and
-    ran wide into the OUTER wall. In CCW the same trim clamped harmlessly at
-    -35, which is why the fault only appeared clockwise.
+    ONLY for lane-keeping. It must NOT be applied to corner turns or emergency
+    escapes, which need the full mechanical range: a -4 deg trim on a CW corner
+    turned +35 into +31, the car understeered and ran wide into the OUTER wall.
+    In CCW the same trim clamped harmlessly at -35, which is why the fault only
+    ever appeared clockwise.
     """
     return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
 
 
-def navigate(hsv, left, right, laps, follower, outer=None, turner=None,
-             front_close=False, front=None):
-    """Return (steer_deg, mode_string) for this frame.
+def wall_emergency(left, right, outer=None, direction=0):
+    """Escape steering when a wall is too close, or None if there is no danger.
 
-    Priority:
-      1. in a corner        -> commit to the locked turn direction
-      2. NAV_METHOD == gap  -> follow-the-gap on the free-space profile
-                               (falls back to the density controller if the way
-                               ahead is blocked or no gap is drivable)
-      3. otherwise          -> PD wall-density controller (proven fallback)
+    THE HIGHEST PRIORITY IN BOTH CHALLENGES. Two hard-won details:
+
+    1. IT IS FLOORED BY THE NORMAL CONTROLLER. The first version ramped up from
+       zero, so just past the threshold it produced -0.8 deg while the wall
+       follower wanted -17 deg: the "emergency" actually seized control and
+       steered the car INTO the wall (log t=1.05 s, right=0.285). It now starts
+       at HALF lock and is never weaker than the normal command in that sense.
+
+    2. THE ESCAPE DIRECTION LATCHES when BOTH walls are close (facing into a
+       corner). Left and right densities crossing each other made the sign flip
+       between frames, so the car twitched instead of escaping.
     """
-    # ---- PRIORITY 1: WALL EMERGENCY - applies in EVERY mode, no exceptions ----
-    # An emergency must never steer LESS than the normal controller would. The
-    # first version ramped from zero, so just past the threshold it produced
-    # -0.8 deg while the wall follower wanted -17 deg: the override seized
-    # control and drove the car INTO the wall (log t=1.05s, right=0.285).
-    # It now ramps from HALF lock and is floored by the normal command.
-    if left > WALL_EMERGENCY or right > WALL_EMERGENCY:
-        both = left > WALL_EMERGENCY and right > WALL_EMERGENCY
-        if both:
-            # Jammed (e.g. facing a corner). Latch the escape direction: L and R
-            # crossing each other made this flip -20/+20 between frames.
-            if _esc.get("dir", 0) == 0:
-                _esc["dir"] = 1 if left > right else -1
-            return STEER_MAX * _esc["dir"], "emergency-both"
+    if left <= WALL_EMERGENCY and right <= WALL_EMERGENCY:
         _esc["dir"] = 0
-        # ramp from 50% to 100% of lock across the danger band
-        if left > WALL_EMERGENCY:
-            frac = min(1.0, (left - WALL_EMERGENCY) / 0.12)
-            push = STEER_MAX * (0.5 + 0.5 * frac)
-        else:
-            frac = min(1.0, (right - WALL_EMERGENCY) / 0.12)
-            push = -STEER_MAX * (0.5 + 0.5 * frac)
-        # never weaker than what the normal controller wanted in the same sense
-        if outer is not None and laps.direction != 0:
-            normal = outer.steer(left, right, laps.direction)
-            if push > 0:
-                push = max(push, normal)
-            else:
-                push = min(push, normal)
-        return max(-STEER_MAX, min(STEER_MAX, push)), "emergency"
+        return None
 
-    # ---- NAV_METHOD "outer": single-wall PD control + a scripted corner turn ----
-    if NAV_METHOD == "outer":
-        turner.update(front if front is not None else front_reading(hsv))
-        if turner.active:
-            return turner.steer(), "turn"
-        # SAFETY NET: the turn normally fires on the corner LINE. If a line is
-        # ever missed the car would drive straight on, so a very close wall
-        # AHEAD forces the turn anyway. Line is primary, geometry is the backup.
-        if front_close and laps.direction != 0:
-            turner.trigger(laps.direction)
-            return turner.steer(), "turn-geom"
-        return _apply_bias(outer.steer(left, right, laps.direction)), "outer"
+    if left > WALL_EMERGENCY and right > WALL_EMERGENCY:
+        if _esc["dir"] == 0:
+            _esc["dir"] = 1 if left > right else -1
+        return STEER_MAX * _esc["dir"]
 
-    if laps.in_corner:
-        bias = laps.turn_bias()
-        if bias == 0.0:
-            # direction is not fixed yet (no line crossed). Do NOT go straight
-            # into the wall - turn toward whichever side has more free space.
-            bias = STEER_MAX * (-1.0 if left < right else 1.0)
-            return bias, "corner-nodir"
-        return bias, "corner"
+    _esc["dir"] = 0
+    if left > WALL_EMERGENCY:                       # ramp 50% -> 100% of lock
+        push = STEER_MAX * (0.5 + 0.5 * min(1.0, (left - WALL_EMERGENCY) / 0.12))
+    else:
+        push = -STEER_MAX * (0.5 + 0.5 * min(1.0, (right - WALL_EMERGENCY) / 0.12))
 
-    if NAV_METHOD == "gap":
-        free = freespace_profile(hsv)
-        gap = find_gap(free)
-        if gap is not None and free.max() >= GAP_BLOCKED_FRAC * PROC_H:
-            cx, width, best = gap
-            return _apply_bias(gap_steer(cx)), "gap"
-        # blocked or nothing drivable -> commit to the known turn direction
-        if laps.direction != 0:
-            return laps.turn_bias(), "blocked"
-        return _apply_bias(follower.steer(left, right, laps.direction)), "blocked-nodir"
-
-    return _apply_bias(follower.steer(left, right, laps.direction)), "wall"
+    if outer is not None and direction != 0:        # never weaker than normal
+        normal = outer.steer(left, right, direction)
+        push = max(push, normal) if push > 0 else min(push, normal)
+    return max(-STEER_MAX, min(STEER_MAX, push))

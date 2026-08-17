@@ -31,7 +31,7 @@ A rocker switch in the battery line is the master on/off.
 | Steering servo PWM | **GPIO13** | MG90S servo signal (orange/white) |
 | Motor `A-IA` | **GPIO24** | L9110S input — PWM here = **forward** |
 | Motor `A-IB` | **GPIO23** | L9110S input — PWM here = **reverse** |
-| Start button | GPIO9 | push button to GND (optional, not required by the code) |
+| Start / stop button | **GPIO19** | push button to **GND**. The Pi's internal pull-up holds the pin high, so the button needs **no resistor**; pressing pulls it low. One press starts the run, a second press stops it (the emergency stop). |
 | Ground | any GND | common ground rail |
 
 The servo takes its 5 V power from the Pi's 5 V rail (it is small and only moves

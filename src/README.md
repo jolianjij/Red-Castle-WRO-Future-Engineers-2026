@@ -1,66 +1,173 @@
-# src — control software
+# src — the code
+
+## The whole thing in five files
 
 ```
-src/
-├── robot.py               # shared library: hardware (servo/motor) + vision (masks, wall/line/sign)
-├── camera.py               # locked camera setup (OV5647 fixed focus, full FOV, 180 flip, locked exposure/AWB)
-├── config.py               # EVERY tunable constant, in one place
-├── open_challenge.py       # Open Challenge main
-├── obstacle_challenge.py   # Obstacle Challenge main
-├── legacy_open.py          # last year's Open Challenge logic, ported to this year's hardware (reference)
-├── pure_open.py             # the single-wall control law in isolation, nothing else (diagnostic)
-└── tools/                  # calibration, tests, and diagnostics (run individually)
-    ├── preview.py           # live camera window (view over VNC)
-    ├── camera_tune.py       # lock exposure/gain/white balance -> camera_settings.json
-    ├── color_tuner.py       # tune HSV colours -> colors.json
-    ├── servo_center.py      # find steering center -> servo_center.txt
-    ├── test.py              # menu hardware bring-up (servo/motor/camera)
-    ├── motor_debug.py       # direct-drive vs PWM diagnosis
-    ├── motor_speed_steps.py # speed staircase 100->50% (stall test)
-    ├── driver_on.py         # bare L9110S on/off
-    ├── cam_capture.py       # still capture / focus & exposure test
-    ├── shadow_check.py      # splits dark pixels into "real wall" vs "shadow"
-    ├── outer_test.py        # validate the outer-wall controller by hand, motor untouched
-    ├── freespace_test.py    # draw the detected wall boundary/gap on a real frame, motor untouched
-    ├── dryrun.py             # run the FULL navigate() decision chain, camera live, motor untouched
-    └── mjpeg_stream.py      # browser MJPEG stream (optional)
+open_challenge.py      RUN THIS   three laps, empty track
+obstacle_challenge.py  RUN THIS   three laps, red/green traffic signs
+robot.py               the car: hardware, camera, seeing, control
+config.py              every tunable number shared by both challenges
+camera.py              camera setup (locked exposure and white balance)
 ```
 
-## Runtime layout on the Pi
-Everything lives under `~/wro2026/` with the same structure. The generated
-calibration files stay at the **root** so `robot.py` finds them:
+Only the first two are programs you run. Everything else is support.
 
 ```
-~/wro2026/
-├── robot.py  camera.py  config.py  open_challenge.py  obstacle_challenge.py
-├── colors.json           # from tools/color_tuner.py   (committed as reference)
-├── camera_settings.json  # from tools/camera_tune.py   (committed as reference)
-├── servo_center.txt      # from tools/servo_center.py  (committed as reference, -9)
-└── tools/                # all the tools above
+colors.json            the tuned HSV ranges (made by tools/color_tuner.py)
+camera_settings.json   the locked white balance (made by tools/camera_tune.py)
+servo_center.txt       steering centre trim (made by tools/servo_center.py)
+tools/                 helpers - see below
+archive/               superseded experiments, kept for the journal
 ```
 
-## Run (always from ~/wro2026 so paths resolve)
+---
+
+## Every challenge program has the same three parts
+
+This is the important bit. Open either program and you will find, in order:
+
+### 1. TUNABLES
+A single block at the top. **Nothing outside it needs editing.** Speed,
+direction, how far from the wall to drive, how hard to react to a sign.
+
+### 2. `decide()`
+The brain. **One frame in, one steering decision out.** It is a *priority
+ladder* — a list of `if` statements from most urgent to least, where exactly
+one branch answers:
+
+```python
+def decide(view, laps, outer, turner):
+    if a wall is too close:      return escape        # 1. EMERGENCY
+    if we are cornering:         return turn          # 2. TURN
+    return follow the outer wall                      # 3. LANE
+```
+
+`decide()` touches no hardware and no camera — it is pure arithmetic on
+numbers. That is deliberate: it means the whole brain can be tested on a
+laptop, with no Pi, in under a second.
+
+### 3. `main()`
+The loop. Always the same four steps:
+
+```python
+button.wait_for_start()          # nothing moves until you press it
+while True:
+    view = R.look(cam)           # LOOK   one frame, everything measured
+    d = decide(view, ...)        # THINK  one decision
+    R.servo(d.steer)             # ACT
+    R.motor(speed)
+    if button.stop_pressed(): break   # RECORD / FINISH
+```
+
+---
+
+## How to write the surprise challenge
+
+The surprise challenge is announced at the venue. You will not have time to
+invent anything, so don't — **copy a program and rewrite one function.**
+
+**1. Copy the closest existing program.**
 ```bash
-cd ~/wro2026 && source .venv/bin/activate
+cp open_challenge.py surprise_challenge.py
+```
+Start from `open_challenge.py` if the task is about driving and walls; from
+`obstacle_challenge.py` if it involves coloured objects.
 
-python tools/camera_tune.py    # lock exposure/gain/white balance
-python tools/color_tuner.py    # tune colours  -> colors.json
-python tools/servo_center.py   # center steering -> servo_center.txt
+**2. Change the TUNABLES block** to whatever the new task needs.
 
-python open_challenge.py       # Open Challenge
-python obstacle_challenge.py   # Obstacle Challenge
+**3. Rewrite `decide()`.** This is the only real work. Write the ladder in
+plain words first, most urgent at the top, then translate each line:
+
+> *"Don't hit anything. Otherwise, if I can see the thing, go to it.
+> Otherwise, keep driving down the middle."*
+
+```python
+def decide(view, laps, outer, turner):
+    escape = R.wall_emergency(view.left, view.right, outer, laps.direction)
+    if escape is not None:
+        return Decision(escape, "emergency")
+    ...your new rule here...
+    return Decision(R.apply_bias(outer.steer(view.left, view.right,
+                                             laps.direction)), "lane")
 ```
 
-Before trusting a change at speed, validate it stationary first — none of these
-touch the motor:
+**4. Leave `main()` almost alone.** Change the log filename and the printed
+header. The button, the loop, the logging and the safety timeout all work
+already.
+
+**5. Test before you drive it.**
 ```bash
-python tools/outer_test.py     # move the car by hand, check the steering it would command
-python tools/dryrun.py         # runs navigate() exactly as the challenge does
-python tools/freespace_test.py # draws the detected wall boundary on a real frame
-python tools/shadow_check.py   # tells a real wall apart from shadow on the mat
+python tools/test_logic.py     # on the laptop, no Pi needed
+python tools/dryrun.py         # on the Pi, camera on, motor never touched
 ```
 
-The core files import each other and read `colors.json` / `camera_settings.json`
-/ `servo_center.txt` from the current directory — so **always run from
-`~/wro2026`**. Every tunable constant used by any of the above lives in
-`config.py`; that is the only file you should need to edit at the competition.
+### What you can call inside `decide()`
+
+Everything the car can sense arrives in one `view` object:
+
+| field | meaning |
+|---|---|
+| `view.left`, `view.right` | how much of that half of the picture is wall. **Bigger = closer.** |
+| `view.front` | the same, straight ahead. High means a corner. |
+| `view.blue`, `view.orange` | how much corner line is visible |
+| `view.hsv` | the raw HSV image, for your own colour work |
+| `view.proc` | the colour image, for saving annotated frames |
+
+Useful helpers in `robot.py`:
+
+| call | what it does |
+|---|---|
+| `R.wall_emergency(left, right, outer, direction)` | escape steering, or `None` if safe |
+| `R.mask(hsv, "red")` | pixels matching a tuned colour |
+| `R.apply_bias(steer)` | adds the straight-line drift trim (lane keeping only) |
+| `R.cruise_speed(base, steer)` | slows down in proportion to steering |
+| `R.OuterWallFollower(target=…)` | PD control on the distance to one wall |
+| `R.CornerKick(...)` | a fixed, time-boxed, open-loop turn |
+
+**Sign conventions, everywhere:** steering `0` = straight, **+ = right**,
+**− = left**. Direction `+1` = clockwise, `−1` = counter-clockwise.
+
+---
+
+## The button (GPIO 19)
+
+One button does both jobs:
+
+- **press once** → the run starts (nothing moves before this)
+- **press again** → the run stops, at any time. This is the emergency stop.
+
+Wired between **GPIO19 and GND**, using the Pi's internal pull-up, so no
+resistor is needed. Check it before trusting it:
+
+```bash
+python tools/button_test.py
+```
+
+If it says the button reads PRESSED while you are not touching it, flip
+`BUTTON_PULL_UP` in `config.py`. To bench-test without the button at all, set
+`BUTTON_REQUIRED = False` and it falls back to pressing Enter.
+
+---
+
+## Tools
+
+| tool | what it is for |
+|---|---|
+| `test_logic.py` | **run this before every deploy.** The whole brain, tested on a laptop with no Pi. |
+| `dryrun.py` | both challenges against the real camera, motor never touched |
+| `button_test.py` | check the start/stop button is wired and configured right |
+| `color_tuner.py` | tune the HSV ranges → `colors.json` |
+| `camera_tune.py` | lock exposure and white balance → `camera_settings.json` |
+| `servo_center.py` | find the steering centre → `servo_center.txt` |
+| `test.py` | move each piece of hardware on its own |
+
+---
+
+## Running on the Pi
+
+```bash
+cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
+```
+
+Then press the button. Every run writes a CSV to `logs/`; the obstacle run
+also writes `sign_order.txt` and annotated frames to `frames/`.

@@ -21,6 +21,24 @@ MOTOR_IN2 = 23          # L9110S A-IB : PWM here = REVERSE
 SERVO_HZ = 50
 MOTOR_HZ = 1000
 
+# ---- START / STOP BUTTON -------------------------------------------------
+# One push button does both jobs, exactly as the rules expect: the car sits
+# still until you press it, and a second press stops it (the emergency stop).
+#
+# WIRING (the default, and the one that needs no extra parts):
+#     one leg -> GPIO19,  other leg -> any GND pin
+# The Pi's INTERNAL pull-up holds the pin HIGH, and pressing pulls it to GND,
+# so PRESSED = LOW. That is what BUTTON_PULL_UP = True means.
+# If instead you wired the button to 3V3, set BUTTON_PULL_UP = False.
+# Not sure? Run:  python tools/button_test.py   - it tells you which you have.
+BUTTON_PIN = 19
+BUTTON_PULL_UP = True    # True = wired to GND (pressed reads LOW)
+BUTTON_DEBOUNCE_S = 0.05 # ignore contact bounce for this long after any change
+BUTTON_HOLDOFF_S = 0.8   # after the start press, ignore the button this long,
+                         # so releasing the start press cannot read as a stop
+BUTTON_REQUIRED = True   # False = fall back to pressing Enter (bench testing
+                         # without the button wired up)
+
 STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
 STEER_MAX = 20          # deg - SOFTWARE steering limit actually used when driving.
                         # The Ackermann linkage reaches 35 deg mechanically, but the
@@ -157,7 +175,7 @@ OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
 # CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
 # Crossing the driving-direction line means we are physically at the corner, so
 # the turn timing is deterministic instead of depending on a front-wall fraction.
-FRONT_TURN_BACKUP = 0.45  # SAFETY NET for NAV_METHOD="outer": if the corner line
+FRONT_TURN_BACKUP = 0.45  # SAFETY NET for the corner turn: if the corner line
                         # is ever missed, a front-wall fill this high forces the
                         # turn anyway so the car cannot drive into the wall.
                         # Set ABOVE FRONT_ENTER so the line stays the primary cue.
@@ -285,10 +303,6 @@ PARK_KP = 90.0
 # COMPETITION SPECIAL CASES
 # Flip these at the venue without touching any logic.
 # ==========================================================================
-NAV_METHOD = "outer"    # "outer"   = outer-wall PD + line-triggered turn (PROVEN)
-                        # "gap"     = free-space follow-the-gap
-                        # "density" = proportional wall-density fallback
-
 FORCE_DIRECTION = 0     # 0 = auto-detect from the first corner line seen (+ geometry
                         # backup). Set +1 (CW) or -1 (CCW) only to override at a venue.
                         # +1 = force clockwise, -1 = force counter-clockwise
