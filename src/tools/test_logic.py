@@ -14,6 +14,8 @@ import os
 import sys
 import types
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # ---- stub the Pi-only modules so robot.py imports on a laptop ----
@@ -290,6 +292,90 @@ k6.maybe_fire(1, "red", T)                       # kick pulls RIGHT
 d = OBS.decide(T + 0.1, view(right=0.40), None, hold0(), k6, outer, 1)
 check("opposing wall aborts the kick", d.mode, "wall")
 check("kick was cancelled", k6.active(T + 0.2), False)
+
+# ==========================================================================
+section("ParkingExit - the way out decides the lap direction")
+
+
+def park_view(mag_left, mag_right):
+    """A frame with a chosen amount of magenta in each half, no walls."""
+    img = np.zeros((R.PROC_H, R.PROC_W, 3), np.uint8)
+    lo_h, hi_h, lo_s, _, lo_v, _ = R.COLORS["magenta"]
+    mid_h = (lo_h + hi_h) // 2
+    half = R.PROC_W // 2
+    for frac, x0, x1 in ((mag_left, 0, half), (mag_right, half, R.PROC_W)):
+        rows = int(R.PROC_H * frac)
+        img[:rows, x0:x1] = (mid_h, min(255, lo_s + 40), min(255, lo_v + 60))
+    return R.View(None, img, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def run_park(p, v, t0=0.0):
+    """Drive a ParkingExit through settle -> exit -> done. Returns the modes."""
+    modes = []
+    for i in range(p.settle_frames + 2):
+        out = p.update(v, t0)
+        modes.append(out[1] if out else "done")
+        if out is None:
+            break
+    return modes
+
+
+# more magenta on the LEFT -> leave RIGHT -> CW (+1)
+p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+m = run_park(p, park_view(0.60, 0.05))
+check("left blocked -> direction CW", p.direction, 1)
+check("left blocked -> steers RIGHT out", p.update(park_view(0.6, 0.05), 0.1)[0] > 0, True)
+check("settles before deciding", m[0], "park-look")
+check("then drives out", "park-exit" in m, True)
+
+# more magenta on the RIGHT -> leave LEFT -> CCW (-1)
+p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+run_park(p, park_view(0.05, 0.60))
+check("right blocked -> direction CCW", p.direction, -1)
+check("right blocked -> steers LEFT out", p.update(park_view(0.05, 0.6), 0.1)[0] < 0, True)
+
+# the exit is time-boxed, then it hands back
+p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+run_park(p, park_view(0.60, 0.05))
+check("still leaving before the time is up", p.update(park_view(0.6, 0.05), 0.5)[1], "park-exit")
+check("finished after it", p.update(park_view(0.6, 0.05), 1.5), None)
+check("marked done", p.done, True)
+
+# no magenta at all -> refuse to guess
+p = R.ParkingExit(use_wall=False)
+run_park(p, park_view(0.0, 0.0))
+check("no parking lot -> gives up", p.done, True)
+check("...and does NOT invent a direction", p.direction, 0)
+
+# disabled
+p = R.ParkingExit(enabled=False)
+check("disabled is done immediately", p.done, True)
+check("disabled never steers", p.update(park_view(0.6, 0.0), 0.0), None)
+
+# and through the real ladder: PARK outranks even the wall escape
+p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+pv = park_view(0.60, 0.05)
+for _ in range(p.settle_frames):
+    p.update(pv, 0.0)
+walled = R.View(None, pv.hsv, 0.40, 0.01, 0.0, 0.0, 0.0)   # wall screaming close
+d = OBS.decide(0.1, walled, None, hold0(), R.CornerKick(), outer, 0, p)
+check("PARK outranks the wall escape", d.mode, "park-exit")
+check("park uses its own speed", d.speed_cap, OBS.PARK_SPEED)
+d2 = OBS.decide(2.0, walled, None, hold0(), R.CornerKick(), outer, 1, p)
+check("once out, the wall escape works again", d2.mode, "wall")
+
+# WHY PARK_USE_WALL DEFAULTS TO FALSE: the magenta wall hides the black wall
+# behind it, so the blocked side shows LESS black while the open side looks
+# across the track at the far outer wall and shows MORE. Adding the two cancels
+# the signal. This test pins that down so nobody "helpfully" turns it back on.
+p_mag = R.ParkingExit(use_wall=False)
+run_park(p_mag, park_view(0.60, 0.05))
+p_both = R.ParkingExit(use_wall=True)
+run_park(p_both, park_view(0.60, 0.05))
+check("magenta alone reads the lot correctly", p_mag.direction, 1)
+check("adding the black wall destroys that signal",
+      p_both.direction != p_mag.direction or p_both.direction == 0, True)
+check("...which is why the default is magenta only", OBS.PARK_USE_WALL, False)
 
 # ==========================================================================
 section("sign geometry and the pass logger")

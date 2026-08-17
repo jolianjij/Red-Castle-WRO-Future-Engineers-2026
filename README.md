@@ -430,35 +430,69 @@ read back and checked without re-watching it.
 
 ### 5.1c Obstacle Challenge priority
 
-Obstacle Challenge steering is decided by a strict **priority**, so a
-lower-priority behaviour can never override safety.
+Steering is decided by a strict **priority ladder** in one pure function,
+`decide()`. Exactly one branch answers each frame, ordered so a lower-priority
+behaviour can never override a safety-critical one.
 
 ```mermaid
 flowchart TD
-    A[Every frame] --> B{Sign visible?}
-    B -- yes --> C[Steer to place it correctly:<br/>red on our right, green on our left]
-    B -- no, but seen recently --> D[Hold the last manoeuvre<br/>-- SIGN_MEMORY frames]
-    B -- no --> E[Fall back to outer-wall<br/>lane keeping]
-    C --> F{Outer wall past<br/>WALL_EMERGENCY?}
-    D --> F
-    E --> F
-    F -- yes --> G[Full lock away from the wall<br/>-- overrides everything, also turns corners]
-    F -- no --> H[Use the steering from above]
+    A[Every frame] --> P{Still in the<br/>parking lot?}
+    P -- yes --> P1[Measure magenta each side,<br/>drive out, LOCK the direction]
+    P -- no --> K{Corner just counted, and the<br/>last sign pushed us inward?}
+    K -- yes --> K1[Fixed 30 deg kick<br/>out of the corner]
+    K -- no --> W{Wall past<br/>WALL_EMERGENCY?}
+    K1 --> W
+    W -- yes --> W1[Ramped escape,<br/>floored by the controller]
+    W -- no --> S{Sign visible?}
+    S -- yes --> S1[Place it: red to our right,<br/>green to our left]
+    S -- no, seen in the last 3 s --> H[Hold, then run straight]
+    S -- no --> L[Outer-wall PD lane keeping]
 ```
 
-| Priority | Behaviour | Why it sits at this level |
+| # | Behaviour | Why it sits at this level |
 |---|---|---|
-| 1 (highest) | Wall override | Touching a wall ends the run; nothing may override it, and it is also what turns the car through each corner. |
-| 2 | Sign steering | Passing signs correctly scores points, so it outranks plain lane keeping. |
-| 3 | Sign-hold memory | Detection flickers frame to frame (measured: one sign's contour area went 61 → 851 → 0 → 1060 across four frames) — holding the last command for a few frames stops that flicker breaking a pass. |
-| 4 (lowest) | Lane keeping | The same outer-wall PD law as the Open Challenge, used only when no sign is in view or remembered. |
+| **0** | **Parking exit** | Runs once, before the car moves. Inside the lot the magenta walls are close *on purpose*, so it must outrank the wall escape or the escape would fight the way out. |
+| **1** | **Corner kick** | A committed open-loop manoeuvre. It outranks the wall escape because it is *deliberately* turning toward a wall — except when a wall closes from the **opposite** side, which cancels it. |
+| **2** | **Wall escape** | Touching a wall ends the run. Ramps 50 %→100 % across the danger band and is **floored by the normal controller**, because an escape weaker than the controller it replaces steers *into* the wall (measured: −0.8° produced where the follower wanted −17°). |
+| **3** | **Sign steering** | Passing signs correctly scores points, so it outranks plain lane keeping. |
+| **4** | **Sign hold** | Detection flickers frame to frame (measured: one sign's area went 61 → 851 → 0 → 1060 over four frames). The hold is in **seconds**, not frames, so it does not change with frame rate. |
+| **5** | **Lane keeping** | The same outer-wall PD proven in the Open Challenge, used when nothing else applies. |
 
 **Why lane keeping exists at all.** A design that steers only toward signs and
-relies on the wall override to fire "often enough" between them does not hold on
+relies on the wall override firing "often enough" between them does not hold on
 our optics: measured mid-corridor readings of 0.112/0.129 against a 0.213
-override threshold, meaning the car would drive dead straight for 44% of a test
-run with nothing correcting it. Falling back to the same outer-wall controller
-proven in the Open Challenge closes that gap.
+override threshold, meaning the car would drive dead straight for 44 % of a test
+run with nothing correcting it. Falling back to the proven outer-wall controller
+closes that gap.
+
+### 5.1d Leaving the parking lot — and how it fixes the direction
+
+The car starts inside the magenta parking lot. Whichever side is more blocked is
+the side it *cannot* leave by, so the free side is both the way out **and** the
+direction the lap will run. One measurement, taken before the car has moved,
+answers both questions:
+
+| what the camera sees | way out | lap direction |
+|---|---|---|
+| more magenta on the **left** | leave **right** | **CW** (+1) |
+| more magenta on the **right** | leave **left** | **CCW** (−1) |
+
+Because `+1` already means "steer right" everywhere in the code, the exit
+steering is simply `direction × angle` — one number answers both.
+
+The measurement is averaged over 8 frames while the car is **stationary**: the
+only moment in the run with no motion blur, and worth spending. If neither side
+shows enough magenta the car declines to guess and leaves the direction to the
+corner lines, because a wrong direction locked at frame one would ruin the whole
+run.
+
+> **We do not add the black wall to this measurement**, although it was the
+> obvious thing to try. The magenta wall physically *occludes* the black wall
+> behind it, so the blocked side shows **less** black, while the open side looks
+> across the track at the far outer wall and shows **more**. The two signals are
+> anti-correlated: in testing, magenta read L=0.60/R=0.05 while the wall read
+> L=0.40/R=0.95 — and the sum was an exact tie, the measurement cancelling
+> itself. Magenta alone is the honest signal. (`PARK_USE_WALL` re-enables it.)
 
 ### 5.2 Open Challenge algorithm
 
@@ -600,38 +634,69 @@ calibration lives in JSON/text files, a tuning change never risks breaking code.
 
 ## 6. Calibration workflow
 
-Two field calibrations, saved to files that `robot.py` loads at start:
+Every calibration writes a file that `robot.py` loads at start-up, so the
+competition code itself never has to be edited to retune the car.
 
 | Tool | Produces | Purpose |
 |---|---|---|
-| `tools/camera_tune.py` | `camera_settings.json` | lock exposure, gain, white balance, saturation |
-| `tools/color_tuner.py` | `colors.json` | tune each colour with the real object in view |
-| `tools/servo_center.py` | `servo_center.txt` | trim the steering so 0° = straight (current value: **−9°**) |
-| `tools/motor_speed_steps.py` | — | find the motor's usable speed range |
-| `tools/preview.py` | — | live camera view over VNC |
+| `tools/tune_colors.py` | `camera_settings.json`, `colors.json` | **the venue tool.** Re-locks exposure/white balance, then every colour, then checks all pairs for overlap. Headless — runs over plain SSH. |
+| `tools/tune_walls.py --detector` | `wall_settings.json` | what counts as a **wall** in this light |
+| `tools/tune_walls.py` | printed constants | density ↔ centimetres, fitted through parked measurements |
+| `tools/servo_center.py` | `servo_center.txt` | trim so 0° = straight (current value **−9°**) |
+| `tools/button_test.py` | — | confirm the start/stop button's wiring |
+| `tools/color_tuner.py` | `colors.json` | the older interactive GUI tuner (needs a screen) |
 
-All three generated files are committed in [`src/`](src) as the reference
-calibration for this build.
+**The order matters and cannot be swapped**, because each step is measured
+through the previous one: **colours → wall detector → distances**. Re-locking
+the white balance after tuning colours silently invalidates them; changing the
+wall detector changes every density measured against it.
+
+**The wall detector does not use a colour range.** It uses `WALL_V_HARD`,
+`WALL_V_SOFT` and `WALL_S_MAX` — three brightness/saturation cuts. Tuning the
+`black` colour therefore does *not* retune the walls, which is exactly the sort
+of thing that looks like it worked and has not. `tune_walls.py --detector`
+samples the wall, the mat and a line and places the thresholds in the gap
+between them; if wall and mat overlap in brightness it refuses to write
+anything, because no threshold can separate them in that light.
+
+Full competition-day procedure: [`other/venue-setup.md`](other/venue-setup.md).
 
 ## 7. Build & run
 
 **Raspberry Pi OS Bookworm** — Picamera2/OpenCV come from `apt`, **not** pip
-(mixing a pip numpy breaks Picamera2):
+(a pip numpy shadows the apt one and breaks Picamera2):
 
 ```bash
-sudo apt update
 sudo apt install -y python3-picamera2 python3-libcamera python3-opencv python3-rpi-lgpio python3-venv
-python3 -m venv --system-site-packages ~/wro2026/.venv
-source ~/wro2026/.venv/bin/activate
 ```
 
-Run (always from `~/wro2026` so `colors.json` / `servo_center.txt` resolve):
+### Running a challenge
+
 ```bash
-cd ~/wro2026 && source .venv/bin/activate
-python tools/color_tuner.py     # tune colours
-python tools/servo_center.py    # center steering
-python open_challenge.py        # Open Challenge
-python obstacle_challenge.py    # Obstacle Challenge
+cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
+```
+
+Then **press the button**. Nothing moves before that — the program arms and
+waits. Pressing it again stops the run at any moment; it is also the emergency
+stop, and the loop polls it every frame.
+
+### At the start line, with no laptop
+
+```bash
+./autostart.sh on
+```
+
+The program then launches at every power-on, so the start-line procedure becomes
+**power the car, press the button**. This is safe precisely *because* the
+program waits for the button: booting into it only arms the car. When a run
+finishes the service restarts it, re-arming it for the next press. Which program
+runs is one line at the top of `run.sh`.
+
+### Before every deploy
+
+```bash
+python tools/test_logic.py    # the whole brain, on a laptop, no Pi needed
+python tools/dryrun.py        # both challenges, live camera, motor untouched
 ```
 
 ## 8. Bill of materials & cost

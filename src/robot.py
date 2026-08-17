@@ -330,6 +330,24 @@ def line_counts(hsv):
 View = collections.namedtuple("View", "proc hsv left right front blue orange")
 
 
+def park_readings(hsv):
+    """How boxed-in each side is, for the parking-lot exit.
+
+    Returns (magenta_left, magenta_right, wall_left, wall_right) as fractions of
+    each half of the image. The parking lot's walls are MAGENTA; the track's
+    outer wall behind it is BLACK. Both are reported separately so the exit
+    decision can use magenta alone if the black wall turns out to swamp it.
+    """
+    mag = mask(hsv, "magenta") > 0
+    wal = wall_mask(hsv)
+    half = hsv.shape[1] // 2
+    area = float(hsv.shape[0] * half)
+    return (float(np.count_nonzero(mag[:, :half])) / area,
+            float(np.count_nonzero(mag[:, half:])) / area,
+            float(np.count_nonzero(wal[:, :half])) / area,
+            float(np.count_nonzero(wal[:, half:])) / area)
+
+
 def look(cam):
     """Take one frame and measure everything from it.
 
@@ -544,6 +562,91 @@ class LapTracker:
     def turn_bias(self):
         """Steering bias to apply while inside a corner (deg)."""
         return self.direction * STEER_MAX
+
+
+class ParkingExit:
+    """Leave the parking lot, and let the way out decide the lap direction.
+
+    THE IDEA
+    The car starts inside the magenta parking lot. Whichever side is boxed in is
+    the side it cannot leave by, so the free side is the way out - and the way
+    out is also the direction the lap will run. One measurement answers both
+    questions, before the car has moved at all.
+
+        more obstruction on the LEFT   ->  leave to the RIGHT  ->  CW  (+1)
+        more obstruction on the RIGHT  ->  leave to the LEFT   ->  CCW (-1)
+
+    Because +1 already means "steer right" everywhere else in this code, the
+    exit steering is simply direction * angle - the same number answers both.
+
+    THREE PHASES
+        settle  the car is stationary, so several frames are averaged. This is
+                the one moment in the run with no motion blur; spend it.
+        drive   hold the exit lock for a fixed time, open loop.
+        done    hand back to normal driving with the direction already locked.
+
+    If it cannot see enough parking lot it gives up rather than guessing, and
+    leaves the direction to the corner lines as before. That matters: a wrong
+    direction locked at frame one would ruin the entire run.
+    """
+
+    def __init__(self, angle=30.0, time_s=1.6, speed=45, settle_frames=8,
+                 min_magenta=0.010, use_wall=True, enabled=True):
+        self.angle = angle
+        self.time_s = time_s
+        self.speed = speed
+        self.settle_frames = settle_frames
+        self.min_magenta = min_magenta
+        self.use_wall = use_wall
+        self.enabled = enabled
+        self.direction = 0
+        self.done = not enabled
+        self.reason = "disabled" if not enabled else ""
+        self._seen = 0
+        self._acc = [0.0, 0.0, 0.0, 0.0]
+        self._until = 0.0
+
+    def update(self, view, now):
+        """Return (steer, mode) while leaving, or None once it is finished."""
+        if self.done:
+            return None
+
+        # ---- phase 1: stand still and measure ----
+        if self.direction == 0:
+            r = park_readings(view.hsv)
+            self._acc = [a + b for a, b in zip(self._acc, r)]
+            self._seen += 1
+            if self._seen < self.settle_frames:
+                return 0.0, "park-look"
+
+            ml, mr, wl, wr = [a / self._seen for a in self._acc]
+            if max(ml, mr) < self.min_magenta:
+                self.done = True
+                self.reason = (f"only {max(ml, mr):.4f} magenta - not in a "
+                               f"parking lot, leaving direction to the lines")
+                print(f"[park] {self.reason}")
+                return None
+
+            left = ml + (wl if self.use_wall else 0.0)
+            right = mr + (wr if self.use_wall else 0.0)
+            self.direction = 1 if left > right else -1
+            self._until = now + self.time_s
+            print(f"[park] magenta L={ml:.4f} R={mr:.4f} | "
+                  f"wall L={wl:.4f} R={wr:.4f}")
+            print(f"[park] {'LEFT' if left > right else 'RIGHT'} side is more "
+                  f"blocked -> leaving to the "
+                  f"{'RIGHT' if self.direction > 0 else 'LEFT'}, running "
+                  f"{'CW' if self.direction > 0 else 'CCW'}")
+            self.reason = f"magenta L={ml:.4f} R={mr:.4f}"
+
+        # ---- phase 2: drive out ----
+        if now < self._until:
+            return self.direction * self.angle, "park-exit"
+
+        self.done = True
+        print(f"[park] out of the lot, direction locked "
+              f"{'CW' if self.direction > 0 else 'CCW'}")
+        return None
 
 
 class CornerKick:

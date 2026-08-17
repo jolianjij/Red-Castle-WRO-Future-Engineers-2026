@@ -44,9 +44,37 @@ import robot as R
 CRUISE           = 70      # base speed %  (falls with steering)
 
 # --- direction ---
-FORCE_DIRECTION  = 1       # +1 CW, -1 CCW, 0 = detect from the corner lines.
-                           # Until a line is seen the car CENTRES between the
+FORCE_DIRECTION  = 0       # +1 CW, -1 CCW, 0 = work it out from the parking lot
+                           # (below), falling back to the corner lines. Until
+                           # the direction is known the car CENTRES between the
                            # walls, which is safe whichever way the track runs.
+
+# --- leaving the parking lot (this also decides the direction) ---
+# The car starts inside the magenta parking lot. Whichever side is more blocked
+# is the side it cannot leave by, so:
+#     more magenta on the LEFT   -> leave RIGHT -> run CW
+#     more magenta on the RIGHT  -> leave LEFT  -> run CCW
+# One measurement, taken before the car moves, answers both questions.
+PARK_START       = True    # False = skip it and start already on the track
+PARK_ANGLE       = 30.0    # deg of lock while pulling out (may exceed STEER_MAX)
+PARK_TIME_S      = 1.6     # how long to hold it. Longer = tighter exit.
+PARK_SPEED       = 45      # % speed while leaving
+PARK_SETTLE      = 8       # frames averaged before deciding. The car is still,
+                           # so these are the sharpest frames of the whole run.
+PARK_MIN_MAGENTA = 0.010   # if neither side has at least this much magenta the
+                           # car is not in a lot: give up rather than guess, and
+                           # let the corner lines decide as usual.
+PARK_USE_WALL    = False   # count the black wall as well as magenta?
+                           # DEFAULT OFF, and this is deliberate. The magenta
+                           # wall physically HIDES the black wall behind it, so
+                           # the blocked side shows LESS black, while the open
+                           # side looks across the track at the far outer wall
+                           # and shows MORE. The two signals are anti-correlated
+                           # and adding them cancels the measurement - in the
+                           # test case magenta said L=0.60 R=0.05 while wall
+                           # said L=0.40 R=0.95, and the sum was an exact tie.
+                           # Magenta alone is the honest signal. Turn this on
+                           # only if a venue proves otherwise.
 
 # --- lane keeping, when no sign is near ---
 LANE_DISTANCE_CM = 30.0    # hold this far from the OUTER wall between signs
@@ -159,11 +187,13 @@ def clamp_steer(steer, servo_limit):
     return max(-ceiling, min(ceiling, steer))
 
 
-def decide(now, view, sign, hold, kick, outer, direction):
+def decide(now, view, sign, hold, kick, outer, direction, park=None):
     """Return a Decision for this frame. +steer = right.
 
     PRIORITY LADDER - highest first, exactly one branch answers:
 
+        0. PARK   still leaving the parking lot. Runs once, at the very start,
+                  and locks the lap direction on the way out.
         1. KICK   open-loop corner exit. It is a committed manoeuvre, so it
                   outranks everything EXCEPT a wall closing from the far side.
         2. WALL   a wall is too close -> escape.
@@ -178,6 +208,15 @@ def decide(now, view, sign, hold, kick, outer, direction):
     reading the main loop.
     """
     none = ("", 0.0, 0.0, 0)
+
+    # ---- 0. PARK ----
+    # Deliberately ABOVE the wall escape: inside the lot the magenta walls are
+    # close on purpose, and an escape firing here would fight the way out.
+    if park is not None and not park.done:
+        out = park.update(view, now)
+        if out is not None:
+            steer, mode = out
+            return Decision(steer, mode, *none, PARK_ANGLE, PARK_SPEED)
 
     # ---- 1. KICK ----
     escape = R.wall_emergency(view.left, view.right, outer, direction)
@@ -295,6 +334,10 @@ def main():
     kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
                         speed=KICK_SPEED, sign_cw=KICK_SIGN_CW,
                         sign_ccw=KICK_SIGN_CCW, enabled=CORNER_KICK)
+    park = R.ParkingExit(angle=PARK_ANGLE, time_s=PARK_TIME_S,
+                         speed=PARK_SPEED, settle_frames=PARK_SETTLE,
+                         min_magenta=PARK_MIN_MAGENTA,
+                         use_wall=PARK_USE_WALL, enabled=PARK_START)
     hold = {"kind": "", "t": -1e9, "steer": 0.0}
     last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
                                # gap between a sign and the corner it precedes
@@ -317,6 +360,9 @@ def main():
           f"(density {LANE_TARGET:.4f})")
     print(f"  sign      : KP={PILLAR_KP} green->x{GREEN_TARGET_X} "
           f"red->x{RED_TARGET_X} min_area={PILLAR_MIN_AREA}")
+    print(f"  parking   : {'ON' if PARK_START else 'OFF'} "
+          f"{PARK_ANGLE:.0f}deg for {PARK_TIME_S:.1f}s @ {PARK_SPEED}%  "
+          f"(more magenta LEFT -> out RIGHT -> CW)")
     print(f"  kick      : {'ON' if CORNER_KICK else 'OFF'} {KICK_ANGLE:.0f}deg "
           f"for {KICK_TIME_S:.1f}s @ {KICK_SPEED}%  "
           f"(CW<-{KICK_SIGN_CW}, CCW<-{KICK_SIGN_CCW})")
@@ -354,7 +400,9 @@ def main():
                     last_sign_kind = ""      # consumed; don't re-fire next corner
 
             # ---------------- THINK ----------------
-            d = decide(now, view, sign, hold, kick, outer, laps.direction)
+            d = decide(now, view, sign, hold, kick, outer, laps.direction, park)
+            if park.direction and laps.direction == 0:
+                laps.direction = park.direction     # the way out IS the lap way
             steer = clamp_steer(d.steer, d.servo_limit)
             speed = d.speed_cap if d.speed_cap is not None \
                 else R.cruise_speed(CRUISE, steer)

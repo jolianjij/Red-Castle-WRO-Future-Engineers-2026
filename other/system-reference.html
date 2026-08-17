@@ -1,0 +1,875 @@
+<title>The Red Castle Field Manual</title>
+<style>
+  :root {
+    --ground:   #F6F7F8;
+    --surface:  #FFFFFF;
+    --sunk:     #EDF0F2;
+    --ink:      #111619;
+    --muted:    #5C6B73;
+    --line:     #E1E6E9;
+    --accent:   #D24E17;
+    --accent-soft: #FBEDE6;
+    --c-blue:   #2F6FD0;
+    --c-orange: #D2661F;
+    --c-green:  #1E8A52;
+    --c-red:    #C4302A;
+    --c-magenta:#B23A85;
+    --c-black:  #2A3338;
+    --ok:       #1E8A52;
+    --warn:     #B4720B;
+    --stop:     #C4302A;
+
+    --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+    --sans: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #0E1316;
+      --surface:  #151C20;
+      --sunk:     #1B242A;
+      --ink:      #E7ECEF;
+      --muted:    #93A2AA;
+      --line:     #242F35;
+      --accent:   #FF7A42;
+      --accent-soft: #2A1810;
+      --c-blue:   #6BA5F0;
+      --c-orange: #F0873F;
+      --c-green:  #4FC183;
+      --c-red:    #F0655C;
+      --c-magenta:#E070B8;
+      --c-black:  #9FB0B8;
+      --ok:       #4FC183;
+      --warn:     #E0A542;
+      --stop:     #F0655C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #0E1316;
+    --surface:  #151C20;
+    --sunk:     #1B242A;
+    --ink:      #E7ECEF;
+    --muted:    #93A2AA;
+    --line:     #242F35;
+    --accent:   #FF7A42;
+    --accent-soft: #2A1810;
+    --c-blue:   #6BA5F0;
+    --c-orange: #F0873F;
+    --c-green:  #4FC183;
+    --c-red:    #F0655C;
+    --c-magenta:#E070B8;
+    --c-black:  #9FB0B8;
+    --ok:       #4FC183;
+    --warn:     #E0A542;
+    --stop:     #F0655C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 48px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { display: none; }
+  }
+
+  /* ---------- masthead ---------- */
+  header.top {
+    grid-column: 1 / -1;
+    padding: 72px 0 40px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-size: clamp(2.4rem, 6vw, 4rem);
+    line-height: 1.02;
+    letter-spacing: -0.032em;
+    font-weight: 700;
+    margin: 0 0 20px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.15rem;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 32px;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+  }
+  .fact {
+    padding-right: 34px;
+    margin-right: 34px;
+    border-right: 1px solid var(--line);
+  }
+  .fact:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+  .fact dt {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  .fact dd {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.98rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- toc ---------- */
+  nav.toc {
+    position: sticky;
+    top: 28px;
+    padding-top: 52px;
+    font-size: 13px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+  nav.toc li { counter-increment: s; margin-bottom: 2px; }
+  nav.toc a {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 6px;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 5px 8px 5px 0;
+    border-left: 2px solid transparent;
+    padding-left: 10px;
+    transition: color .12s, border-color .12s;
+  }
+  nav.toc a::before {
+    content: counter(s, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--accent);
+    opacity: .55;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible {
+    color: var(--ink);
+    border-left-color: var(--accent);
+  }
+
+  /* ---------- sections ---------- */
+  main { padding-top: 52px; min-width: 0; }
+  section { margin-bottom: 68px; scroll-margin-top: 24px; }
+  h2 {
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    letter-spacing: -0.022em;
+    line-height: 1.15;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 0.68em;
+    color: var(--accent);
+    margin-right: 12px;
+    font-weight: 500;
+  }
+  .lede { color: var(--muted); max-width: 68ch; margin: 0 0 26px; }
+  h3 {
+    font-size: 1.06rem;
+    letter-spacing: -0.008em;
+    margin: 34px 0 8px;
+    text-wrap: balance;
+  }
+  p { max-width: 70ch; margin: 0 0 15px; }
+  ul, ol { max-width: 70ch; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--accent); }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.875em;
+    background: var(--sunk);
+    padding: 0.12em 0.36em;
+    border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 20px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n, th.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 7px; vertical-align: baseline;
+  }
+
+  /* ---------- measured callout ---------- */
+  .measured {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    padding: 16px 18px;
+    margin: 22px 0;
+    max-width: 74ch;
+  }
+  .measured .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 7px;
+  }
+  .measured p { margin: 0; font-size: 0.95rem; }
+  .measured p + p { margin-top: 9px; }
+  .measured .figure {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.9rem;
+    color: var(--ink);
+    background: var(--sunk);
+    padding: 8px 11px;
+    border-radius: 4px;
+    display: block;
+    margin: 9px 0;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  /* ---------- priority ladder ---------- */
+  .ladder { margin: 22px 0; display: flex; flex-direction: column; gap: 5px; max-width: 74ch; }
+  .rung {
+    display: grid;
+    grid-template-columns: 34px 128px minmax(0, 1fr);
+    gap: 14px;
+    align-items: baseline;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 12px 15px;
+  }
+  @media (max-width: 620px) {
+    .rung { grid-template-columns: 34px minmax(0, 1fr); }
+    .rung .why { grid-column: 2 / -1; }
+  }
+  .rung .lvl {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--surface); background: var(--ink);
+    border-radius: 3px; text-align: center; padding: 2px 0;
+  }
+  .rung .nm {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em;
+    text-transform: uppercase; font-weight: 600;
+  }
+  .rung .why { font-size: 0.9rem; color: var(--muted); }
+  .rung.safety .lvl { background: var(--stop); }
+  .rung.safety .nm { color: var(--stop); }
+
+  /* ---------- pipeline ---------- */
+  .pipe { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 22px 0; }
+  .step {
+    flex: 1 1 150px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 6px; padding: 13px 14px; min-width: 0;
+  }
+  .step .k {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 5px;
+  }
+  .step .v { font-size: 0.88rem; color: var(--muted); }
+  .step b { display: block; color: var(--ink); font-size: 0.95rem; margin-bottom: 3px; }
+
+  pre.cmd {
+    font-family: var(--mono); font-size: 13px; background: var(--sunk);
+    border: 1px solid var(--line); border-radius: 6px; padding: 13px 15px;
+    overflow-x: auto; margin: 16px 0; line-height: 1.55; max-width: 74ch;
+  }
+  pre.cmd .c { color: var(--muted); }
+
+  .status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .status.done { color: var(--ok); }
+  .status.part { color: var(--warn); }
+  .status.miss { color: var(--stop); }
+
+  footer {
+    grid-column: 1 / -1; border-top: 1px solid var(--line);
+    padding-top: 22px; color: var(--muted); font-size: 13px;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">WRO 2026 Future Engineers · Team The Red Castle</p>
+  <h1>A camera is the only sensor</h1>
+  <p class="standfirst">
+    How a Raspberry Pi car drives three laps of a track it cannot measure — what
+    it sees, how it decides, and the measurements that overturned almost every
+    assumption we started with.
+  </p>
+  <dl class="facts">
+    <div class="fact"><dt>Sensors</dt><dd>One camera</dd></div>
+    <div class="fact"><dt>Compute</dt><dd>Pi 4, 2 GB</dd></div>
+    <div class="fact"><dt>Programs</dt><dd>Two</dd></div>
+    <div class="fact"><dt>Offline tests</dt><dd>92 passing</dd></div>
+    <div class="fact"><dt>Steering</dt><dd>Ackermann ±35°</dd></div>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#mission">The mission</a></li>
+    <li><a href="#vehicle">The vehicle</a></li>
+    <li><a href="#seeing">How it sees</a></li>
+    <li><a href="#thinking">How it decides</a></li>
+    <li><a href="#mechanisms">The six mechanisms</a></li>
+    <li><a href="#calibration">Calibration</a></li>
+    <li><a href="#operating">Operating it</a></li>
+    <li><a href="#testing">Testing</a></li>
+    <li><a href="#lessons">What measurement taught us</a></li>
+    <li><a href="#state">Where it stands</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="mission">
+  <h2><span class="num">01</span>The mission</h2>
+  <p class="lede">Two challenges on the same 3 × 3 m track, three laps each, fully autonomous.</p>
+
+  <p>
+    In the <strong>Open Challenge</strong> the track is empty but the inner walls
+    are repositioned every round, so the corridor width changes and no fixed
+    driving line exists. In the <strong>Obstacle Challenge</strong> red and green
+    traffic signs are added, and each dictates the side it must be passed on:
+    <strong>green is passed on its left, red on its right</strong>. The car starts
+    inside a magenta parking lot and must leave it before racing.
+  </p>
+  <p>
+    The direction of travel — clockwise or counter-clockwise — is not announced.
+    The car has to work it out for itself, and getting it wrong ruins the whole run.
+  </p>
+  <p>
+    Our constraint is self-imposed: <strong>no distance sensors, no encoder, no
+    IMU.</strong> One fixed-focus camera, and everything else is inference. The
+    rules explicitly call their suggested component list "a suggestion rather
+    than the requirements", so this is legal — but it means the car never
+    actually knows how far anything is.
+  </p>
+</section>
+
+<section id="vehicle">
+  <h2><span class="num">02</span>The vehicle</h2>
+  <p class="lede">Ackermann steering, a real differential, and one button.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>System</th><th>Choice</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Steering</td><td>Ackermann, MG90S servo, ±35° mechanical</td><td>Inner wheel turns sharper than the outer through a corner, so the tyres roll instead of scrubbing.</td></tr>
+      <tr><td>Drive</td><td>N20 12 V 200 rpm → 25:20 spur → differential</td><td>The differential is what <em>allows</em> the full ±35°. An earlier solid axle scrubbed so badly it forced the software limit down to ~8°.</td></tr>
+      <tr><td>Driver</td><td>L9110S H-bridge</td><td>Simple, and one pin PWM / other LOW matches our motor routine.</td></tr>
+      <tr><td>Camera</td><td>OV5647 wide, fixed focus, 12.5 cm high, 15° down, mounted inverted</td><td>Fixed focus removes an entire failure mode: autofocus kept locking to the background.</td></tr>
+      <tr><td>Power</td><td>3 × 18650 → motor directly; separate buck → Pi; common ground</td><td>Separate rails stop motor inrush browning out the Pi.</td></tr>
+      <tr><td>Chassis</td><td>PLA+ Silk Silver, Bambu Lab A1, Fusion 360</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Pin map</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th class="n">GPIO</th><th>Goes to</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="n">13</td><td>Steering servo</td><td>Hardware PWM</td></tr>
+      <tr><td class="n">24</td><td>L9110S A-IA</td><td>PWM here = <strong>forward</strong></td></tr>
+      <tr><td class="n">23</td><td>L9110S A-IB</td><td>PWM here = reverse</td></tr>
+      <tr><td class="n">19</td><td>Start / stop button</td><td>To GND, internal pull-up, no resistor</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="measured">
+    <span class="tag">Learned the hard way</span>
+    <p>
+      The Pi shut down every time the motor started. The cause was not current —
+      it was that the Pi and the motor driver had <strong>no common ground</strong>.
+      The only connection between them was the signal wire, so motor return
+      current flowed back through the GPIO pin.
+    </p>
+    <p>
+      Separately, the motor must never be flipped from forward to reverse
+      directly. It has to stop and settle first (<code>STOP_FLIP_DELAY = 0.3&nbsp;s</code>),
+      because the reverse voltage spike kills the regulator. Our <code>motor()</code>
+      enforces this itself, so no calling code can get it wrong.
+    </p>
+  </div>
+</section>
+
+<section id="seeing">
+  <h2><span class="num">03</span>How it sees</h2>
+  <p class="lede">Everything reduces to a handful of numbers per frame.</p>
+
+  <div class="pipe">
+    <div class="step"><span class="k">01 Capture</span><b>1296×972 full FOV</b><span class="v">Forced full sensor mode so the lens keeps its whole ~120° view.</span></div>
+    <div class="step"><span class="k">02 Crop</span><b>Rows below 160</b><span class="v">Above that is ceiling and clutter that never contains track.</span></div>
+    <div class="step"><span class="k">03 Reduce</span><b>320 × 160</b><span class="v">Small enough for a real frame rate on a 2 GB Pi.</span></div>
+    <div class="step"><span class="k">04 Measure</span><b>7 numbers</b><span class="v">Left, right, front, blue, orange — plus the images for colour work.</span></div>
+  </div>
+
+  <h3>Distance is never measured — density is</h3>
+  <p>
+    The car has no way to measure distance, so it measures how much of the picture
+    a wall <em>fills</em>. A nearer wall occupies more pixels. That single idea is
+    the foundation of all the steering:
+  </p>
+  <pre class="cmd">left  = fraction of the LEFT half of the image that is wall
+right = fraction of the RIGHT half
+front = the same, straight ahead   <span class="c">→ high means a corner</span>
+
+<span class="c"># measured on this car, this camera, this mounting:</span>
+density 0.1032 at 40 cm      slope 0.00501 per cm closer</pre>
+  <p>
+    Because that relationship depends on camera height, angle, lens <em>and</em>
+    lighting, it must be re-measured whenever any of them change — which is why
+    there is a tool for exactly that (§6).
+  </p>
+
+  <h3>What counts as a wall</h3>
+  <p>
+    Not simply "dark". A plain brightness test also catches the blue and orange
+    corner lines and the mat's printed dot markings, all of which are dark too.
+    The rule is two-case:
+  </p>
+  <pre class="cmd">wall = V &lt; 32                        <span class="c"># very dark: definitely wall</span>
+    or (V &lt; 62 and S &lt; 90)           <span class="c"># dark AND colourless</span>
+then morphological open, k=5         <span class="c"># drops the printed dots</span></pre>
+
+  <div class="measured">
+    <span class="tag">Measured · the decisive bug</span>
+    <p>
+      For weeks the car drove into corners and nobody could find the control bug —
+      because it was not a control bug. The wall detector was counting the
+      <strong>blue and orange corner lines as walls</strong>, unevenly between the
+      two image halves, injecting a phantom steering bias every frame.
+    </p>
+    <span class="figure">on one failure frame, once lines were excluded:
+  left   0.164 → 0.072
+  right  0.256 → 0.172</span>
+    <p>
+      The two-case rule exists because the obvious single fix does not work: HSV
+      saturation is numerically unstable at very low brightness, so a genuinely
+      black wall can report <code>S &gt; 200</code> from sensor noise alone. A
+      saturation-only test threw away <strong>99 %</strong> of a real
+      nose-to-wall frame.
+    </p>
+  </div>
+
+  <h3>Colour ranges, all measured against the real objects</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Colour</th><th class="n">H</th><th class="n">S</th><th class="n">V</th><th>What separates it</th></tr></thead>
+    <tbody>
+      <tr><td><span class="swatch" style="background:var(--c-blue)"></span>blue line</td><td class="n">96–135</td><td class="n">60–255</td><td class="n">70–200</td><td>—</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-orange)"></span>orange line</td><td class="n">2–13</td><td class="n">72–170</td><td class="n">70–255</td><td>The mat itself is a warm cream at H 17–19, S 42–53. <code>H≤13</code> and <code>S≥72</code> are what exclude it.</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-green)"></span>green sign</td><td class="n">60–95</td><td class="n">140–255</td><td class="n">30–170</td><td>Floor is 60, not 30 — the red sign's fringe reaches H=30.</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-red)"></span>red sign</td><td class="n">174–10</td><td class="n">170–255</td><td class="n">60–255</td><td>The wrap starts <em>above</em> magenta.</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-magenta)"></span>magenta lot</td><td class="n">163–178</td><td class="n">95–168</td><td class="n">90–255</td><td>S ceiling 168 keeps the red sign (S≈199) out.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="measured">
+    <span class="tag">Measured · three colours that were quietly wrong</span>
+    <p>
+      <strong>Magenta was invisible.</strong> Its range stopped at H=170 while the
+      block sits at H=171 — and red's wrap ran 170→5, so red was silently
+      swallowing it. Magenta matched <em>zero</em> pixels while red claimed them.
+    </p>
+    <p>
+      <strong>Green was eating the red sign.</strong> With its floor at H=30 it
+      matched 74 px <em>on the red pillar</em> — above the 55 px minimum area, so
+      a red sign could have registered as green and been passed on the wrong side.
+    </p>
+    <p>
+      <strong>Orange was matching the mat</strong>, which is a warm cream, for 44 %
+      of the band. Every one of these was found by checking each pair of colours
+      for overlap, not by looking at each range on its own.
+    </p>
+  </div>
+</section>
+
+<section id="thinking">
+  <h2><span class="num">04</span>How it decides</h2>
+  <p class="lede">One pure function, one priority ladder, one branch per frame.</p>
+
+  <p>
+    Both programs have the same three parts: a <strong>tunables</strong> block, a
+    <strong><code>decide()</code></strong> function, and a <strong>loop</strong>.
+    <code>decide()</code> touches no hardware and no camera — it is arithmetic on
+    numbers. That is deliberate: it means the entire brain can be tested on a
+    laptop with no robot attached, in under a second.
+  </p>
+
+  <pre class="cmd">button.wait_for_start()          <span class="c"># nothing moves until pressed</span>
+while True:
+    view = R.look(cam)           <span class="c"># LOOK   one frame, all measured</span>
+    d    = decide(view, ...)     <span class="c"># THINK  one decision</span>
+    R.servo(d.steer)             <span class="c"># ACT</span>
+    R.motor(speed)
+    if button.stop_pressed(): break</pre>
+
+  <h3>Obstacle Challenge ladder</h3>
+  <p>Highest priority first. Exactly one rung answers each frame.</p>
+  <div class="ladder">
+    <div class="rung"><span class="lvl">0</span><span class="nm">Park</span><span class="why">Leaving the lot. Must outrank the wall escape — inside the lot the magenta walls are close <em>on purpose</em>.</span></div>
+    <div class="rung"><span class="lvl">1</span><span class="nm">Kick</span><span class="why">A committed corner-exit turn. Outranks the escape because it is deliberately turning toward a wall — unless a wall closes from the opposite side, which cancels it.</span></div>
+    <div class="rung safety"><span class="lvl">2</span><span class="nm">Wall</span><span class="why">Touching a wall ends the run. Ramps 50 %→100 % and is floored by the normal controller.</span></div>
+    <div class="rung"><span class="lvl">3</span><span class="nm">Sign</span><span class="why">A red or green sign is in view — steer to place it on the correct side of the frame.</span></div>
+    <div class="rung"><span class="lvl">4</span><span class="nm">Hold</span><span class="why">A sign was here in the last 3 s. Do not hand back to lane keeping mid-pass.</span></div>
+    <div class="rung"><span class="lvl">5</span><span class="nm">Lane</span><span class="why">Nothing else applies — outer-wall PD, the same law as the Open Challenge.</span></div>
+  </div>
+
+  <h3>Open Challenge ladder</h3>
+  <div class="ladder">
+    <div class="rung safety"><span class="lvl">1</span><span class="nm">Emergency</span><span class="why">A wall is too close. Outranks everything.</span></div>
+    <div class="rung"><span class="lvl">2</span><span class="nm">Turn</span><span class="why">Scripted corner turn, fired by <em>crossing the corner line</em> — the line proves we are physically at the corner. A wall close ahead is the backup if a line is missed.</span></div>
+    <div class="rung"><span class="lvl">3</span><span class="nm">Lane</span><span class="why">Outer-wall PD plus the drift trim.</span></div>
+  </div>
+</section>
+
+<section id="mechanisms">
+  <h2><span class="num">05</span>The six mechanisms</h2>
+  <p class="lede">Each solves one problem the camera-only constraint creates.</p>
+
+  <h3>1 · Follow the outer wall, not the middle</h3>
+  <p>
+    In the Open Challenge the inner walls move every round, so the corridor width
+    changes. Centring chases a moving reference; the outer wall is the one thing
+    that stays put.
+  </p>
+  <pre class="cmd">CW  →  error = left  − target      <span class="c"># outer wall is on the LEFT</span>
+CCW →  error = target − right      <span class="c"># outer wall is on the RIGHT</span>
+steer = 200·error + 55·Δerror      <span class="c"># deadband 0.02, clamp ±20°</span></pre>
+  <div class="measured">
+    <span class="tag">Measured · why centring failed</span>
+    <p>
+      A centring controller drove into every corner. Approaching one,
+      <em>both</em> halves of the image darken together, so
+      <code>left − right ≈ 0</code> — the error vanishes exactly when the car most
+      needs to turn. The outer-wall law has the opposite behaviour: the wall
+      ahead raises the outer reading, which steers <em>into</em> the turn. Corners
+      need no dedicated code at all.
+    </p>
+  </div>
+
+  <h3>2 · Which way round the track?</h3>
+  <p>
+    Orange means clockwise, blue counter-clockwise. But the two lines are not
+    equally visible: orange is a warm colour on a warm mat and its saturation
+    collapses with distance, while blue over-triggers on bluish background.
+    Comparing raw pixel counts is therefore unfair, and it produced real
+    misreads.
+  </p>
+  <div class="measured">
+    <span class="tag">Measured · a CW run read as CCW</span>
+    <span class="figure">raw pixels        blue 0.030  &gt;  orange 0.025   → wrong answer
+own thresholds    blue 0.86×  &lt;  orange 2.08×   → correct</span>
+    <p>
+      Each colour now has its own threshold (<code>orange 0.012</code>,
+      <code>blue 0.035</code>) and the decision compares <strong>confidence</strong> —
+      how far each is over <em>its own</em> bar. If both look convincing at once
+      the car waits for a clearer frame rather than locking a direction it can
+      never undo.
+    </p>
+  </div>
+
+  <h3>3 · Passing a sign without knowing how far it is</h3>
+  <p>
+    We never estimate distance. We push the sign toward one side of the
+    <em>frame</em>, and the car ends up on the correct side of it in the world:
+  </p>
+  <pre class="cmd">green → drive the sign toward x=180  <span class="c"># right of frame → we pass its left</span>
+red   → drive the sign toward x=140  <span class="c"># left of frame  → we pass its right</span></pre>
+  <p>
+    The target slides further outward as the sign gets nearer, so the car commits
+    harder the closer it gets instead of clipping the corner of it. A sign must be
+    <strong>taller than it is wide</strong> to count — that single test rejects the
+    corner lines and stray mat pixels.
+  </p>
+
+  <h3>4 · Not abandoning a pass halfway</h3>
+  <p>
+    Detection flickers. Once a sign is lost, the lane keeper would immediately drag
+    the car back across the pass it is halfway through. So for
+    <strong>3 seconds</strong> after the last sighting the car refuses to return to
+    lane keeping — holding the sign's steering briefly, then running straight.
+  </p>
+  <div class="measured">
+    <span class="tag">Measured · why the hold is in seconds</span>
+    <span class="figure">one sign's contour area over four frames:  61 → 851 → 0 → 1060</span>
+    <p>
+      Every debounce here is a wall-clock timer, never a frame count. The old
+      10-cycle guard was 0.33 s at 30 fps, and a flickering mask turned one
+      physical line crossing into <strong>36</strong> counted crossings in a 45 s run.
+    </p>
+  </div>
+
+  <h3>5 · Getting out of the corner cleanly</h3>
+  <p>
+    The last sign before a corner leaves the car pushed to one side. If that push
+    was toward the <em>inner</em> wall, the car enters the corner pointing across
+    it and cannot see the next section at all — every closed-loop controller is
+    then reacting to a wall it is about to leave behind. A short hard open-loop
+    turn fixes the geometry:
+  </p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Direction</th><th>Corner turns</th><th>Inner wall</th><th>Sign that pushes you inward</th><th>Kick</th></tr></thead>
+    <tbody>
+      <tr><td class="n">CW</td><td>right</td><td>right</td><td><span class="swatch" style="background:var(--c-red)"></span>red</td><td class="n">30° right</td></tr>
+      <tr><td class="n">CCW</td><td>left</td><td>left</td><td><span class="swatch" style="background:var(--c-green)"></span>green</td><td class="n">30° left</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    The kick deliberately exceeds the 20° driving limit — that is its purpose —
+    bounded by the linkage's real 35°. A wall closing from the opposite side
+    cancels it.
+  </p>
+
+  <h3>6 · Leaving the parking lot decides the direction</h3>
+  <p>
+    The car starts inside the magenta lot. Whichever side is more blocked is the
+    side it cannot leave by — so the free side is both the way out <strong>and</strong>
+    the direction the lap will run. One measurement answers both questions, taken
+    before the car has moved.
+  </p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Camera sees</th><th>Way out</th><th>Lap direction</th></tr></thead>
+    <tbody>
+      <tr><td>more magenta on the <strong>left</strong></td><td>leave right</td><td class="n">CW (+1)</td></tr>
+      <tr><td>more magenta on the <strong>right</strong></td><td>leave left</td><td class="n">CCW (−1)</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>
+    Because <code>+1</code> already means "steer right" everywhere in the code, the
+    exit steering is simply <code>direction × angle</code>. The measurement averages
+    8 frames while the car is stationary — the only moment in the run with no
+    motion blur, and worth spending.
+  </p>
+  <div class="measured">
+    <span class="tag">Measured · why the black wall is excluded</span>
+    <p>
+      Counting black wall pixels alongside magenta was the obvious thing to try.
+      It cancels the measurement. The magenta wall <em>occludes</em> the black wall
+      behind it, so the blocked side shows <strong>less</strong> black, while the
+      open side looks across the track at the far outer wall and shows more:
+    </p>
+    <span class="figure">magenta   L 0.60   R 0.05     → left is blocked
+wall      L 0.40   R 0.95     → says the opposite
+sum       L 1.00   R 1.00     → an exact tie</span>
+    <p>Magenta alone is the honest signal.</p>
+  </div>
+</section>
+
+<section id="calibration">
+  <h2><span class="num">06</span>Calibration</h2>
+  <p class="lede">Three steps, and the order cannot be swapped.</p>
+
+  <p>
+    Each step is measured <em>through</em> the previous one, so doing them out of
+    order silently invalidates the earlier work. Every tool writes a file the code
+    loads at start-up, so the competition code itself is never edited to retune.
+  </p>
+
+  <pre class="cmd">python tools/tune_colors.py            <span class="c"># 1. camera, then every colour</span>
+python tools/tune_walls.py --detector  <span class="c"># 2. what counts as a wall here</span>
+python tools/tune_walls.py             <span class="c"># 3. density ↔ centimetres</span></pre>
+
+  <p>
+    The colour tool is <strong>headless</strong> — a plain SSH terminal, no display.
+    That is deliberate: at a venue the screen is the thing most likely not to
+    work, and colour tuning is the one job that absolutely must happen when the
+    light changes. It ends by checking <em>every pair</em> of colours for overlap,
+    which is what catches a range that is correct alone but wrong beside its
+    neighbour.
+  </p>
+
+  <div class="measured">
+    <span class="tag">The trap</span>
+    <p>
+      <strong>The wall detector does not use a colour range.</strong> It uses three
+      brightness/saturation cuts. Tuning the "black" colour looks exactly like
+      retuning the walls and changes nothing that drives the car — so the colour
+      tool deliberately does not offer it, and <code>--detector</code> exists
+      instead. If wall and mat overlap in brightness it refuses to write anything,
+      because no threshold can separate them in that light.
+    </p>
+  </div>
+</section>
+
+<section id="operating">
+  <h2><span class="num">07</span>Operating it</h2>
+  <p class="lede">Power the car. Press the button.</p>
+
+  <h3>The button</h3>
+  <p>
+    One button on GPIO 19 does both jobs. Press once and the run starts — nothing
+    moves before that. Press again and it stops, at any moment; this is the
+    emergency stop, and the loop polls it every frame. Both edges are debounced,
+    and a hold-off means releasing the start press cannot register as a stop.
+  </p>
+
+  <h3>Starting with no laptop</h3>
+  <pre class="cmd">./autostart.sh on</pre>
+  <p>
+    The program then launches at every power-on. This is safe <em>because</em> it
+    waits for the button — booting into it only arms the car. When a run finishes
+    the service restarts it, re-arming for the next press. Which program runs is
+    one line at the top of <code>run.sh</code>.
+  </p>
+
+  <h3>Wired networking</h3>
+  <p>
+    Venues ban wireless, so the Pi runs its own address server on Ethernet: plug a
+    cable from a laptop and the laptop is handed an address automatically, with no
+    configuration on its side. Wi-Fi and the cable coexist — with no cable the
+    Ethernet route is marked <code>linkdown</code> and carries nothing.
+  </p>
+  <pre class="cmd">ssh pi@raspberrypi.local     <span class="c"># or 192.168.50.1</span>
+./tools/venue_net.sh wifi-off</pre>
+  <p>
+    <code>wifi-off</code> refuses unless the cable is <em>physically</em> connected.
+    It checks the carrier rather than the address, because <code>eth0</code> keeps
+    its static address while unplugged — and that mistake would cut off the only
+    route to the robot.
+  </p>
+</section>
+
+<section id="testing">
+  <h2><span class="num">08</span>Testing</h2>
+  <p class="lede">Two commands, and neither needs the car to move.</p>
+
+  <pre class="cmd">python tools/test_logic.py    <span class="c"># 92 assertions, laptop only, no Pi</span>
+python tools/dryrun.py        <span class="c"># live camera, motor never touched</span></pre>
+  <p>
+    <code>test_logic.py</code> stubs the GPIO and camera modules so the real
+    classes import on a laptop, then drives them with synthetic numbers. Every
+    bug described in this document has a test pinning it, so it cannot come back
+    quietly.
+  </p>
+  <div class="measured">
+    <span class="tag">Why this exists</span>
+    <p>
+      A build once shipped with a <code>NameError</code> on a live code path,
+      because it had only been checked with <code>py_compile</code>. Compiling
+      proves a file parses. It does not prove the code runs.
+    </p>
+  </div>
+  <p>
+    Every run also writes a CSV row per frame — timestamps, wall readings, line
+    fractions, direction, quadrant, mode, steering, speed — which is how nearly
+    every measurement quoted here was obtained. The Obstacle run additionally
+    records the <strong>order of signs it passed</strong> and saves annotated
+    frames of each pass.
+  </p>
+</section>
+
+<section id="lessons">
+  <h2><span class="num">09</span>What measurement taught us</h2>
+  <p class="lede">Almost every assumption we started with was wrong, and the log said so first.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>We assumed</th><th>The measurement</th><th>What changed</th></tr></thead>
+    <tbody>
+      <tr><td>The steering was buggy</td><td>Coloured lines were being counted as walls, biasing every frame</td><td>The bug was in <em>perception</em>, not control. Two-case wall rule.</td></tr>
+      <tr><td>Centring between the walls is safest</td><td>Both halves darken equally in a corner — error → 0</td><td>Follow the outer wall only; corners then need no code.</td></tr>
+      <tr><td>A reference team's constants would transfer</td><td>Their wall target of 0.5 read <strong>0.021</strong> on our camera</td><td>Every distance re-measured on this car.</td></tr>
+      <tr><td>An emergency override is always safe</td><td>It produced −0.8° where the follower wanted −17°, and steered <em>into</em> the wall</td><td>Ramp from half lock, floored by the normal command.</td></tr>
+      <tr><td>The bigger line wins</td><td>Blue 0.030 beat orange 0.025 on pixels and reversed the lap direction</td><td>Compare confidence against each colour's own threshold.</td></tr>
+      <tr><td>Debouncing in frames is fine</td><td>10 cycles = 0.33 s; one crossing counted <strong>36</strong> times</td><td>Every timer in seconds.</td></tr>
+      <tr><td>More signal is better</td><td>Adding black to magenta made the parking measurement an exact tie</td><td>Magenta alone; the two are anti-correlated.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="state">
+  <h2><span class="num">10</span>Where it stands</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Item</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Open Challenge</td><td><span class="status done">full marks</span></td><td>Both directions, stable control</td></tr>
+      <tr><td>Colour separation</td><td><span class="status done">verified</span></td><td>Zero overlap between every pair</td></tr>
+      <tr><td>Start / stop button</td><td><span class="status done">working</span></td><td>Confirmed on the car</td></tr>
+      <tr><td>Video</td><td><span class="status done">filmed</span></td><td>—</td></tr>
+      <tr><td>Obstacle Challenge</td><td><span class="status part">not re-run</span></td><td>Code ready; untested since the restructure</td></tr>
+      <tr><td>Parking exit</td><td><span class="status part">tests only</span></td><td>Passes offline; no live run yet</td></tr>
+      <tr><td>Corner kick timing</td><td><span class="status part">estimated</span></td><td><code>KICK_TIME_S = 0.9</code> is a guess, not a measurement</td></tr>
+      <tr><td>Venue Ethernet</td><td><span class="status miss">blocked</span></td><td>Laptop has no working Ethernet adapter</td></tr>
+      <tr><td>Pi <code>cmdline.txt</code></td><td><span class="status miss">0 bytes</span></td><td>Latent boot risk, unrelated to everything else</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>The three things to do next</h3>
+  <ol>
+    <li><strong>Run the Obstacle Challenge</strong> with the parking exit. Watch the first <code>[park]</code> line — it prints both magenta readings and the direction it chose, so a wrong call is visible immediately.</li>
+    <li><strong>Time the corner kick.</strong> 0.9 s at 30° is an estimate; nobody has measured how fast this car rotates.</li>
+    <li><strong>Solve the laptop Ethernet</strong>, by BIOS or by a USB adapter. It is the single point of failure in the entire venue setup, and there is currently no spare.</li>
+  </ol>
+</section>
+
+</main>
+
+<footer>
+  Team The Red Castle · HMK AI and Robotics Club · Coach Ahmad Kalthom ·
+  Jolian Wassof, Omar Shammout, Louay Rashwan.
+  Every figure quoted here came from a run log or a bench measurement on this car.
+</footer>
+
+</div>
