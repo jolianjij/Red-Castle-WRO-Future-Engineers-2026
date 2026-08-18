@@ -48,6 +48,21 @@ SERVO_CENTER = 90
 SERVO_TRIM = -9.0
 STEER_DEVIATION = 35
 
+# PORTED: SMOOTHNESS. Their servo() set the angle, slept 0.1 s, then set the
+# duty to ZERO - stopping the pulse train, which makes the servo go limp until
+# the next command. On their slow Python loop that was once per ~0.3 s, so the
+# steering was commanded, released, commanded again. That is what shakes and
+# stutters.
+#   SERVO_SETTLE_S  how long servo() blocks. It also CAPS THE CONTROL RATE:
+#                   at 0.1 the loop cannot exceed 10 Hz no matter how fast the
+#                   vision is, and slow steering on a fast car is what makes it
+#                   hunt. 0.02 gives about 40 Hz.
+#   SERVO_HOLD      True = keep the pulse so the servo HOLDS its angle.
+#                   False = their original release-to-limp behaviour.
+SERVO_SETTLE_S = 0.02
+SERVO_HOLD = True
+
+
 speed=0
 
 # PORTED: our camera is fixed, mounted UPSIDE DOWN, and must have exposure and
@@ -203,8 +218,9 @@ def servo(angle):
     duty = min_duty + (angle / 180.0) * duty_range
 
     servo_pwm.ChangeDutyCycle(duty)
-    time.sleep(0.1)
-    servo_pwm.ChangeDutyCycle(0)
+    time.sleep(SERVO_SETTLE_S)          # PORTED: was 0.1 - see SERVO_SETTLE_S
+    if not SERVO_HOLD:                  # PORTED: theirs always released here
+        servo_pwm.ChangeDutyCycle(0)
 
 
 def motor(speed):  # Speed is -1 to 1
