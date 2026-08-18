@@ -408,6 +408,7 @@ def main():
     laps.stop_quadrant = STOP_QUADRANT
     outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
+    rec = R.FrameRecorder(enabled=SAVE_FRAMES, max_saves=MAX_SAVES)
     kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
                         speed=KICK_SPEED, sign_cw=KICK_SIGN_CW,
                         sign_ccw=KICK_SIGN_CCW, enabled=CORNER_KICK)
@@ -417,6 +418,7 @@ def main():
                          use_wall=PARK_USE_WALL, enabled=PARK_START,
                          invert=PARK_INVERT)
     hold = {"kind": "", "t": -1e9, "steer": 0.0}
+    last_mode = ""
     last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
                                # gap between a sign and the corner it precedes
 
@@ -470,21 +472,51 @@ def main():
 
             # ---------------- LOOK ----------------
             view = R.look(cam)
-            before = laps.quadrant
+            before, had_dir = laps.quadrant, laps.direction
             laps.update(view.blue, view.orange, view.left, view.right, view.front)
 
             sign = find_sign(view.hsv)
             passes.update(sign, now)
-            if sign is not None:
-                last_sign_kind = sign[0]
+            t = now - t0
 
+            # the direction: the one decision the whole run rests on
+            if had_dir == 0 and laps.direction != 0:
+                rec.moment(view, "direction-%s" % ("CW" if laps.direction > 0 else "CCW"),
+                           t, lines=["DIRECTION LOCKED %s" % laps.direction_source,
+                                     "blue %.4f  orange %.4f" % (view.blue, view.orange)])
+            # each sign, the FIRST time that colour appears in this approach
+            if sign is not None:
+                k, sx, sy, area, bb = sign
+                if k != last_sign_kind:
+                    col = (0, 0, 255) if k == "red" else (0, 255, 0)
+                    rec.moment(view, "sign-%s-first" % k, t,
+                               lines=["%s FIRST SEEN  area %d" % (k.upper(), int(area)),
+                                      "at x=%.0f y=%.0f -> target x=%.0f"
+                                      % (sx, sy, SIGN[k]["target_x"]),
+                                      "L %.3f  R %.3f" % (view.left, view.right)],
+                               boxes=[(bb[0], bb[1], bb[2], bb[3], col, k)])
+                last_sign_kind = k
+
+            if laps.quadrant > before:
+                rec.moment(view, "quadrant-%02d" % laps.quadrant, t,
+                           lines=["QUADRANT %d of %d" % (laps.quadrant, STOP_QUADRANT),
+                                  "blue %.4f  orange %.4f" % (view.blue, view.orange)])
             # a corner was just counted -> maybe kick out of it
             if laps.quadrant > before:
                 if kick.maybe_fire(laps.direction, last_sign_kind, now):
                     last_sign_kind = ""      # consumed; don't re-fire next corner
 
             # ---------------- THINK ----------------
+            prev_mode = last_mode
             d = decide(now, view, sign, hold, kick, outer, laps.direction, park)
+            last_mode = d.mode
+            # each escape, kick and parking phase, once as it starts
+            if d.mode != prev_mode and d.mode in (
+                    "wall", "kick", "park-look", "park-exit"):
+                rec.moment(view, "%s-%05.1fs" % (d.mode, t), t,
+                           lines=["%s  steer %+.1f" % (d.mode.upper(), d.steer),
+                                  "L %.3f  R %.3f  (escape at %.3f)"
+                                  % (view.left, view.right, R.WALL_EMERGENCY)])
             if park.direction and laps.direction == 0:
                 # the way out of the lot IS the way round the track
                 laps.set_direction(park.direction, "parking-lot exit")
@@ -498,13 +530,6 @@ def main():
 
             # ---------------- RECORD / FINISH ----------------
             fname = ""
-            if (SAVE_FRAMES and saves < MAX_SAVES
-                    and (sign is not None or d.mode in ("sign-hold", "kick"))
-                    and frame % SAVE_EVERY == 0):
-                fname = (f"frames/{frame:05d}_{d.kind or d.mode}"
-                         f"_a{int(d.area):04d}_s{steer:+05.1f}.png")
-                cv2.imwrite(fname, annotate(view, sign, d))
-                saves += 1
 
             t_ms = int((now - t0) * 1000)
             log.writerow([t_ms, frame, laps.direction, laps.quadrant, d.mode,
@@ -539,7 +564,10 @@ def main():
               f"{1000*dt/max(frame,1):.1f} ms/frame")
         print(f"  SIGN ORDER PASSED : {order if order else '(none)'}")
         print(f"  corner kicks fired: {kick.fired}")
-        print(f"  frames saved      : {saves} -> frames/")
+        idx = rec.write_index()
+        print(f"  decisive frames   : {rec.saved} -> frames/")
+        if idx:
+            print(f"  what happened     : {idx}")
         print(f"  fusion: {laps.summary()}")
         with open("sign_order.txt", "w") as f:
             f.write(",".join(order) + "\n")

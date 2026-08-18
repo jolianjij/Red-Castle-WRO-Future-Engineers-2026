@@ -58,6 +58,12 @@ STOP_EXTRA_S     = 2.5     # HOW LONG THE CAR KEEPS DRIVING after that last
 MAX_RUNTIME_S    = 150     # SAFETY net only, not a lap limit
 DEBUG_EVERY      = 15      # console status line every N frames (0 = silent)
 
+# --- decisive frames ---
+# Not every frame: the ones where the run was DECIDED and could have gone
+# wrong. They land in frames/ with a 00-WHAT-HAPPENED.txt index.
+SAVE_MOMENTS     = True
+MAX_MOMENT_SAVES = 200
+
 # Corner lines live in config.py because BOTH challenges need the same values:
 #     R.LINE_FRACTION_ORANGE   lower bar - orange is faint on this camera
 #     R.LINE_FRACTION_BLUE     higher bar - blue over-triggers on background
@@ -120,6 +126,7 @@ def main():
         laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
     outer = R.OuterWallFollower(target=LANE_TARGET)
     turner = R.TurnSequencer()
+    rec = R.FrameRecorder(enabled=SAVE_MOMENTS, max_saves=MAX_MOMENT_SAVES)
 
     os.makedirs("logs", exist_ok=True)
     logpath = time.strftime("logs/open_%Y%m%d_%H%M%S.csv")
@@ -144,6 +151,7 @@ def main():
     t0 = time.time()
     frame = 0
     reason = "?"
+    mode = ""
     R.motor(CRUISE)
     try:
         while True:
@@ -151,14 +159,36 @@ def main():
 
             # ---------------- LOOK ----------------
             view = R.look(cam)
-            before = laps.quadrant
+            before, had_dir = laps.quadrant, laps.direction
             laps.update(view.blue, view.orange, view.left, view.right, view.front)
+            t = time.time() - t0
+
+            # THE decision of the whole run: which way round the track.
+            if had_dir == 0 and laps.direction != 0:
+                rec.moment(view, "direction-%s" % ("CW" if laps.direction > 0 else "CCW"),
+                           t, lines=["DIRECTION LOCKED %s" % laps.direction_source,
+                                     "blue %.4f  orange %.4f" % (view.blue, view.orange),
+                                     "L %.3f  R %.3f" % (view.left, view.right)])
             if laps.quadrant > before:
                 turner.trigger(laps.direction)   # corner line crossed -> turn
+                rec.moment(view, "quadrant-%02d" % laps.quadrant, t,
+                           lines=["QUADRANT %d of %d" % (laps.quadrant, R.STOP_AFTER_QUADRANT),
+                                  "blue %.4f  orange %.4f" % (view.blue, view.orange),
+                                  "front %.3f" % view.front])
 
             # ---------------- THINK ----------------
+            prev_mode = mode
             d = decide(view, laps, outer, turner)
+            mode = d.mode
             speed = R.cruise_speed(CRUISE, d.steer)
+
+            # each ESCAPE and each TURN, once at the moment it starts
+            if d.mode != prev_mode and d.mode in ("emergency", "turn", "turn-geom"):
+                rec.moment(view, "%s-%s" % (d.mode, "%05.1fs" % t), t,
+                           lines=["%s  steer %+.1f" % (d.mode.upper(), d.steer),
+                                  "L %.3f  R %.3f  (escape at %.3f)"
+                                  % (view.left, view.right, R.WALL_EMERGENCY),
+                                  "front %.3f" % view.front])
 
             # ---------------- ACT ----------------
             R.servo(d.steer)
@@ -195,6 +225,9 @@ def main():
         print(f"\nFINISHED ({reason})  quadrants={laps.quadrant}  "
               f"{frame} frames  {dt:.1f}s  {1000*dt/max(frame,1):.1f} ms/frame")
         print(f"  fusion: {laps.summary()}")
+        idx = rec.write_index()
+        if idx:
+            print(f"  decisive frames: {rec.saved} -> frames/  (index: {idx})")
         log.writerow([])
         log.writerow(["#", reason, laps.summary()])
         logf.flush()

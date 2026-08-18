@@ -334,6 +334,100 @@ def line_counts(hsv):
 View = collections.namedtuple("View", "proc hsv left right front blue orange")
 
 
+class FrameRecorder:
+    """Save the frames where the run was actually DECIDED.
+
+    Not every frame - the interesting ones. A 60 s run is ~1800 frames and
+    almost all of them are the car going straight down a wall; the handful that
+    matter are the moments a decision was made and could have been made wrong:
+
+        the direction being locked        (gets the whole run right or wrong)
+        each quadrant counted             (was that really a corner?)
+        each sign first seen, and closest (did it see it, and act in time?)
+        each escape starting              (how close did it actually get?)
+        each corner turn and kick
+        the parking measurement
+
+    Every image is the raw frame on top and what the car UNDERSTOOD underneath,
+    so a wrong decision and the evidence for it sit in one picture. Filenames
+    sort chronologically and say what the moment was, so the folder reads as
+    the story of the run without opening anything.
+    """
+
+    def __init__(self, folder="frames", max_saves=200, enabled=True, clear=True):
+        self.folder = folder
+        self.max_saves = max_saves
+        self.enabled = enabled
+        self.saved = 0
+        self.index = []          # (t, tag, filename) for the run summary
+        self._once = set()
+        if enabled:
+            os.makedirs(folder, exist_ok=True)
+            if clear:
+                for f in os.listdir(folder):
+                    try:
+                        os.remove(os.path.join(folder, f))
+                    except OSError:
+                        pass
+
+    def moment(self, view, tag, t=0.0, lines=(), boxes=(), once=False):
+        """Save one decisive frame.
+
+        tag    short, filename-safe, says WHAT the moment was
+        lines  text drawn on the image - the numbers behind the decision
+        boxes  [(x, y, w, h, (b,g,r), label)] to outline, e.g. a sign
+        once   True = only ever save the first of this tag
+        """
+        if not self.enabled or self.saved >= self.max_saves:
+            return None
+        if once:
+            if tag in self._once:
+                return None
+            self._once.add(tag)
+        if view.proc is None:
+            return None
+
+        vis = view.proc.copy()
+        if view.hsv is not None:
+            vis[wall_mask(view.hsv)] = (0, 0, 255)        # red = counted as wall
+        cv2.line(vis, (PROC_W // 2, 0), (PROC_W // 2, PROC_H), (255, 255, 0), 1)
+        for b in boxes:
+            x, y, w, h, col, label = b
+            cv2.rectangle(vis, (x, y), (x + w, y + h), col, 1)
+            if label:
+                cv2.putText(vis, label, (x, max(9, y - 2)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, col, 1)
+        for i, text in enumerate(lines):
+            cv2.putText(vis, str(text), (4, 11 + i * 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 255), 1)
+
+        name = os.path.join(
+            self.folder, "%06dms_%s.png" % (int(t * 1000), _safe(tag)))
+        cv2.imwrite(name, np.vstack([view.proc, vis]))
+        self.saved += 1
+        self.index.append((t, tag, os.path.basename(name)))
+        return name
+
+    def write_index(self, path=None):
+        """A readable list of what was saved and when - the run in one file."""
+        if not self.enabled or not self.index:
+            return None
+        path = path or os.path.join(self.folder, "00-WHAT-HAPPENED.txt")
+        with open(path, "w") as f:
+            f.write("the moments this run was decided, in order" + chr(10))
+            f.write("=" * 58 + chr(10))
+            for t, tag, fn in self.index:
+                f.write("%7.2fs  %-22s %s%s" % (t, tag, fn, chr(10)))
+            f.write("%s%d frames saved%s" % (chr(10), self.saved, chr(10)))
+        return path
+
+
+def _safe(text):
+    keep = "-_"
+    return "".join(c if (c.isalnum() or c in keep) else "-"
+                   for c in str(text))[:40]
+
+
 def color_count(hsv, name, region=None, as_fraction=False, clean=True):
     """How many pixels in this image match a tuned colour.
 
