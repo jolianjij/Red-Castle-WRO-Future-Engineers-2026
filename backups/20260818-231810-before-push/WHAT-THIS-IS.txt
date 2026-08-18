@@ -1,0 +1,25 @@
+label: before-push
+taken: 2026-08-18 23:18:17
+from : pi@raspberrypi:wro2026
+
+key values:
+  CRUISE           = 80
+  FORCE_DIRECTION  = 0
+  PARK_START       = False
+  LANE_DISTANCE_CM = 40.0
+  GREEN_KP         = 0.3
+  GREEN_MIN_AREA   = 70
+  RED_KP           = 0.3
+  RED_MIN_AREA     = 70
+  SIGN_HOLD_S      = 3.0
+  KICK_ANGLE       = 35.0
+  STOP_ON_LAPS     = True
+  STEER_BIAS = -4.0
+  WALL_EMERGENCY = 0.213
+  OUTER_TARGET = 0.1032
+  OUTER_KP = 200.0
+  LINE_FRACTION_ORANGE = 0.006
+  LINE_FRACTION_BLUE   = 0.1
+
+colours:
+{"black":[0,179,0,255,0,62],"blue":[96,135,60,255,70,200],"orange":[2,13,72,170,70,255],"green":[60,95,140,255,30,170],"red":[178,12,170,255,45,255],"magenta":[158,177,90,255,40,255]}
