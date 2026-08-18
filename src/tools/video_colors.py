@@ -2,7 +2,10 @@
 """
 video_colors.py - open a video, pick a frame, see what every colour matches.
 
-    python tools/video_colors.py run.mp4                 # frame in the middle
+Runs on the LAPTOP as well as the Pi - it needs no hardware, and the video and
+the screen are usually on the laptop anyway.
+
+    python src/tools/video_colors.py run.mp4             # frame in the middle
     python tools/video_colors.py run.mp4 --frame 250     # one frame by number
     python tools/video_colors.py run.mp4 --time 12.5     # one frame by seconds
     python tools/video_colors.py run.mp4 --every 60      # a sweep through it
@@ -36,6 +39,46 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# RUNS ON THE LAPTOP TOO. This tool needs no hardware - only mask() and the
+# tuned ranges - but robot.py imports the Pi-only GPIO and camera modules at the
+# top. The videos and the screen are both on the laptop, so refusing to run
+# there would defeat the point. Stub what is missing and carry on.
+try:
+    import RPi.GPIO  # noqa: F401
+except ImportError:
+    import types
+    _g = types.ModuleType("RPi.GPIO")
+    for _n in ("BCM", "OUT", "IN", "HIGH", "LOW", "PUD_UP", "PUD_DOWN"):
+        setattr(_g, _n, 0)
+    _g.setmode = _g.setwarnings = _g.setup = _g.cleanup = lambda *a, **k: None
+    _g.input = lambda pin: 1
+    _g.output = lambda *a, **k: None
+
+    class _PWM:
+        def __init__(self, *a):
+            pass
+
+        def start(self, d):
+            pass
+
+        def ChangeDutyCycle(self, d):
+            pass
+
+        def stop(self):
+            pass
+
+    _g.PWM = _PWM
+    _r = types.ModuleType("RPi")
+    _r.GPIO = _g
+    sys.modules["RPi"], sys.modules["RPi.GPIO"] = _r, _g
+    _p = types.ModuleType("picamera2")
+    _p.Picamera2 = object
+    sys.modules["picamera2"] = _p
+    _l = types.ModuleType("libcamera")
+    _l.Transform = lambda **k: None
+    sys.modules["libcamera"] = _l
+
 import robot as R           # noqa: E402
 
 # what each colour is PAINTED as in the output (BGR), chosen to be obvious
@@ -51,11 +94,24 @@ PAINT = {
 ORDER = ["blue", "orange", "green", "red", "magenta"]
 
 
-def to_proc(frame):
-    """Put a video frame through the SAME crop and resize the car uses, so the
-    numbers here are the numbers the car would have seen."""
-    if frame.shape[0] > R.ROI_TOP + 20:
-        frame = frame[R.ROI_TOP:, :, :]
+def to_proc(frame, stacked=None):
+    """Put a frame through the SAME crop and resize the car uses, so the numbers
+    here are the numbers the car would have seen.
+
+    ALSO UNSTACKS A SAVED FRAME. Everything in frames/ is a PAIR - the raw image
+    on top, what the car understood (walls painted red, boxes, text) underneath.
+    Measuring colours on the annotated half is meaningless: you would be counting
+    the overlay. Anything roughly twice as tall as the car's own aspect ratio is
+    assumed to be such a pair, and only the top half is used.
+    """
+    h, w = frame.shape[:2]
+    want = float(R.PROC_H) / R.PROC_W          # the car's own aspect, ~0.5
+    is_pair = stacked if stacked is not None else (h / float(w) > want * 1.6)
+    if is_pair:
+        frame = frame[:h // 2, :, :]
+        h = frame.shape[0]
+    elif h > R.ROI_TOP + 20:
+        frame = frame[R.ROI_TOP:, :, :]        # a full camera frame -> crop the ROI
     proc = cv2.resize(frame, (R.PROC_W, R.PROC_H))
     return proc, cv2.cvtColor(proc, cv2.COLOR_BGR2HSV)
 
@@ -153,6 +209,8 @@ def main():
                     help="which colours (default: all but black)")
     ap.add_argument("--out", default="color_check",
                     help="folder for the PNGs (default color_check/)")
+    ap.add_argument("--whole", action="store_true",
+                    help="do NOT auto-unstack a saved frames/ pair - use it all")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -171,7 +229,7 @@ def main():
             if img is None:
                 print("  cannot read %s" % f)
                 continue
-            proc, hsv = to_proc(img)
+            proc, hsv = to_proc(img, stacked=False if args.whole else None)
             out, _ = report(os.path.splitext(os.path.basename(f))[0],
                             proc, hsv, args.colors, args.out)
             print("  saved %s" % out)
