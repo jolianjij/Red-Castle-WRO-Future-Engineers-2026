@@ -63,6 +63,10 @@ CAM_CONTRAST = 1.1
 # profile against our proven pipeline: False +0.803, True -0.466.
 ROTATE_180 = False
 
+# PORTED: how far down the raw frame the crop starts. Theirs was 240 (the
+# bottom half). Ours needs 160 - see process_frame for the measurement.
+CROP_TOP = 160
+
 # PORTED: colour tests. Theirs are kept EXCEPT the blue saturation floor: at 60
 # it matched OUR MAT, which reads S~68 against the blue line's S~238 - and the
 # mat is five times bigger than the line, so the count measured the floor.
@@ -267,12 +271,20 @@ def capture_array(picam2):
 
 
 def process_frame(raw_frame_arr, frame_arr):
-    # PORTED: identical result to their per-pixel loop, with numpy slicing.
-    crop = raw_frame_arr[240:480:2, 0:640:2]
+    # PORTED: identical result to their per-pixel loop, done with numpy.
+    #
+    # THE CROP HAD TO MOVE. Theirs took rows 240-480 - the bottom half - and on
+    # their camera that half contained the walls. Ours is a 120 degree lens at
+    # 12.5 cm, so the bottom half is almost entirely FLOOR: measured on the
+    # field, their crop read left_wall 0.024 against their own target of 0.30,
+    # and no gain can steer from a signal that is not there. Starting at
+    # CROP_TOP puts the walls back in frame - the same scene then reads 0.15,
+    # which is the range their constants were written for.
+    crop = raw_frame_arr[CROP_TOP:480, 0:640:2]
+    crop = cv2.resize(crop, (320, 120), interpolation=cv2.INTER_AREA)
     if ROTATE_180:
         crop = crop[::-1, ::-1]
     frame_arr[:] = crop
-
 
 def process_hsv(hsv_arr, red_data, green_data, purple_data):
     # PORTED: identical result to their per-pixel loop, with numpy.

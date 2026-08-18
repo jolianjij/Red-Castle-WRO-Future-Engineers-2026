@@ -57,6 +57,10 @@ CAM_CONTRAST = 1.1
 # If it ever does exactly that, this is the one line to flip.
 ROTATE_180 = False
 
+# PORTED: how far down the raw frame the crop starts. Theirs was 240 (the
+# bottom half). Ours needs 160 - see process_frame for the measurement.
+CROP_TOP = 160
+
 # --------------------------------------------------
 # Map lines variables
 line_cycle_delay = 15
@@ -234,17 +238,20 @@ def capture_array(picam2):
 
 
 def process_frame(raw_frame_arr, frame_arr):
-    # PORTED: identical result to their per-pixel loop, done with numpy slicing.
-    # Theirs walked 38400 pixels in Python and took roughly a quarter of a
-    # second per frame; this is the same crop, the same every-other-pixel
-    # sampling and the same orientation, in about a millisecond.
-    #   bottom half   rows 240..480 step 2   -> 120 rows
-    #   full width    cols   0..640 step 2   -> 320 cols
-    crop = raw_frame_arr[240:480:2, 0:640:2]
+    # PORTED: identical result to their per-pixel loop, done with numpy.
+    #
+    # THE CROP HAD TO MOVE. Theirs took rows 240-480 - the bottom half - and on
+    # their camera that half contained the walls. Ours is a 120 degree lens at
+    # 12.5 cm, so the bottom half is almost entirely FLOOR: measured on the
+    # field, their crop read left_wall 0.024 against their own target of 0.30,
+    # and no gain can steer from a signal that is not there. Starting at
+    # CROP_TOP puts the walls back in frame - the same scene then reads 0.15,
+    # which is the range their constants were written for.
+    crop = raw_frame_arr[CROP_TOP:480, 0:640:2]
+    crop = cv2.resize(crop, (320, 120), interpolation=cv2.INTER_AREA)
     if ROTATE_180:
         crop = crop[::-1, ::-1]
     frame_arr[:] = crop
-
 
 def process_hsv(hsv_arr):
     # PORTED: identical result to their per-pixel loop, done with numpy.
