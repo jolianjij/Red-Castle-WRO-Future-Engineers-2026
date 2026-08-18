@@ -47,8 +47,14 @@ LANE_DISTANCE_CM = 40.0    # hold this far from the OUTER wall on the straights
 LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 
 # --- run control ---
-STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 + the lap
-                           # timer leaves the car resting in the start section.
+STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 + the coast
+                           # below leaves the car resting in the start section.
+STOP_EXTRA_S     = 2.5     # HOW LONG THE CAR KEEPS DRIVING after that last
+                           # corner is counted, before it stops. Raise it to
+                           # finish further round the section; lower it to stop
+                           # sooner. It used to be tied to the lap debounce
+                           # timer, which meant you could not change one without
+                           # changing the other.
 MAX_RUNTIME_S    = 150     # SAFETY net only, not a lap limit
 DEBUG_EVERY      = 15      # console status line every N frames (0 = silent)
 
@@ -129,7 +135,8 @@ def main():
           f"(density {LANE_TARGET:.4f})")
     print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f} "
           f"blue>{R.LINE_FRACTION_BLUE:.3f} ratio>{R.LINE_DIR_MIN_RATIO:.2f}")
-    print(f"  speed     : {CRUISE}%   stop after quadrant {STOP_AFTER_QUADRANT}")
+    print(f"  speed     : {CRUISE}%   stop after quadrant "
+          f"{STOP_AFTER_QUADRANT} + {STOP_EXTRA_S:.1f}s")
     print(f"  log       : {logpath}")
 
     button.wait_for_start("Open Challenge")
@@ -172,8 +179,8 @@ def main():
             if button.stop_pressed():
                 reason = "BUTTON pressed"
                 break
-            if laps.ready_to_finish():
-                reason = f"{laps.quadrant} quadrants + lap timer expired"
+            if laps.ready_to_finish(STOP_EXTRA_S):
+                reason = (f"{laps.quadrant} quadrants + {STOP_EXTRA_S:.1f}s coast")
                 break
             if time.time() - t0 > MAX_RUNTIME_S:
                 reason = "SAFETY timeout"

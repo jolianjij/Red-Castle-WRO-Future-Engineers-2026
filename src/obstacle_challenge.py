@@ -104,6 +104,17 @@ SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
                            # across the pass it is halfway through
 SIGN_STEER_HOLD_S= 0.5     # of that hold, keep steering as the sign commanded
                            # for this long, then run straight for the remainder
+SIGN_WALL_GUARD  = 0.70    # THE SIGN LAW DOES NOT KNOW WALLS EXIST. It will
+                           # command full lock to place a sign, and in a 3 m
+                           # corridor that means driving into the wall until the
+                           # escape fires and the two fight each other. Measured
+                           # on a failed run: 37% of frames past the escape
+                           # threshold, the sign law asking for -20 deg while
+                           # the left wall already read 0.20 against 0.213.
+                           # Below this fraction of WALL_EMERGENCY the sign
+                           # steers freely; above it the command is faded out,
+                           # reaching zero exactly where the escape takes over.
+                           # Lower = more cautious. 1.0 = old behaviour.
 
 # --- corner-exit kick ---
 # When a corner is counted AND the last sign pushed the car toward the INNER
@@ -188,6 +199,21 @@ def sign_error(kind, cx, cy):
     return cx - (RED_TARGET_X - y * Y_GAIN)
 
 
+def limit_toward_wall(steer, left, right):
+    """Fade a steering command out as it aims at a wall that is already close.
+
+    Returns the command unchanged in open space. The sign law is the only thing
+    that needs this: the lane keeper is already a function of the walls, and the
+    escape and the manoeuvres are deliberate.
+    """
+    approaching = left if steer < 0 else right   # -steer = left = the LEFT wall
+    start = R.WALL_EMERGENCY * SIGN_WALL_GUARD
+    if approaching <= start:
+        return steer
+    span = max(1e-6, R.WALL_EMERGENCY - start)
+    return steer * max(0.0, 1.0 - (approaching - start) / span)
+
+
 def clamp_steer(steer, servo_limit):
     """Clamp to STEER_MAX, or to a raised (kick) ceiling that never exceeds the
     linkage's mechanical limit."""
@@ -243,13 +269,15 @@ def decide(now, view, sign, hold, kick, outer, direction, park=None):
     if sign is not None:
         kind, sx, sy, area, _ = sign
         steer = sign_error(kind, sx, sy) * PILLAR_KP
+        steer = limit_toward_wall(steer, view.left, view.right)
         hold["kind"], hold["t"], hold["steer"] = kind, now, steer
         return Decision(steer, "sign-" + kind, kind, sx, sy, area, None, None)
 
     # ---- 4. HOLD ----
     if hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S:
         if (now - hold["t"]) < SIGN_STEER_HOLD_S:
-            steer, mode = hold["steer"], "sign-hold"
+            steer = limit_toward_wall(hold["steer"], view.left, view.right)
+            mode = "sign-hold"
         else:
             steer, mode = 0.0, "sign-clear"      # run straight past it
         return Decision(steer, mode, hold["kind"], 0.0, 0.0, 0, None, None)

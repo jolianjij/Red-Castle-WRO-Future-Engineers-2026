@@ -375,7 +375,9 @@ for _ in range(p.settle_frames):
 walled = R.View(None, pv.hsv, 0.40, 0.01, 0.0, 0.0, 0.0)   # wall screaming close
 d = OBS.decide(0.1, walled, None, hold0(), R.CornerKick(), outer, 0, p)
 check("PARK outranks the wall escape", d.mode, "park-exit")
-check("park uses its own speed", d.speed_cap, OBS.PARK_SPEED)
+# NOTE: compare against what THIS object was built with, not OBS.PARK_SPEED -
+# that is a value the user tunes, and their tuning must never fail the suite.
+check("park uses its own speed", d.speed_cap, p.speed)
 d2 = OBS.decide(2.0, walled, None, hold0(), R.CornerKick(), outer, 1, p)
 check("once out, the wall escape works again", d2.mode, "wall")
 
@@ -451,6 +453,37 @@ check("...and it steers the other way",
       and pi_.update(park_view(0.6, 0.05), 0.1)[0] < 0, True)
 check("default is NOT inverted", OBS.PARK_INVERT, False)
 
+
+# ==========================================================================
+section("sign wall guard - the failed run's root cause")
+# MEASURED on obstacle_20260818_062223: the sign law commanded -20 deg (full
+# left lock) to place a green sign while the LEFT wall already read 0.20
+# against a 0.213 escape threshold. 628 of 1707 frames (37%) were past that
+# threshold. The sign law has no idea walls exist, so it must be faded out as
+# it aims at one.
+G = R.WALL_EMERGENCY * OBS.SIGN_WALL_GUARD
+check("open space: command passes through untouched",
+      OBS.limit_toward_wall(-20.0, 0.02, 0.02), -20.0)
+check("steering LEFT with the LEFT wall close is faded",
+      abs(OBS.limit_toward_wall(-20.0, (G + R.WALL_EMERGENCY) / 2, 0.02)) < 20.0, True)
+check("...to ZERO exactly where the escape takes over",
+      OBS.limit_toward_wall(-20.0, R.WALL_EMERGENCY, 0.02), -0.0)
+check("steering LEFT with the RIGHT wall close is NOT faded",
+      OBS.limit_toward_wall(-20.0, 0.02, R.WALL_EMERGENCY), -20.0)
+check("steering RIGHT with the RIGHT wall close is faded",
+      OBS.limit_toward_wall(20.0, 0.02, R.WALL_EMERGENCY), 0.0)
+check("never flips sign", OBS.limit_toward_wall(-20.0, 0.99, 0.02) <= 0.0, True)
+
+# and through the real ladder
+d = OBS.decide(T, view(left=0.02, right=0.02), ("green", 100.0, 80.0, 900, None),
+               hold0(), R.CornerKick(), outer, 1)
+free = d.steer
+d = OBS.decide(T, view(left=R.WALL_EMERGENCY * 0.95, right=0.02),
+               ("green", 100.0, 80.0, 900, None), hold0(), R.CornerKick(), outer, 1)
+check("a green sign no longer drives the car into the left wall",
+      abs(d.steer) < abs(free), True)
+
+# ==========================================================================
 print("\n" + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

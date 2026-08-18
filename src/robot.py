@@ -563,12 +563,20 @@ class LapTracker:
                 f" | line reads: blue={self.blue_reads} orange={self.orange_reads}"
                 f" | disagreements={self.disagreements}")
 
-    def ready_to_finish(self):
-        """True once STOP_AFTER_QUADRANT quadrants are counted AND the lap timer
-        has run out - i.e. the car has driven on past the last counted line."""
+    def ready_to_finish(self, coast_s=None):
+        """True once STOP_AFTER_QUADRANT quadrants are counted AND the car has
+        driven on for `coast_s` seconds past that last corner.
+
+        The coast is a SEPARATE number from the lap debounce, even though it
+        defaulted to it before. They mean different things - one stops a line
+        being counted twice, the other decides where on the track the car comes
+        to rest - and tying them together meant you could not change where it
+        stopped without also changing how corners were counted.
+        """
         if self.quadrant < STOP_AFTER_QUADRANT:
             return False
-        return (time.monotonic() - self._last_count_t) >= LAP_COUNT_LOCKOUT_S
+        wait = LAP_COUNT_LOCKOUT_S if coast_s is None else coast_s
+        return (time.monotonic() - self._last_count_t) >= wait
 
     def stalled(self):
         """True if no quadrant has been counted for suspiciously long."""
