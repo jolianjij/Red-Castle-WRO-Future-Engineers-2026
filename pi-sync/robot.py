@@ -334,64 +334,6 @@ def line_counts(hsv):
 View = collections.namedtuple("View", "proc hsv left right front blue orange")
 
 
-def color_count(hsv, name, region=None, as_fraction=False, clean=True):
-    """How many pixels in this image match a tuned colour.
-
-    The one general-purpose colour question, for whatever the surprise
-    challenge turns out to be. Everything else in this file is a special case
-    of it.
-
-        R.color_count(view.hsv, "red")            -> pixels, whole image
-        R.color_count(view.hsv, "red", "left")    -> pixels, left half
-        R.color_count(view.hsv, "red", "bottom")  -> pixels, bottom third
-        R.color_count(view.hsv, "red", as_fraction=True)   -> 0.0 .. 1.0
-
-    `region` is a name - "left", "right", "top", "bottom", "centre" - or a
-    tuple (row0, row1, col0, col1) of FRACTIONS, so (0.5, 1.0, 0.0, 0.5) is
-    the bottom-left quarter. Fractions rather than pixels, so the same call
-    keeps working if the frame size ever changes.
-
-    ALWAYS PREFER as_fraction WHEN COMPARING two regions or two frames: a raw
-    count depends on the region's size, and comparing counts from differently
-    sized regions is the kind of mistake that looks fine until it does not.
-    """
-    h, w = hsv.shape[:2]
-    named = {"left":   (0.0, 1.0, 0.0, 0.5),
-             "right":  (0.0, 1.0, 0.5, 1.0),
-             "top":    (0.0, 0.5, 0.0, 1.0),
-             "bottom": (0.667, 1.0, 0.0, 1.0),
-             "centre": (0.35, 0.65, 0.35, 0.65),
-             "center": (0.35, 0.65, 0.35, 0.65)}
-    if region is None:
-        box = hsv
-    else:
-        r0, r1, c0, c1 = named[region] if isinstance(region, str) else region
-        box = hsv[int(h*r0):int(h*r1), int(w*c0):int(w*c1)]
-    if box.size == 0:
-        return 0.0 if as_fraction else 0
-    n = int(np.count_nonzero(mask(box, name, clean=clean)))
-    return n / float(box.shape[0] * box.shape[1]) if as_fraction else n
-
-
-def color_blobs(hsv, name, min_area=1, tall_only=False):
-    """Separate objects of a colour, biggest first.
-
-    Each entry is (area, cx, cy, x, y, w, h). `tall_only` keeps just the ones
-    taller than they are wide, which is what distinguishes a standing sign
-    from a line, a marking or a patch of floor.
-    """
-    m = mask(hsv, name)
-    n, lab, st, cent = cv2.connectedComponentsWithStats(m)
-    out = []
-    for i in range(1, n):
-        x, y, w, h, a = st[i]
-        if a < min_area or (tall_only and h <= w):
-            continue
-        out.append((int(a), float(cent[i][0]), float(cent[i][1]),
-                    int(x), int(y), int(w), int(h)))
-    return sorted(out, reverse=True)
-
-
 def park_readings(hsv):
     """How boxed-in each side is, for the parking-lot exit.
 
@@ -442,7 +384,6 @@ class LapTracker:
 
     def __init__(self):
         self.direction = FORCE_DIRECTION   # 0 = auto-detect, else forced in config
-        self.stop_quadrant = None          # set by the challenge; None = config
         self.quadrant = 0
         self.cycle = 0
         self.in_corner = False
@@ -458,13 +399,6 @@ class LapTracker:
         self._orange_det = False
         self._blue_next_t = 0.0    # wall-clock lockout, NOT cycles
         self._orange_next_t = 0.0
-        # A line sitting in view at the START must not count. Each colour has to
-        # be seen ABSENT once before it may be read, so driving off a start-line
-        # marking cannot masquerade as crossing it.
-        self._blue_was_clear = False
-        self._orange_was_clear = False
-        self.blue_peak = 0.0       # strongest confidence during this presence
-        self.orange_peak = 0.0
         # ---- SENSOR FUSION bookkeeping (visible in the log) ----
         self.direction_source = "none"     # what locked the direction
         self.direction_confirmed = False   # geometry AND lines agreed
@@ -481,59 +415,37 @@ class LapTracker:
         """Turn a noisy colour fraction into ONE reading per physical crossing.
 
         state 0 = absent, 1 = present, 2 = falling edge (the crossing is over).
-
-        TWO GUARDS, both learned the hard way:
-
-        1. THE LOCKOUT, in seconds. A mask flickering above and below threshold
-           would otherwise report the same physical line many times - measured
-           36 "crossings" of one line in a 45 s run when this was 10 frames.
-
-        2. A COLOUR MUST BE SEEN ABSENT BEFORE IT CAN BE READ AT ALL. If the car
-           is parked on or beside a line, that colour is present from frame one;
-           driving away from it then looks exactly like a falling edge, and the
-           run begins with a phantom crossing. Measured: a CW run locked CCW at
-           t=0.000s from a blue line merely sitting in view at the start, then
-           turned LEFT at every corner for the rest of the run.
-
-        The peak confidence during each presence is kept, so the direction
-        decision can use how strong the line actually was at its best rather
-        than whatever it happened to be in the frame it faded out.
+        After a falling edge the colour is LOCKED OUT for LINE_LOCKOUT_S seconds,
+        so a mask that flickers above/below threshold can only ever be read once
+        per crossing. The lockout is in SECONDS so it does not change with frame
+        rate.
         """
         now = time.monotonic()
 
         # ---- blue ----  (its OWN, higher, threshold - blue over-triggers)
         if blue_frac > LINE_FRACTION_BLUE:
             self.blue_state = 1
-            self.blue_peak = max(self.blue_peak, blue_frac / LINE_FRACTION_BLUE)
-            if now >= self._blue_next_t and self._blue_was_clear:
+            if now >= self._blue_next_t:      # not locked out -> arm it
                 self._blue_det = True
         else:
-            self._blue_was_clear = True       # it has now been seen absent
             self.blue_state = 0
             if self._blue_det:                # armed and now gone = one crossing
                 self.blue_state = 2
                 self._blue_next_t = now + LINE_LOCKOUT_S
                 self.blue_reads += 1
-            else:
-                self.blue_peak = 0.0
             self._blue_det = False
 
         # ---- orange ----  (its OWN, lower, threshold - orange is faint)
         if orange_frac > LINE_FRACTION_ORANGE:
             self.orange_state = 1
-            self.orange_peak = max(self.orange_peak,
-                                   orange_frac / LINE_FRACTION_ORANGE)
-            if now >= self._orange_next_t and self._orange_was_clear:
+            if now >= self._orange_next_t:
                 self._orange_det = True
         else:
-            self._orange_was_clear = True
             self.orange_state = 0
             if self._orange_det:
                 self.orange_state = 2
                 self._orange_next_t = now + LINE_LOCKOUT_S
                 self.orange_reads += 1
-            else:
-                self.orange_peak = 0.0
             self._orange_det = False
 
     def update(self, blue_frac, orange_frac, left=0.0, right=0.0, front=None):
@@ -558,40 +470,40 @@ class LapTracker:
         now = time.monotonic()
 
         # ---------------- PHASE 1: fix the direction, once ----------------
-        # ON A CROSSING, NOT ON A SIGHTING. Reading the instantaneous fraction
-        # meant a line merely IN VIEW at the start line could lock the direction
-        # before the car had moved - and it did: a CW run locked CCW at t=0.000s
-        # and turned left at every corner. Lap counting always used the falling
-        # edge; the direction decision now uses the same evidence.
         if self.direction == 0:
-            crossed_b = (self.blue_state == 2)
-            crossed_o = (self.orange_state == 2)
-            if crossed_b or crossed_o:
-                # confidence at the line's STRONGEST, each against its own bar
-                o_conf = self.orange_peak if crossed_o else 0.0
-                b_conf = self.blue_peak if crossed_b else 0.0
-                win, lose = max(o_conf, b_conf), min(o_conf, b_conf)
-                bigger = 1 if o_conf > b_conf else -1           # +1 CW, -1 CCW
+            # CONFIDENCE, not raw pixels: each colour is scored against ITS OWN
+            # threshold, so "faint orange that cleared its bar" can beat "lots of
+            # blue that barely cleared its higher bar". Comparing raw fractions
+            # is what let stray blue call a CW run CCW.
+            o_conf = orange_frac / LINE_FRACTION_ORANGE
+            b_conf = blue_frac / LINE_FRACTION_BLUE
+            win, lose = max(o_conf, b_conf), min(o_conf, b_conf)
+            bigger = 1 if o_conf > b_conf else -1                   # +1 CW, -1 CCW
+            # both lines convincing at once = ambiguous. Wait for a clearer frame
+            # rather than lock a direction that can never be undone.
+            ambiguous = (lose > 0.0 and win < lose * LINE_DIR_MIN_RATIO)
+            if win > 1.0:
                 self.line_hint = bigger
-                ambiguous = (lose > 0.0 and win < lose * LINE_DIR_MIN_RATIO)
-                if ambiguous:
-                    print(f"[lap] direction AMBIGUOUS (orange {o_conf:.2f}x vs "
-                          f"blue {b_conf:.2f}x of their own thresholds) - waiting")
-                else:
-                    if abs(left - right) >= GEOM_DIR_MIN_DIFF:
-                        self.geom_hint = -1 if left < right else 1
-                    self._lock_direction(
-                        bigger, f"crossing a {'orange' if bigger > 0 else 'blue'} "
-                                f"line at {win:.2f}x its threshold")
-                    if self.geom_hint:
-                        if self.geom_hint == self.direction:
-                            self.direction_confirmed = True
-                            print("[lap] direction CONFIRMED by wall geometry")
-                        else:
-                            self.disagreements += 1
-                            print("[lap] NOTE: geometry suggested the opposite; "
-                                  "keeping the line decision")
-                    self._last_count_t = now
+            if win > 1.0 and ambiguous:
+                print(f"[lap] direction AMBIGUOUS (orange {o_conf:.2f}x vs "
+                      f"blue {b_conf:.2f}x of their own thresholds) - waiting")
+            elif win > 1.0:
+                # condition 2 - wall geometry, only when one side is clearly open
+                if abs(left - right) >= GEOM_DIR_MIN_DIFF:
+                    self.geom_hint = -1 if left < right else 1
+                self._lock_direction(bigger,
+                                     f"{'orange' if bigger > 0 else 'blue'} line at "
+                                     f"{win:.2f}x its threshold")
+                if self.geom_hint:
+                    if self.geom_hint == self.direction:
+                        self.direction_confirmed = True
+                        print("[lap] direction CONFIRMED by wall geometry")
+                    else:
+                        self.disagreements += 1
+                        print("[lap] NOTE: geometry suggested the opposite; "
+                              "keeping the line decision")
+                # the lap timer starts running from the moment direction is fixed
+                self._last_count_t = now
 
         # ---------------- corner detection for STEERING (geometry) ----------
         if front is not None:
@@ -661,8 +573,7 @@ class LapTracker:
         to rest - and tying them together meant you could not change where it
         stopped without also changing how corners were counted.
         """
-        target = STOP_AFTER_QUADRANT if self.stop_quadrant is None             else self.stop_quadrant
-        if self.quadrant < target:
+        if self.quadrant < STOP_AFTER_QUADRANT:
             return False
         wait = LAP_COUNT_LOCKOUT_S if coast_s is None else coast_s
         return (time.monotonic() - self._last_count_t) >= wait

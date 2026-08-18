@@ -77,68 +77,33 @@ def view(left=0.01, right=0.01, front=0.05, blue=0.0, orange=0.0):
 
 
 # ==========================================================================
-section("direction locks on a CROSSING, not a sighting")
+section("per-colour line thresholds")
 print(f"  orange bar {R.LINE_FRACTION_ORANGE}   blue bar {R.LINE_FRACTION_BLUE}")
 
-
-def cross(t, blue=0.0, orange=0.0, left=0.05, right=0.05, front=0.10, n=3):
-    """Drive a line past the tracker: present for n frames, then gone."""
-    for _ in range(n):
-        t.update(blue_frac=blue, orange_frac=orange, left=left, right=right, front=front)
-    t.update(blue_frac=0.0, orange_frac=0.0, left=left, right=right, front=front)
-
-
-# THE BUG THIS FIXES: a CW run locked CCW at t=0.000s, from a blue line merely
-# sitting in view at the start line, and then turned LEFT at every corner.
-OVER_B = R.LINE_FRACTION_BLUE * 3.0       # comfortably over blue's own bar
-OVER_O = R.LINE_FRACTION_ORANGE * 3.0     # ...and orange's
-UNDER_B = R.LINE_FRACTION_BLUE * 0.8      # comfortably under
-UNDER_O = R.LINE_FRACTION_ORANGE * 0.8
+# THE BUG THIS FIXES: a real orange crossing with background blue bleeding in.
+# Raw pixels say blue wins (0.030 > 0.025) -> the old code locked CCW on a CW
+# run. By confidence, orange is 2.08x its bar and blue only 0.86x of its own.
+t = R.LapTracker()
+t.direction = 0
+t.update(blue_frac=0.030, orange_frac=0.025, left=0.10, right=0.05, front=0.15)
+check("orange crossing + blue bleed -> CW", t.direction, 1)
 
 t = R.LapTracker()
 t.direction = 0
-for _ in range(30):                       # parked ON a blue line, engine running
-    t.update(blue_frac=OVER_B, orange_frac=0.0, left=0.05, right=0.05, front=0.10)
-check("a line in view at the start does NOT lock a direction", t.direction, 0)
-# ...and driving off it must not count as crossing it either
-t.update(blue_frac=0.0, orange_frac=0.0, left=0.05, right=0.05, front=0.10)
-check("...nor does driving away from it", t.direction, 0)
-# a LATER, genuine orange crossing is what decides
-cross(t, orange=OVER_O)
-check("a genuine crossing after that -> CW", t.direction, 1)
-
-# a clean blue crossing decides CCW
-t = R.LapTracker(); t.direction = 0
-t.update(blue_frac=0.0, orange_frac=0.0, left=0.05, right=0.05, front=0.10)
-cross(t, blue=OVER_B)
+t.update(blue_frac=0.090, orange_frac=0.002, left=0.05, right=0.10, front=0.15)
 check("clean blue crossing -> CCW", t.direction, -1)
 
-# CONFIDENCE, not raw pixels: blue 0.030 outnumbers orange 0.025 but is only
-# 0.86x its own bar, while orange is 2.08x of its.
-t = R.LapTracker(); t.direction = 0
-t.update(blue_frac=0.0, orange_frac=0.0, left=0.10, right=0.05, front=0.15)
-cross(t, blue=R.LINE_FRACTION_BLUE*0.86, orange=R.LINE_FRACTION_ORANGE*2.08, left=0.10)
-check("orange crossing + blue bleed -> CW", t.direction, 1)
-
-# neither over its own bar = nothing happens
-t = R.LapTracker(); t.direction = 0
-t.update(blue_frac=0.0, orange_frac=0.0)
-cross(t, blue=UNDER_B, orange=UNDER_O)
+t = R.LapTracker()
+t.direction = 0
+t.update(blue_frac=0.030, orange_frac=0.008, left=0.05, right=0.05, front=0.10)
 check("both under their own bars -> undecided", t.direction, 0)
 
-# both convincing at once = ambiguous, wait for a clearer one
-t = R.LapTracker(); t.direction = 0
-t.update(blue_frac=0.0, orange_frac=0.0)
-cross(t, blue=R.LINE_FRACTION_BLUE*1.14, orange=R.LINE_FRACTION_ORANGE*1.17)
+t = R.LapTracker()
+t.direction = 0
+t.update(blue_frac=0.040, orange_frac=0.014, left=0.05, right=0.05, front=0.10)
 check("both convincing -> stays undecided", t.direction, 0)
-# the ambiguous crossing consumed the lockout - that is correct, it WAS a
-# crossing. Skip past it rather than pretend otherwise.
-_lock = R.LINE_LOCKOUT_S
-R.LINE_LOCKOUT_S = 0.0
-t._blue_next_t = t._orange_next_t = 0.0
-cross(t, orange=OVER_O, left=0.10)
-R.LINE_LOCKOUT_S = _lock
-check("...then a clean orange crossing -> CW", t.direction, 1)
+t.update(blue_frac=0.001, orange_frac=0.030, left=0.10, right=0.05, front=0.10)
+check("...then a clean orange frame -> CW", t.direction, 1)
 
 # ==========================================================================
 section("wall emergency")
@@ -517,67 +482,6 @@ d = OBS.decide(T, view(left=R.WALL_EMERGENCY * 0.95, right=0.02),
                ("green", 100.0, 80.0, 900, None), hold0(), R.CornerKick(), outer, 1)
 check("a green sign no longer drives the car into the left wall",
       abs(d.steer) < abs(free), True)
-
-# ==========================================================================
-
-# ==========================================================================
-section("color_count - the general tool for the surprise challenge")
-_img = np.zeros((R.PROC_H, R.PROC_W, 3), np.uint8)
-_lo_h, _hi_h, _lo_s, _, _lo_v, _ = R.COLORS["green"]
-_img[:, :R.PROC_W // 2] = ((_lo_h + _hi_h) // 2,
-                           min(255, _lo_s + 40), min(255, _lo_v + 60))
-check("counts the whole image",
-      R.color_count(_img, "green") > 0, True)
-check("left half has it", R.color_count(_img, "green", "left") > 0, True)
-check("right half does not", R.color_count(_img, "green", "right"), 0)
-check("as a fraction, the left half is full",
-      round(R.color_count(_img, "green", "left", as_fraction=True)), 1)
-check("a fraction is never above 1",
-      R.color_count(_img, "green", as_fraction=True) <= 1.0, True)
-check("an explicit box works",
-      R.color_count(_img, "green", (0.0, 1.0, 0.0, 0.25)) > 0, True)
-check("a colour that is absent counts zero", R.color_count(_img, "red"), 0)
-_b = R.color_blobs(_img, "green", min_area=50)
-check("color_blobs finds the one object", len(_b) >= 1, True)
-check("...biggest first", _b == sorted(_b, reverse=True), True)
-check("tall_only rejects a wide blob",
-      len(R.color_blobs(_img, "green", min_area=50, tall_only=True)), 0)
-
-# ==========================================================================
-section("per-colour sign parameters")
-check("green and red have separate entries",
-      sorted(OBS.SIGN.keys()), ["green", "red"])
-for _k in ("kp", "target_x", "min_area", "min_aspect"):
-    check(f"both define {_k}",
-          _k in OBS.SIGN["green"] and _k in OBS.SIGN["red"], True)
-check("green is pushed RIGHT of centre", OBS.SIGN["green"]["target_x"] > 160, True)
-check("red is pushed LEFT of centre", OBS.SIGN["red"]["target_x"] < 160, True)
-check("green error is negative (steer left)",
-      OBS.sign_error("green", 100.0, 80.0) < 0, True)
-check("red error is positive (steer right)",
-      OBS.sign_error("red", 220.0, 80.0) > 0, True)
-# a sign under ITS OWN min_area must be ignored, independently of the other
-_ga = OBS.SIGN["green"]["min_area"]
-check("green's own min_area is what gates green", isinstance(_ga, (int, float)), True)
-
-# ==========================================================================
-section("stop quadrant accounts for the parking exit")
-check("STOP_QUADRANT is 11 + 1 when parking sets the direction",
-      OBS.STOP_QUADRANT,
-      OBS.STOP_AFTER_QUADRANT + (1 if OBS.PARK_START else 0))
-_lt = R.LapTracker()
-_lt.stop_quadrant = 12
-_lt.set_direction(1, "test")
-_lt.quadrant = 11
-check("11 quadrants is not enough when 12 are asked for",
-      _lt.ready_to_finish(0.0), False)
-_lt.quadrant = 12
-check("12 is", _lt.ready_to_finish(0.0), True)
-_lt2 = R.LapTracker()
-_lt2.set_direction(1, "test")
-_lt2.quadrant = 99
-check("a tracker with no override still uses the config value",
-      _lt2.ready_to_finish(0.0), True)
 
 # ==========================================================================
 print("\n" + "=" * 62)

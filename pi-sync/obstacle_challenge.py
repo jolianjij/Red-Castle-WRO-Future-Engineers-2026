@@ -91,33 +91,14 @@ LANE_DISTANCE_CM = 40.0    # hold this far from the OUTER wall between signs
 LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 
 # --- how hard the car reacts to a sign ---
-# GREEN AND RED ARE TUNED SEPARATELY. They are not symmetric in practice: on a
-# real run green was detected 738 frames with a MEDIAN AREA of 186 px while red
-# was detected 351 frames at a median of 718 - green arrives as smaller, more
-# broken-up blobs, so the same numbers do not suit both.
-#   *_KP        deg of steering per unit of error. Higher = reacts harder.
-#   *_TARGET_X  the column the sign is pushed toward. Centre is 160, so
-#               GREEN > 160 (drive it right, we pass on its left) and
-#               RED   < 160 (drive it left,  we pass on its right).
-#               FURTHER from 160 = a wider berth around the sign.
-#   *_MIN_AREA  smaller than this and it is ignored. Raise it if the car
-#               chases distant specks; lower it if it notices signs too late.
-#   *_MIN_ASPECT height/width. A standing sign is taller than it is wide, and
-#               this is what rejects lines, markings and patches of floor.
-#               1.0 = "taller than wide". Raise toward 1.5 to be stricter.
-GREEN_KP         = 0.3
-GREEN_TARGET_X   = 220.0
-GREEN_MIN_AREA   = 70
-GREEN_MIN_ASPECT = 1.0
-
-RED_KP           = 0.3
-RED_TARGET_X     = 120.0
-RED_MIN_AREA     = 70
-RED_MIN_ASPECT   = 1.0
-
+PILLAR_KP        = 0.3     # deg per unit of error
+GREEN_TARGET_X   = 220.0   # column a GREEN sign is pushed toward (>160 = right)
+RED_TARGET_X     = 120.0   # column a RED sign is pushed toward  (<160 = left)
 Y_GAIN           = 2.0     # how much the target slides outward as a sign nears
 
-# --- what counts as a sign (shared) ---
+# --- what counts as a sign ---
+PILLAR_MIN_AREA  = 70      # min contour area (px) in the 320x160 buffer
+PILLAR_MIN_ASPECT= 1.0     # height/width must exceed this (signs are tall)
 SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
                            # keeping for this long - it would drag the car back
                            # across the pass it is halfway through
@@ -151,36 +132,12 @@ SAVE_EVERY       = 3       # while a sign is in view, save every Nth frame
 MAX_SAVES        = 120
 
 # --- run control ---
-STOP_ON_LAPS     = True    # True = stop by itself after the quadrants below.
-                           # False = run until the button is pressed.
-STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 plus the
-                           # coast below leaves the car resting in the start
-                           # section rather than halting on the line.
-STOP_EXTRA_S     = 3.0     # how long to keep driving past that last corner
+STOP_ON_LAPS     = False   # False = ignore the lap counter, run until stopped
 MAX_RUNTIME_S    = 300     # SAFETY net
 DEBUG_EVERY      = 15      # console status line every N frames (0 = silent)
-
-# WHEN THE PARKING EXIT DECIDES THE DIRECTION, ONE MORE QUADRANT IS NEEDED.
-# Normally the direction is learned by CROSSING the first corner line, and that
-# crossing is itself quadrant 1 - so the count and the distance travelled line
-# up. Starting from the parking lot, the direction is already known before the
-# car has crossed anything, so that first line is still ahead of it: without
-# this the car would stop one corner short of where it should.
-STOP_QUADRANT = STOP_AFTER_QUADRANT + (1 if PARK_START else 0)
-
 # ==========================================================================
 
 Y_SCALE = 120.0 / R.PROC_H   # map our 160-row frame onto the 120-row reference
-
-# Everything that differs between the two sign colours, in one place, so adding
-# a third colour for the surprise challenge is a new entry rather than a new
-# branch in every function.
-SIGN = {
-    "green": dict(kp=GREEN_KP, target_x=GREEN_TARGET_X,
-                  min_area=GREEN_MIN_AREA, min_aspect=GREEN_MIN_ASPECT),
-    "red":   dict(kp=RED_KP,   target_x=RED_TARGET_X,
-                  min_area=RED_MIN_AREA,   min_aspect=RED_MIN_ASPECT),
-}
 
 
 # ==========================================================================
@@ -199,15 +156,14 @@ def find_sign(hsv):
     """
     best = None
     for kind in ("red", "green"):
-        cfg = SIGN[kind]
         m = R.mask(hsv, kind)
         cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
             area = cv2.contourArea(c)
-            if area < cfg["min_area"] or (best and area <= best[3]):
+            if area < PILLAR_MIN_AREA or (best and area <= best[3]):
                 continue
             x, y, w, h = cv2.boundingRect(c)
-            if h < w * cfg["min_aspect"]:
+            if h < w * PILLAR_MIN_ASPECT:
                 continue
             mm = cv2.moments(c)
             if mm["m00"] == 0:
@@ -230,10 +186,9 @@ def sign_error(kind, cx, cy):
     car commits harder the closer it gets instead of clipping the corner of it.
     """
     y = cy * Y_SCALE
-    tx = SIGN[kind]["target_x"]
     if kind == "green":
-        return -((tx + y * Y_GAIN) - cx)
-    return cx - (tx - y * Y_GAIN)
+        return -((GREEN_TARGET_X + y * Y_GAIN) - cx)
+    return cx - (RED_TARGET_X - y * Y_GAIN)
 
 
 def limit_toward_wall(steer, left, right):
@@ -307,7 +262,7 @@ def decide(now, view, sign, hold, kick, outer, direction, park=None):
     # ---- 3. SIGN ----
     if sign is not None:
         kind, sx, sy, area, _ = sign
-        steer = sign_error(kind, sx, sy) * SIGN[kind]["kp"]
+        steer = sign_error(kind, sx, sy) * PILLAR_KP
         steer = limit_toward_wall(steer, view.left, view.right)
         hold["kind"], hold["t"], hold["steer"] = kind, now, steer
         return Decision(steer, "sign-" + kind, kind, sx, sy, area, None, None)
@@ -405,7 +360,6 @@ def main():
     laps = R.LapTracker()
     if FORCE_DIRECTION:
         laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
-    laps.stop_quadrant = STOP_QUADRANT
     outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
     kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
@@ -436,10 +390,8 @@ def main():
           if FORCE_DIRECTION else "  direction : auto from the corner lines")
     print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
           f"(density {LANE_TARGET:.4f})")
-    print(f"  green     : kp={GREEN_KP} ->x{GREEN_TARGET_X:.0f} "
-          f"area>{GREEN_MIN_AREA} aspect>{GREEN_MIN_ASPECT}")
-    print(f"  red       : kp={RED_KP} ->x{RED_TARGET_X:.0f} "
-          f"area>{RED_MIN_AREA} aspect>{RED_MIN_ASPECT}")
+    print(f"  sign      : KP={PILLAR_KP} green->x{GREEN_TARGET_X} "
+          f"red->x{RED_TARGET_X} min_area={PILLAR_MIN_AREA}")
     print(f"  parking   : {'ON' if PARK_START else 'OFF'} "
           f"{PARK_ANGLE:.0f}deg for {PARK_TIME_S:.1f}s @ {PARK_SPEED}%  "
           f"(more magenta LEFT -> out RIGHT -> CW)")
@@ -448,12 +400,8 @@ def main():
           f"(CW<-{KICK_SIGN_CW}, CCW<-{KICK_SIGN_CCW})")
     print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f} "
           f"blue>{R.LINE_FRACTION_BLUE:.3f}")
-    print(f"  speed     : {CRUISE}%")
-    print(f"  stop      : " + (
-        f"after quadrant {STOP_QUADRANT} + {STOP_EXTRA_S:.1f}s"
-        f"  ({STOP_AFTER_QUADRANT}"
-        + (" +1 because the parking exit sets the direction)" if PARK_START else ")")
-        if STOP_ON_LAPS else "button only"))
+    print(f"  speed     : {CRUISE}%   "
+          f"stop: {'lap counter' if STOP_ON_LAPS else 'button only'}")
     print(f"  log       : {logpath}")
 
     button.wait_for_start("Obstacle Challenge")
@@ -521,8 +469,8 @@ def main():
             if button.stop_pressed():
                 reason = "BUTTON pressed"
                 break
-            if STOP_ON_LAPS and laps.ready_to_finish(STOP_EXTRA_S):
-                reason = (f"{laps.quadrant} quadrants + {STOP_EXTRA_S:.1f}s coast")
+            if STOP_ON_LAPS and laps.ready_to_finish():
+                reason = f"{laps.quadrant} quadrants"
                 break
             if now - t0 > MAX_RUNTIME_S:
                 reason = "SAFETY timeout"
