@@ -1,281 +1,426 @@
 #!/usr/bin/env python3
 """
-open_challenge.py - WRO 2026 Future Engineers, OPEN CHALLENGE.
-Three laps of an empty track. No traffic signs.
+open_challenge.py - the team's PROVEN open-challenge program, ported to this car.
 
-=========================== HOW THIS FILE WORKS ===========================
-Every challenge program here has the SAME three parts, in the same order.
-Learn them once and you can write the surprise challenge yourself:
+This is "openchallenge final code.py" with its LOGIC AND STRUCTURE UNCHANGED.
+Same functions, same order, same control law, same constants. The only edits are
+the ones this car physically forces, and every one of them is marked
 
-    1. TUNABLES   the numbers you change.  Nothing else needs editing.
-    2. decide()   the brain: ONE frame in, one steering decision out.
-                  Pure logic - no camera, no motor - so it can be tested
-                  on a laptop with tools/test_logic.py.
-    3. main()     the loop: LOOK -> THINK -> ACT, over and over.
+    PORTED:
 
-To write a new challenge: copy this file, rewrite decide(), leave main()
-almost alone. See src/README.md.
-===========================================================================
+so you can find them all with a single search. Nothing else was touched, on
+purpose: this file is a tested win and the point of the port is to keep it that
+way.
 
-Run on the Pi:
-    cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
-Then PRESS THE BUTTON to start. Press it again to stop.
+Run:  cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
 """
-import collections
-import csv
-import os
+
+import cv2
+import sys
+import numpy as np
 import time
-
-import robot as R
-
-# ==========================================================================
-# 1. TUNABLES - everything you might want to change lives here
-# ==========================================================================
-
-# --- speed ---
-CRUISE           = 100     # base speed %. Falls automatically with steering,
-                           # so this is the straight-line figure.
-
-# --- direction ---
-FORCE_DIRECTION  = 0       # 0 = detect from the corner lines (normal).
-                           # +1 forces CW, -1 forces CCW. Only set this if the
-                           # judges tell you the run direction.
-
-# --- how far from the outer wall to drive ---
-LANE_DISTANCE_CM = 30.0    # hold this far from the OUTER wall on the straights
-# density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured on this car)
-LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
-
-# --- corners: WALL DENSITY decides when to turn ---
-# The corner LINES are used for COUNTING LAPS ONLY. They do not steer the car.
-# Why: the lines are a colour measurement, and a colour that drifts takes the
-# steering with it. Measured on this track, blue was over its threshold on 43%
-# of frames - it was matching the mat, not the line - so anything steering off
-# it was being told to corner in the middle of a straight. The wall ahead is a
-# geometric measurement: it cannot be fooled by a colour range being wrong.
-TURN_ON_FRONT    = 0.30    # front wall fill that STARTS a corner turn. Bigger
-                           # = turns later (closer to the wall). This is now the
-                           # ONLY thing that triggers a turn.
-TURN_OFF_FRONT   = 0.20    # ...and the fill it must drop below to END it. Kept
-                           # well under TURN_ON_FRONT so a noisy reading cannot
-                           # flicker the turn on and off.
-TURN_BLIND       = True    # turn even BEFORE the direction is known, toward
-                           # whichever side has more room. Without this the car
-                           # drives straight into the first corner while it
-                           # waits for a line it may never read - and with the
-                           # lines now only counting, it might wait a long time.
-TURN_MIN_GAP_S   = 1.5     # a corner cannot physically follow another sooner
-                           # than this, so ignore a re-trigger inside it
-
-# --- run control ---
-STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 + the coast
-                           # below leaves the car resting in the start section.
-STOP_EXTRA_S     = 2.5     # HOW LONG THE CAR KEEPS DRIVING after that last
-                           # corner is counted, before it stops. Raise it to
-                           # finish further round the section; lower it to stop
-                           # sooner. It used to be tied to the lap debounce
-                           # timer, which meant you could not change one without
-                           # changing the other.
-MAX_RUNTIME_S    = 150     # SAFETY net only, not a lap limit
-DEBUG_EVERY      = 15      # console status line every N frames (0 = silent)
-
-# --- decisive frames ---
-# Not every frame: the ones where the run was DECIDED and could have gone
-# wrong. They land in frames/ with a 00-WHAT-HAPPENED.txt index.
-SAVE_MOMENTS     = True
-MAX_MOMENT_SAVES = 200
-
-# Corner lines live in config.py because BOTH challenges need the same values:
-#     R.LINE_FRACTION_ORANGE   lower bar - orange is faint on this camera
-#     R.LINE_FRACTION_BLUE     higher bar - blue over-triggers on background
-#     R.LINE_DIR_MIN_RATIO     how decisively one must beat the other
-# ==========================================================================
-
-R.STOP_AFTER_QUADRANT = STOP_AFTER_QUADRANT
-
+from picamera2 import Picamera2, Preview
+from libcamera import Transform            # PORTED: our camera is mounted upside down
+import RPi.GPIO as GPIO
+# PORTED: no NeoPixel on this car. `import board` and `import neopixel` are gone
+#         and the LED functions below are no-ops, so every call site still works.
 
 # ==========================================================================
-# 2. THE BRAIN - one frame in, one decision out
+# TUNABLES - the only numbers you should need to change
 # ==========================================================================
-Decision = collections.namedtuple("Decision", "steer mode")
 
+# PORTED: our pin map (was SERVO 23, MOTOR 27/22, BUTTON 9)
+SERVO_PIN = 13
+MOTOR_IN1 = 24          # PWM here = FORWARD
+MOTOR_IN2 = 23
+BUTTON_PIN = 19
+SERVO_TRIM = -9.0       # PORTED: their `angle += 0`; ours is measured at -9
 
-def decide(view, laps, outer, turner):
-    """Return (steer_deg, mode) for this frame. +steer = right.
+speed = 100
 
-    PRIORITY LADDER - highest first, exactly one branch answers:
+# PORTED: our camera is fixed and mounted UPSIDE DOWN, so it is flipped in
+# hardware and its exposure/white balance are LOCKED. Auto anything makes the
+# colour thresholds below drift under the car while it drives.
+CAM_FLIP_180 = True
+CAM_EXPOSURE_US = 12000
+CAM_GAIN = 8.0
+CAM_COLOUR_GAINS = (1.329, 1.446)
+CAM_SATURATION = 1.3
+CAM_CONTRAST = 1.1
 
-        1. EMERGENCY  a wall is too close -> escape. Outranks everything.
-        2. TURN       a wall AHEAD means a corner. Geometric, so it needs no
-                      colour tuning and cannot be faked by lighting. The lines
-                      are for COUNTING laps only.
-        3. LANE       normal driving: PD on the distance to the OUTER wall.
+# PORTED: their frame builder rotated the crop 180 degrees in software, because
+# their camera was not flipped in hardware. OURS IS, so rotating again would
+# swap left and right and the car would steer into the wall it is avoiding.
+# If it ever does exactly that, this is the one line to flip.
+ROTATE_180 = False
 
-    Why the outer wall and not the middle: in this challenge the inner walls
-    move every round, so the corridor width changes. Centring chases a moving
-    reference; the outer wall is the one thing that stays put.
+# --------------------------------------------------
+# Map lines variables
+line_cycle_delay = 15
 
-    THE CORNER LINES DO NOT APPEAR HERE AT ALL. They count laps and nothing
-    else. Turning is decided by the wall ahead, which is a geometric fact rather
-    than a colour measurement, so a drifting colour range can no longer steer
-    the car.
-    """
-    # ---- 1. EMERGENCY ----
-    escape = R.wall_emergency(view.left, view.right, outer, laps.direction)
-    if escape is not None:
-        return Decision(escape, "emergency")
+# PORTED: line thresholds are PIXEL COUNTS out of 38400 and belong to the
+# camera that measured them. Re-measure with tools/line_check.py.
+blue_line_threshould = 1100
+orange_line_threshould = 1300
 
-    # ---- 2. TURN ----
-    # Fired by the WALL AHEAD, never by a line. The line count and the steering
-    # are now completely independent, so a bad colour range can cost a lap
-    # count but can no longer make the car turn in the wrong place.
-    turner.update(view.front)
-    if turner.active:
-        return Decision(turner.steer(), "turn")
-    if view.front > TURN_ON_FRONT:
-        if laps.direction != 0:
-            turner.trigger(laps.direction)
-            return Decision(turner.steer(), "turn")
-        if TURN_BLIND:
-            # No direction yet. A wall ahead still has to be dealt with, and
-            # driving into it while waiting for a line is the worse option, so
-            # turn toward whichever side has more ROOM.
-            return Decision(R.STEER_MAX * (1 if view.left > view.right else -1),
-                            "turn-blind")
+# PORTED: their colour tests, with OUR measured saturation floors.
+# Theirs used sat > 60 for blue. On our camera the MAT reads S~68 and the blue
+# LINE reads S~238, so a floor of 60 matched the floor itself - and the mat is
+# five times bigger than the line, so the count measured the mat.
+BLUE_SAT_MIN, BLUE_VAL_MIN, BLUE_VAL_MAX = 140, 70, 200
+BLUE_HUE_MIN, BLUE_HUE_MAX = 90, 135
+ORANGE_SAT_MIN, ORANGE_VAL_MIN, ORANGE_VAL_MAX = 60, 125, 240
+ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
+WALL_VAL_MAX = 70            # a pixel darker than this is wall
 
-    # ---- 3. LANE ----
-    return Decision(R.apply_bias(outer.steer(view.left, view.right, laps.direction)),
-                    "lane")
-
-
+# --------------------------------------------------
+# P controller variables
+kp = 0.25
 # ==========================================================================
-# 3. THE LOOP
-# ==========================================================================
+
+OUTPUT = GPIO.OUT
+INPUT = GPIO.IN
+# --------------------------------------------------
+
+STOP = False
+mission_end_cycle = int(1e9)
+mission_end_not_activated = True
+
+cycle_count = 0
+direction = 0
+quadrant_count = 0
+
+hue = 0
+
+# --------------------------------------------------
+# Image variables
+
+raw_frame = np.empty((480, 640, 3), dtype=np.uint8)
+frame = np.empty((120, 320, 3), dtype=np.uint8)
+hsv = np.empty((120, 320, 3), dtype=np.uint8)
+
+# --------------------------------------------------
+# Wall variables
+
+left_wall = 0.0
+right_wall = 0.0
+
+# --------------------------------------------------
+
+blue_line_pixel_count = 0
+blue_line_next_allowed_cycle = 0
+
+orange_line_pixel_count = 0
+orange_line_next_allowed_cycle = 0
+
+blue_line_detected = False
+orange_line_detected = False
+
+blue_line_state = 0
+orange_line_state = 0
+
+Err = 0
+dir = 0.0
+
+
+# --------------------------------------------------
+def is_button_down():
+    # PORTED: our button is wired to GND with the internal pull-up, so PRESSED
+    # reads LOW. Theirs read HIGH. Same function, opposite sense.
+    return GPIO.input(BUTTON_PIN) == 0
+
+
+def LED_color(r, g, b):
+    # PORTED: no NeoPixel on this car. Kept so every call site is unchanged.
+    pass
+
+
+def LED_hsv(hue_val, sat, val):
+    # PORTED: no NeoPixel on this car. Kept so every call site is unchanged.
+    pass
+
+
+def servo(angle):
+    """Adjust and set the servo angle using RPi.GPIO."""
+
+    global SERVO_PIN
+
+    angle += 90
+    deviation = 45
+    if angle < 90 - deviation:
+        angle = 90 - deviation
+    if angle > 90 + deviation:
+        angle = 90 + deviation
+    angle += SERVO_TRIM          # PORTED: was `angle += 0`
+
+    min_duty = 2.5  # Duty cycle for 0 degrees
+    max_duty = 12.5 # Duty cycle for 180 degrees
+
+    duty_range = max_duty - min_duty
+    duty = min_duty + (angle / 180.0) * duty_range
+
+    servo_pwm.ChangeDutyCycle(duty)
+    time.sleep(0.1)
+    servo_pwm.ChangeDutyCycle(0)
+
+
+def motor(speed):  # Speed is -1 to 1
+    global MOTOR_IN1, MOTOR_IN2
+
+    speed = max(-100, min(100, speed))
+    speed_pwm = abs(speed)  # Calculate absolute speed for PWM
+
+    if speed > 0:  # Forward
+
+        motor1_pwm.ChangeDutyCycle(speed_pwm)
+        motor2_pwm.ChangeDutyCycle(0)
+    elif speed < 0:  # Reverse
+        motor1_pwm.ChangeDutyCycle(0)
+        motor2_pwm.ChangeDutyCycle(speed_pwm)
+    else:  # Stop
+        motor1_pwm.ChangeDutyCycle(0)
+        motor2_pwm.ChangeDutyCycle(0)
+
+
+def Setup_GPIO():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)          # PORTED: quiet the re-run warning
+
+    GPIO.setup(SERVO_PIN, OUTPUT)
+    GPIO.setup(MOTOR_IN1, OUTPUT)
+    GPIO.setup(MOTOR_IN2, OUTPUT)
+    # PORTED: GPIO.setup(10, OUTPUT) was the NeoPixel data pin - not on this car
+    # PORTED: the button needs the internal pull-up, being wired to GND
+    GPIO.setup(BUTTON_PIN, INPUT, pull_up_down=GPIO.PUD_UP)
+    global servo_pwm, motor1_pwm, motor2_pwm
+    servo_pwm = GPIO.PWM(SERVO_PIN, 50)
+    servo_pwm.start(0)
+
+    motor1_pwm = GPIO.PWM(MOTOR_IN1, 1000)
+    motor2_pwm = GPIO.PWM(MOTOR_IN2, 1000)
+    motor1_pwm.start(0)
+    motor2_pwm.start(0)
+
+    # PORTED: NeoPixel initialisation removed
+
+
+def Setup_Camera():
+    global picam2
+    picam2 = Picamera2()
+    # PORTED: flipped in hardware, and exposure/white balance LOCKED. Their
+    # camera needed neither; ours is mounted upside down and drifts if left
+    # on auto, which moves every colour threshold in this file.
+    tf = Transform(hflip=1, vflip=1) if CAM_FLIP_180 else Transform()
+    config = picam2.create_preview_configuration(
+        main={"format": 'RGB888', "size": (640, 480)}, transform=tf)
+    picam2.configure(config)
+    picam2.start()
+    picam2.set_controls({
+        "AeEnable": False, "ExposureTime": CAM_EXPOSURE_US,
+        "AnalogueGain": CAM_GAIN,
+        "AwbEnable": False, "ColourGains": CAM_COLOUR_GAINS,
+        "Saturation": CAM_SATURATION, "Contrast": CAM_CONTRAST,
+    })
+    time.sleep(1)
+    return picam2
+
+
+def capture_array(picam2):
+    raw_frame_arr = picam2.capture_array()
+    return raw_frame_arr
+
+
+def process_frame(raw_frame_arr, frame_arr):
+    # PORTED: identical result to their per-pixel loop, done with numpy slicing.
+    # Theirs walked 38400 pixels in Python and took roughly a quarter of a
+    # second per frame; this is the same crop, the same every-other-pixel
+    # sampling and the same orientation, in about a millisecond.
+    #   bottom half   rows 240..480 step 2   -> 120 rows
+    #   full width    cols   0..640 step 2   -> 320 cols
+    crop = raw_frame_arr[240:480:2, 0:640:2]
+    if ROTATE_180:
+        crop = crop[::-1, ::-1]
+    frame_arr[:] = crop
+
+
+def process_hsv(hsv_arr):
+    # PORTED: identical result to their per-pixel loop, done with numpy.
+    global blue_line_pixel_count, orange_line_pixel_count, left_wall, right_wall
+
+    h = hsv_arr[:, :, 0].astype(np.int16)
+    s = hsv_arr[:, :, 1].astype(np.int16)
+    v = hsv_arr[:, :, 2].astype(np.int16)
+
+    blue_line_pixel_count = int(np.count_nonzero(
+        (s > BLUE_SAT_MIN) & (v > BLUE_VAL_MIN) & (v < BLUE_VAL_MAX) &
+        (h > BLUE_HUE_MIN) & (h < BLUE_HUE_MAX)))
+
+    orange_line_pixel_count = int(np.count_nonzero(
+        (s > ORANGE_SAT_MIN) & (v > ORANGE_VAL_MIN) & (v < ORANGE_VAL_MAX) &
+        (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX)))
+
+    dark = v < WALL_VAL_MAX
+    left_wall = float(np.count_nonzero(dark[:, :160]))
+    right_wall = float(np.count_nonzero(dark[:, 160:]))
+
+    left_wall /= (12800)                       #answer for 160 * 80
+    right_wall /= (12800)                      #answer for 160 * 80
+
+
+def update_lines():
+    global blue_line_pixel_count, blue_line_threshould, blue_line_next_allowed_cycle, blue_line_detected, blue_line_state
+    global orange_line_pixel_count, orange_line_threshould, orange_line_next_allowed_cycle, orange_line_detected, orange_line_state
+    global cycle_count, line_cycle_delay
+
+    if blue_line_pixel_count > blue_line_threshould:
+        blue_line_state = 1
+        if cycle_count >= blue_line_next_allowed_cycle:
+            blue_line_detected = True
+    else:
+        blue_line_state = 0
+        if blue_line_detected:
+            blue_line_state = 2
+            blue_line_next_allowed_cycle = cycle_count + line_cycle_delay
+        blue_line_detected = False
+
+    if orange_line_pixel_count > orange_line_threshould:
+        orange_line_state = 1
+        if cycle_count >= orange_line_next_allowed_cycle:
+            orange_line_detected = True
+    else:
+        orange_line_state = 0
+        if orange_line_detected:
+            orange_line_state = 2
+            orange_line_next_allowed_cycle = cycle_count + line_cycle_delay
+        orange_line_detected = False
+
+
+def extra_imagery(hsv_arr):
+    # PORTED: same output, numpy instead of a per-pixel loop
+    walls = np.where(hsv_arr[:, :, 2] < WALL_VAL_MAX, 255, 0).astype(np.uint8)
+    cv2.imwrite("walls.png", walls)
+
+
+def cycle(picam2):
+    global cycle_count, dir, blue_line_state, orange_line_state, direction, quadrant_count
+    global mission_end_not_activated, mission_end_cycle, STOP, hue, left_wall, right_wall
+    global blue_line_pixel_count, orange_line_pixel_count, raw_frame, frame, hsv
+
+    cycle_count += 1
+
+    dir = 0.0
+
+    raw = capture_array(picam2)
+    raw_frame[:] = raw
+    frame = np.empty((120, 320, 3), dtype=np.uint8)
+    process_frame(raw_frame, frame)
+    hsv_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    process_hsv(hsv_mat)
+    update_lines()
+
+    if blue_line_state != 0 and direction == 0:
+        direction = -1
+    if orange_line_state != 0 and direction == 0:
+        direction = 1
+
+    if direction >= 0:
+        if orange_line_state == 2:
+            quadrant_count += 1
+    else:
+        if blue_line_state == 2:
+            quadrant_count += 1
+
+    color = (122, 0, 0)  # Default color
+    if blue_line_state != 0:
+        color = (0, 0, 255)  # Blue
+    if orange_line_state != 0:
+        color = (255, 122, 0)  # Orange
+    LED_color(*color)
+
+    if direction == 1:
+        dir = (left_wall - 0.3) * 75
+    elif direction == -1:
+        dir = (0.4 - right_wall) * 75
+    else:
+        if left_wall > 0.5:
+            dir = (left_wall - 0.5) * 75
+        if right_wall > 0.5:
+            dir = (0.5 - right_wall) * 75
+
+    if quadrant_count == 12 and mission_end_not_activated:
+        mission_end_not_activated = False
+        mission_end_cycle = cycle_count + 100
+
+    if quadrant_count == 12:
+        STOP = True
+    print(dir)
+    servo(dir)
+
+    # LED_rainbow(hue)
+
+
 def main():
-    R.setup_hardware()
-    R.servo(0)
-    button = R.Button()
-    cam = R.open_camera()
+    global STOP, cycle_count, raw_frame, frame, hsv, hue, picam2, motor1_pwm, motor2_pwm, servo_pwm
+    Setup_GPIO()
+    picam2 = Setup_Camera()
 
-    laps = R.LapTracker()
-    if FORCE_DIRECTION:
-        laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
-    outer = R.OuterWallFollower(target=LANE_TARGET)
-    turner = R.TurnSequencer(exit_front=TURN_OFF_FRONT,
-                             min_gap_s=TURN_MIN_GAP_S)
-    rec = R.FrameRecorder(enabled=SAVE_MOMENTS, max_saves=MAX_MOMENT_SAVES)
+    # LED_color(0, 0, 255)  # Initial blue
+    LED_hsv(0, 255, 255)
 
-    os.makedirs("logs", exist_ok=True)
-    logpath = time.strftime("logs/open_%Y%m%d_%H%M%S.csv")
-    logf = open(logpath, "w", newline="")
-    log = csv.writer(logf)
-    log.writerow(["t_ms", "frame", "dir", "quad", "mode",
-                  "left", "right", "front", "blue", "orange", "steer", "speed"])
+    # PORTED: wait for the button before anything moves. Their program started
+    # the motor immediately; the rules want the car still until it is pressed,
+    # and it is also the emergency stop below.
+    print("Open Challenge ready. PRESS THE BUTTON to start...")
+    while not is_button_down():
+        time.sleep(0.01)
+    while is_button_down():
+        time.sleep(0.01)
+    print("  GO")
 
-    print("OPEN CHALLENGE")
-    print(f"  direction : {'FORCED ' + ('CW' if FORCE_DIRECTION > 0 else 'CCW')}"
-          if FORCE_DIRECTION else "  direction : auto from the corner lines")
-    print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
-          f"(density {LANE_TARGET:.4f})")
-    print(f"  turns     : {'blind before direction known, ' if TURN_BLIND else ''}"
-          f"on front wall > {TURN_ON_FRONT}, ends below "
-          f"{TURN_OFF_FRONT}  (lines do NOT steer)")
-    print(f"  lines     : COUNTING ONLY.  orange>{R.LINE_FRACTION_ORANGE:.3f} "
-          f"blue>{R.LINE_FRACTION_BLUE:.3f} ratio>{R.LINE_DIR_MIN_RATIO:.2f}")
-    print(f"  speed     : {CRUISE}%   stop after quadrant "
-          f"{STOP_AFTER_QUADRANT} + {STOP_EXTRA_S:.1f}s")
-    print(f"  log       : {logpath}")
+    start = time.time()
+    button_sum = 0
+    cycle(picam2)
+    # LED_color(0, 255, 0)  # Green for start
+    LED_hsv(85, 255, 255)
 
-    button.wait_for_start("Open Challenge")
+    motor(speed)
+    stop_time = None
+    while not STOP:
+        cycle_start_time = time.time()
+        cycle(picam2)
+        cycle_duration = time.time() - cycle_start_time
+        print(f"Cycle {cycle_count}: {cycle_duration:.4f} seconds")
+        if STOP and stop_time is None:
+            stop_time =time.time()
+        if stop_time is not None and time.time()- stop_time >= 10:
+            break
+        if is_button_down():
+            button_sum += 1
+            break                # PORTED: the button is also the emergency stop
+        print(STOP)
+    motor(0)
+    servo(0)
 
-    t0 = time.time()
-    frame = 0
-    reason = "?"
-    mode = ""
-    R.motor(CRUISE)
-    try:
-        while True:
-            frame += 1
+    # LED_color(0, 0, 255)  # Back to blue
+    LED_hsv(0, 255, 255)
 
-            # ---------------- LOOK ----------------
-            view = R.look(cam)
-            before, had_dir = laps.quadrant, laps.direction
-            laps.update(view.blue, view.orange, view.left, view.right, view.front)
-            t = time.time() - t0
+    end = time.time()
+    duration = end - start
+    full_time = duration * 1000.0
 
-            # THE decision of the whole run: which way round the track.
-            if had_dir == 0 and laps.direction != 0:
-                rec.moment(view, "direction-%s" % ("CW" if laps.direction > 0 else "CCW"),
-                           t, lines=["DIRECTION LOCKED %s" % laps.direction_source,
-                                     "blue %.4f  orange %.4f" % (view.blue, view.orange),
-                                     "L %.3f  R %.3f" % (view.left, view.right)])
-            if laps.quadrant > before:
-                # COUNTING ONLY. The turn is fired by the wall ahead, in decide().
-                rec.moment(view, "quadrant-%02d" % laps.quadrant, t,
-                           lines=["QUADRANT %d of %d" % (laps.quadrant, R.STOP_AFTER_QUADRANT),
-                                  "blue %.4f  orange %.4f" % (view.blue, view.orange),
-                                  "front %.3f" % view.front])
+    print("\n")
+    print("time         : {:.3f} s".format(full_time / 1000.0))
+    print("cycle amount : {} cycles".format(cycle_count))
+    print("speed        : {:.3f} ms / cycle".format(full_time / cycle_count if cycle_count else 0))
 
-            # ---------------- THINK ----------------
-            prev_mode = mode
-            d = decide(view, laps, outer, turner)
-            mode = d.mode
-            speed = R.cruise_speed(CRUISE, d.steer)
+    # Save extra imagery outputs
+    hsv_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    extra_imagery(hsv_mat)
+    cv2.imwrite("input.png", raw_frame)
+    cv2.imwrite("frame.png", frame)
 
-            # each ESCAPE and each TURN, once at the moment it starts
-            if d.mode != prev_mode and d.mode in ("emergency", "turn", "turn-blind"):
-                rec.moment(view, "%s-%s" % (d.mode, "%05.1fs" % t), t,
-                           lines=["%s  steer %+.1f" % (d.mode.upper(), d.steer),
-                                  "L %.3f  R %.3f  (escape at %.3f)"
-                                  % (view.left, view.right, R.WALL_EMERGENCY),
-                                  "front %.3f" % view.front])
-
-            # ---------------- ACT ----------------
-            R.servo(d.steer)
-            R.motor(speed)
-
-            # ---------------- RECORD / FINISH ----------------
-            t_ms = int((time.time() - t0) * 1000)
-            log.writerow([t_ms, frame, laps.direction, laps.quadrant, d.mode,
-                          f"{view.left:.3f}", f"{view.right:.3f}",
-                          f"{view.front:.3f}", f"{view.blue:.3f}",
-                          f"{view.orange:.3f}", f"{d.steer:.1f}", f"{speed:.0f}"])
-            if DEBUG_EVERY and frame % DEBUG_EVERY == 0:
-                logf.flush()
-                print(f"  t={t_ms/1000:5.1f}s dir={laps.direction:+d} "
-                      f"q={laps.quadrant:2d} {d.mode:10s} "
-                      f"L={view.left:.3f} R={view.right:.3f} steer={d.steer:+6.1f}")
-
-            if button.stop_pressed():
-                reason = "BUTTON pressed"
-                break
-            if laps.ready_to_finish(STOP_EXTRA_S):
-                reason = (f"{laps.quadrant} quadrants + {STOP_EXTRA_S:.1f}s coast")
-                break
-            if time.time() - t0 > MAX_RUNTIME_S:
-                reason = "SAFETY timeout"
-                break
-
-    except KeyboardInterrupt:
-        reason = "Ctrl+C"
-    finally:
-        R.motor(0)
-        R.servo(0)
-        dt = time.time() - t0
-        print(f"\nFINISHED ({reason})  quadrants={laps.quadrant}  "
-              f"{frame} frames  {dt:.1f}s  {1000*dt/max(frame,1):.1f} ms/frame")
-        print(f"  fusion: {laps.summary()}")
-        idx = rec.write_index()
-        if idx:
-            print(f"  decisive frames: {rec.saved} -> frames/  (index: {idx})")
-        log.writerow([])
-        log.writerow(["#", reason, laps.summary()])
-        logf.flush()
-        logf.close()
-        R.shutdown()
-        cam.close()
-        print(f"  log saved: {logpath}")
+    GPIO.cleanup()               # PORTED: leave the pins in a sane state
+    sys.exit(0)
 
 
-if __name__ == "__main__":
-    main()
+main()
