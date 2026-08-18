@@ -213,10 +213,10 @@ def decide(now, view, sign, hold, kick, outer, direction, park=None):
     # Deliberately ABOVE the wall escape: inside the lot the magenta walls are
     # close on purpose, and an escape firing here would fight the way out.
     if park is not None and not park.done:
-        out = park.update(view, now)
+        out = park.update(view, now, known_direction=direction)
         if out is not None:
-            steer, mode = out
-            return Decision(steer, mode, *none, PARK_ANGLE, PARK_SPEED)
+            steer, mode, speed = out
+            return Decision(steer, mode, *none, PARK_ANGLE, speed)
 
     # ---- 1. KICK ----
     escape = R.wall_emergency(view.left, view.right, outer, direction)
@@ -328,7 +328,7 @@ def main():
 
     laps = R.LapTracker()
     if FORCE_DIRECTION:
-        laps.direction = FORCE_DIRECTION
+        laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
     outer = R.OuterWallFollower(target=LANE_TARGET)
     passes = PassLogger()
     kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
@@ -402,7 +402,8 @@ def main():
             # ---------------- THINK ----------------
             d = decide(now, view, sign, hold, kick, outer, laps.direction, park)
             if park.direction and laps.direction == 0:
-                laps.direction = park.direction     # the way out IS the lap way
+                # the way out of the lot IS the way round the track
+                laps.set_direction(park.direction, "parking-lot exit")
             steer = clamp_steer(d.steer, d.servo_limit)
             speed = d.speed_cap if d.speed_cap is not None \
                 else R.cruise_speed(CRUISE, steer)

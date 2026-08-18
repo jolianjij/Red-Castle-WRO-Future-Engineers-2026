@@ -1,0 +1,1045 @@
+<title>Red Castle Code Walkthrough</title>
+<style>
+:root{
+  --ground:#F7F7F6; --surface:#FFFFFF; --sunk:#EFEFEE; --ink:#14171A;
+  --muted:#5F6A70; --line:#E2E4E3; --accent:#1F7A5A; --accent-soft:#E6F2ED;
+  --key:#8A4FBF; --str:#B0562A; --com:#7B858B; --num:#2F6FD0;
+  --ok:#1F7A5A; --warn:#A8720C; --stop:#BE3A31;
+  --mono:ui-monospace,"Cascadia Mono","Cascadia Code",Consolas,"SF Mono",Menlo,monospace;
+  --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0D1112; --surface:#141819; --sunk:#1A1F21; --ink:#E6EAEA;
+  --muted:#98A3A7; --line:#242A2C; --accent:#4FC79B; --accent-soft:#10241D;
+  --key:#C89BF0; --str:#E0996A; --com:#78868C; --num:#7BAEF5;
+  --ok:#4FC79B; --warn:#E0AC4F; --stop:#F0736A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0D1112; --surface:#141819; --sunk:#1A1F21; --ink:#E6EAEA;
+  --muted:#98A3A7; --line:#242A2C; --accent:#4FC79B; --accent-soft:#10241D;
+  --key:#C89BF0; --str:#E0996A; --com:#78868C; --num:#7BAEF5;
+  --ok:#4FC79B; --warn:#E0AC4F; --stop:#F0736A;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+ font-size:16px;line-height:1.62;margin:0;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1240px;margin:0 auto;padding:0 24px 96px;display:grid;
+ grid-template-columns:212px minmax(0,1fr);gap:44px;align-items:start}
+@media (max-width:940px){.wrap{grid-template-columns:minmax(0,1fr);gap:0}nav.toc{display:none}}
+header.top{grid-column:1/-1;padding:64px 0 34px;border-bottom:2px solid var(--ink)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+ text-transform:uppercase;color:var(--accent);margin:0 0 16px}
+h1{font-size:clamp(2.2rem,5.5vw,3.5rem);line-height:1.03;letter-spacing:-.03em;
+ font-weight:700;margin:0 0 18px;text-wrap:balance}
+.standfirst{font-size:1.12rem;color:var(--muted);max-width:64ch;margin:0 0 28px}
+.facts{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:18px}
+.fact{padding-right:32px;margin-right:32px;border-right:1px solid var(--line)}
+.fact:last-child{border-right:0;margin-right:0;padding-right:0}
+.fact dt{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+ text-transform:uppercase;color:var(--muted);margin:0 0 3px}
+.fact dd{margin:0;font-weight:600;font-size:.95rem;font-variant-numeric:tabular-nums}
+nav.toc{position:sticky;top:26px;padding-top:46px;font-size:13px}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{margin-bottom:1px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 8px;
+ border-left:2px solid transparent;transition:color .12s,border-color .12s}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--ink);border-left-color:var(--accent)}
+nav.toc .grp{font-family:var(--mono);font-size:10px;letter-spacing:.13em;
+ text-transform:uppercase;color:var(--accent);margin:18px 0 5px;padding-left:8px}
+main{padding-top:46px;min-width:0}
+section{margin-bottom:60px;scroll-margin-top:22px}
+h2{font-size:clamp(1.45rem,3vw,1.9rem);letter-spacing:-.022em;line-height:1.15;
+ margin:0 0 4px;text-wrap:balance}
+h2 .fn{font-family:var(--mono);font-size:.62em;color:var(--accent);
+ display:block;margin-bottom:7px;letter-spacing:0}
+.lede{color:var(--muted);max-width:68ch;margin:0 0 22px}
+h3{font-size:1.02rem;margin:30px 0 7px;letter-spacing:-.006em;text-wrap:balance}
+h3 code{font-size:.94em}
+p{max-width:70ch;margin:0 0 14px}
+ul,ol{max-width:70ch;padding-left:20px}li{margin-bottom:5px}
+a{color:var(--accent)}strong{font-weight:650}
+code{font-family:var(--mono);font-size:.875em;background:var(--sunk);
+ padding:.1em .34em;border-radius:3px}
+pre.code{font-family:var(--mono);font-size:12.5px;line-height:1.55;
+ background:var(--surface);border:1px solid var(--line);border-radius:7px;
+ padding:15px 17px;overflow-x:auto;margin:14px 0;tab-size:4}
+pre.code code{background:none;padding:0;font-size:inherit;white-space:pre}
+pre.cmd{font-family:var(--mono);font-size:13px;background:var(--sunk);
+ border:1px solid var(--line);border-radius:6px;padding:12px 15px;
+ overflow-x:auto;margin:14px 0;max-width:74ch}
+.note{background:var(--surface);border:1px solid var(--line);
+ border-left:3px solid var(--accent);border-radius:0 6px 6px 0;
+ padding:15px 17px;margin:20px 0;max-width:74ch}
+.note.bug{border-left-color:var(--stop)}
+.note .tag{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+ text-transform:uppercase;color:var(--accent);display:block;margin-bottom:6px}
+.note.bug .tag{color:var(--stop)}
+.note p{margin:0;font-size:.94rem}.note p+p{margin-top:8px}
+.note pre{font-family:var(--mono);font-size:12px;background:var(--sunk);
+ padding:8px 10px;border-radius:4px;overflow-x:auto;margin:8px 0;white-space:pre}
+.scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--line);
+ border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:440px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+ text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--sunk);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td.n,th.n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.filehdr{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;
+ border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:18px}
+.filehdr .nm{font-family:var(--mono);font-size:1.05rem;font-weight:600}
+.filehdr .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.pill{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+ padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.pill.run{border-color:var(--accent);color:var(--accent)}
+footer{grid-column:1/-1;border-top:1px solid var(--line);padding-top:20px;
+ color:var(--muted);font-size:13px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">WRO 2026 Future Engineers &middot; Team The Red Castle</p>
+  <h1>Every line, and why it is there</h1>
+  <p class="standfirst">A complete walkthrough of the code that drives the car.
+  Each excerpt below is pulled straight out of <code>src/</code>, so what you
+  read here is exactly what runs on the Pi.</p>
+  <dl class="facts">
+    <div class="fact"><dt>Files</dt><dd>5</dd></div>
+    <div class="fact"><dt>Programs you run</dt><dd>2</dd></div>
+    <div class="fact"><dt>Offline tests</dt><dd>102</dd></div>
+    <div class="fact"><dt>Bugs found this pass</dt><dd>3</dd></div>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Contents">
+<ol>
+  <div class="grp">Orientation</div>
+  <li><a href="#shape">The shape of it</a></li>
+  <li><a href="#review">This review&rsquo;s findings</a></li>
+  <div class="grp">Settings</div>
+  <li><a href="#config">config.py</a></li>
+  <li><a href="#camera">camera.py</a></li>
+  <div class="grp">robot.py</div>
+  <li><a href="#hw">Hardware &amp; button</a></li>
+  <li><a href="#vision">Vision</a></li>
+  <li><a href="#laps">Direction &amp; laps</a></li>
+  <li><a href="#control">Control laws</a></li>
+  <li><a href="#manoeuvres">Manoeuvres</a></li>
+  <div class="grp">Programs</div>
+  <li><a href="#open">open_challenge.py</a></li>
+  <li><a href="#obstacle">obstacle_challenge.py</a></li>
+  <div class="grp">Proving it</div>
+  <li><a href="#tools">Tools &amp; tests</a></li>
+</ol>
+</nav>
+
+<main>
+
+<section id="shape">
+<h2>The shape of it</h2>
+<p class="lede">Five files. Two of them are programs; the rest is support.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>File</th><th>Role</th><th></th></tr></thead>
+<tbody>
+<tr><td class="n">open_challenge.py</td><td>Three laps, empty track</td><td><span class="pill run">run this</span></td></tr>
+<tr><td class="n">obstacle_challenge.py</td><td>Three laps, traffic signs, parking exit</td><td><span class="pill run">run this</span></td></tr>
+<tr><td class="n">robot.py</td><td>The car: hardware, camera, seeing, control laws</td><td><span class="pill">library</span></td></tr>
+<tr><td class="n">config.py</td><td>Every number shared by both challenges</td><td><span class="pill">settings</span></td></tr>
+<tr><td class="n">camera.py</td><td>Camera set-up and locked exposure</td><td><span class="pill">settings</span></td></tr>
+</tbody></table></div>
+
+<p>Both programs have the <strong>same three parts, in the same order</strong>.
+Learn them once and the surprise challenge is a copy-and-edit job:</p>
+
+<div class="scroll"><table>
+<thead><tr><th class="n">Part</th><th>What it is</th><th>Why it is separate</th></tr></thead>
+<tbody>
+<tr><td class="n">1. TUNABLES</td><td>A block of numbers at the top</td><td>Nothing outside it should ever need editing at a venue.</td></tr>
+<tr><td class="n">2. decide()</td><td>One frame in, one steering decision out</td><td>Touches no hardware and no camera, so the whole brain runs on a laptop in under a second.</td></tr>
+<tr><td class="n">3. main()</td><td>LOOK &rarr; THINK &rarr; ACT, repeatedly</td><td>Identical in both programs, so a new challenge barely changes it.</td></tr>
+</tbody></table></div>
+
+<p>Sign conventions hold <em>everywhere</em>, and a lot of the code&rsquo;s
+simplicity comes from them being consistent:</p>
+<pre class="cmd">steering    0 = straight,  POSITIVE = RIGHT,  NEGATIVE = LEFT
+direction  +1 = clockwise,     -1 = counter-clockwise
+wall        a FRACTION of the image, 0..1.  BIGGER = CLOSER.</pre>
+<p>Because <code>+1</code> already means &ldquo;steer right&rdquo;, several
+manoeuvres reduce to <code>direction &times; angle</code> &mdash; one number
+answers both &ldquo;which way round the track&rdquo; and &ldquo;which way to
+turn the wheels&rdquo;.</p>
+</section>
+
+
+<section id="review">
+<h2>This review&rsquo;s findings</h2>
+<p class="lede">Three real bugs, all found by reading the code against its own claims.</p>
+
+<div class="note bug"><span class="tag">Bug 1 &middot; fixed</span>
+<p><strong>The car drove during the &ldquo;stationary&rdquo; measurement.</strong>
+The parking exit averages 8 frames because the car is still &mdash; the only
+unblurred frames in the run. But the settle phase returned
+<code>PARK_SPEED</code>, so the car rolled forward at 45&nbsp;% throughout,
+defeating the entire justification. The live dryrun showed it plainly:</p>
+<pre>0: park-look  steer=+0.0  speed=45     &larr; before
+0: park-look  steer=+0.0  speed= 0     &larr; after</pre>
+<p>The settle phase now commands <strong>speed 0</strong>.</p></div>
+
+<div class="note bug"><span class="tag">Bug 2 &middot; fixed</span>
+<p><strong>The lap timer never started when the direction was set from
+outside.</strong> <code>laps.direction = X</code> skips
+<code>_lock_direction()</code>, leaving <code>_last_count_t</code> at
+<code>0.0</code>. Since <code>elapsed = now - 0.0</code> is then the machine&rsquo;s
+entire uptime, the lockout looked permanently expired and the <em>first</em>
+line crossing counted with no debounce &mdash; a car starting beside a line
+would begin one quadrant ahead and stop a corner early.</p>
+<p>There is now a <code>set_direction()</code> that cannot be called without
+starting the timer, and all three call sites use it.</p></div>
+
+<div class="note bug"><span class="tag">Bug 3 &middot; fixed</span>
+<p><strong>A forced direction and the parking lot could contradict each
+other.</strong> With <code>FORCE_DIRECTION = 1</code> but a lot measuring CCW,
+the car would exit <em>left</em> and then race <em>clockwise</em> &mdash; worse
+than either choice alone. The exit now obeys an already-known direction instead
+of measuring.</p></div>
+</section>
+
+
+<section id="config">
+<div class="filehdr"><span class="nm">config.py</span>
+<span class="meta">shared settings &middot; imports nothing</span></div>
+<p class="lede">Every number both challenges share. It imports nothing, so it is
+safe to edit under pressure.</p>
+
+<h3>Pins and steering</h3>
+<pre class="code"><code>SERVO_PIN = 13          # steering servo
+MOTOR_IN1 = 24          # L9110S A-IA : PWM here = FORWARD
+MOTOR_IN2 = 23          # L9110S A-IB : PWM here = REVERSE
+SERVO_HZ = 50
+MOTOR_HZ = 1000</code></pre>
+<p>Two steering limits, and the difference matters. <code>STEER_MAX</code> is
+what normal driving uses; <code>STEER_MECH_MAX</code> is what the linkage can
+physically reach. Only deliberate manoeuvres &mdash; the corner kick, the
+parking exit &mdash; are allowed between them, and nothing may ever exceed the
+second.</p>
+<pre class="code"><code>STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
+STEER_MAX = 20          # deg - SOFTWARE steering limit actually used when driving.
+                        # The Ackermann linkage reaches 35 deg mechanically, but the
+                        # car is run at 20 for stability at full speed.
+STEER_MECH_MAX = 35     # deg - the ACKERMANN LINKAGE&#x27;s real mechanical limit. Only
+                        # deliberate manoeuvres that ask for it (the corner kick)
+                        # may go past STEER_MAX, and never past this.</code></pre>
+
+<h3>What counts as a wall</h3>
+<p>This is the most consequential block in the file. A plain
+&ldquo;dark&rdquo; test also catches the coloured lines and the mat&rsquo;s
+printed dots.</p>
+<pre class="code"><code>WALL_V_HARD = 32        # below this it is a wall regardless of saturation
+WALL_V_SOFT = 62        # up to this it is a wall ONLY if desaturated
+WALL_S_MAX = 90         # coloured lines exceed this and are rejected
+WALL_OPEN_K = 5         # morphological open, removes the small dotted markings</code></pre>
+
+<h3>Corner-line thresholds</h3>
+<pre class="code"><code>LINE_FRACTION_ORANGE = 0.012   # orange is faint -&gt; accept it sooner
+LINE_FRACTION_BLUE   = 0.035   # blue over-triggers -&gt; demand more of it</code></pre>
+<p>Two separate thresholds, because the two lines are not equally visible.
+Orange is a warm colour on a warm mat and fades with distance; blue
+over-triggers on bluish background. A single shared threshold is unfair to
+orange, and that unfairness reversed a real run&rsquo;s direction.</p>
+</section>
+
+
+<section id="camera">
+<div class="filehdr"><span class="nm">camera.py</span>
+<span class="meta">sensor set-up</span></div>
+<p class="lede">Opens the camera with everything locked, so the image does not
+drift mid-run.</p>
+<p>Three decisions carry the weight here:</p>
+<ul>
+<li><strong>Full-FOV sensor mode.</strong> The <code>raw={"size": FULL_FOV}</code>
+line forces the uncropped 1296&times;972 mode. Without it the driver silently
+picks a cropped mode and the lens loses much of its ~120&deg; view.</li>
+<li><strong>Auto-exposure and auto-white-balance are switched OFF</strong> and
+replaced with fixed values from <code>camera_settings.json</code>. Auto anything
+means the colour thresholds shift under the car as it drives.</li>
+<li><strong>No autofocus.</strong> The OV5647 is fixed focus &mdash; which is a
+feature: the previous camera&rsquo;s autofocus kept locking onto the background
+instead of the track.</li>
+</ul>
+<pre class="code"><code>    tf = Transform(hflip=1, vflip=1) if FLIP_180 else Transform()
+    cfg = p.create_video_configuration(
+        main={&quot;size&quot;: size, &quot;format&quot;: &quot;RGB888&quot;},
+        raw={&quot;size&quot;: FULL_FOV},        # force the full-FOV sensor mode
+        transform=tf,
+        buffer_count=4,
+    )
+    p.configure(cfg)
+    p.start()
+    # OV5647: no AfMode / LensPosition (fixed focus). Only lock AE + AWB.
+    p.set_controls({
+        &quot;AeEnable&quot;: False, &quot;ExposureTime&quot;: exposure_us, &quot;AnalogueGain&quot;: gain,
+        &quot;AwbEnable&quot;: False, &quot;ColourGains&quot;: colour_gains,
+        &quot;Saturation&quot;: SATURATION, &quot;Contrast&quot;: CONTRAST,
+    })
+    time.sleep(0.5)</code></pre>
+</section>
+
+
+<section id="hw">
+<div class="filehdr"><span class="nm">robot.py</span>
+<span class="meta">part 1 of 5 &middot; hardware</span></div>
+<p class="lede">Pins, PWM, and the one button.</p>
+
+<h3><code>servo()</code> &mdash; with a raisable ceiling</h3>
+<pre class="code"><code>def servo(angle, limit=None):
+    &quot;&quot;&quot;0 = straight (after trim), + right, - left.
+
+    Clamped to STEER_MAX by default. `limit` raises that ceiling for ONE call,
+    up to the linkage&#x27;s real mechanical limit (STEER_MECH_MAX) - used by the
+    corner kick, which deliberately asks for more lock than normal driving.
+    &quot;&quot;&quot;
+    if INVERT_STEERING:
+        angle = -angle
+    lim = STEER_MAX if limit is None else min(abs(limit), STEER_MECH_MAX)
+    angle = max(-lim, min(lim, angle))
+    a = angle + SERVO_CENTER_TRIM + 90.0
+    a = max(45.0, min(135.0, a))
+    duty = SERVO_MIN_DUTY + (a / 180.0) * (SERVO_MAX_DUTY - SERVO_MIN_DUTY)
+    _servo_pwm.ChangeDutyCycle(duty)
+    # note: we do NOT sleep here - the control loop runs continuously</code></pre>
+<p>The <code>limit</code> argument exists for exactly one reason: the corner
+kick and parking exit deliberately ask for more lock than normal driving. It
+raises the ceiling for a single call and still cannot exceed the linkage.</p>
+
+<h3><code>motor()</code> &mdash; the one that protects the hardware</h3>
+<pre class="code"><code>def motor(speed):
+    &quot;&quot;&quot;-100..100. Never flips fwd&lt;-&gt;rev directly (back-EMF kills the regulator).&quot;&quot;&quot;
+    global _last_dir
+    if INVERT_MOTOR:
+        speed = -speed
+    speed = max(-100, min(100, speed))
+    new_dir = 1 if speed &gt; 0 else (-1 if speed &lt; 0 else 0)
+    if new_dir != 0 and _last_dir != 0 and new_dir != _last_dir:
+        _m1.ChangeDutyCycle(0); _m2.ChangeDutyCycle(0)
+        time.sleep(STOP_FLIP_DELAY)
+    mag = abs(speed)
+    if speed &gt; 0:
+        _m1.ChangeDutyCycle(mag); _m2.ChangeDutyCycle(0)
+    elif speed &lt; 0:
+        _m1.ChangeDutyCycle(0); _m2.ChangeDutyCycle(mag)
+    else:
+        _m1.ChangeDutyCycle(0); _m2.ChangeDutyCycle(0)
+    if new_dir != 0:
+        _last_dir = new_dir</code></pre>
+<div class="note"><span class="tag">Why the stop-and-settle is here</span>
+<p>Flipping the motor straight from forward to reverse sends a reverse voltage
+spike back into the regulator and kills it. So <code>motor()</code> detects the
+flip itself and forces a coast first. Putting it here rather than in the calling
+code means <em>no</em> caller can get it wrong &mdash; there is no path to a
+direct reversal.</p></div>
+
+<h3><code>Button</code> &mdash; start and emergency stop, one control</h3>
+<pre class="code"><code>    def wait_for_start(self, what=&quot;run&quot;):
+        &quot;&quot;&quot;Block until pressed and released. Falls back to Enter if the button
+        is disabled in config (BUTTON_REQUIRED = False).&quot;&quot;&quot;
+        if not BUTTON_REQUIRED:
+            input(f&quot;{what} ready (button disabled). Press Enter to START...&quot;)
+            return
+        if self.is_down():
+            print(&quot;  ! button reads PRESSED before you touched it - check &quot;
+                  &quot;BUTTON_PULL_UP in config.py (tools/button_test.py helps)&quot;)
+        print(f&quot;{what} ready. PRESS THE BUTTON to start &quot;
+              f&quot;(press again at any time to stop)...&quot;)
+        while not self._debounced():          # wait for the press
+            time.sleep(0.01)
+        while self._debounced():              # ...and for the release
+            time.sleep(0.01)
+        self._ignore_until = time.monotonic() + BUTTON_HOLDOFF_S
+        print(&quot;  GO&quot;)</code></pre>
+<pre class="code"><code>    def stop_pressed(self):
+        &quot;&quot;&quot;True ONCE, on a new press. Poll this every loop for the e-stop.&quot;&quot;&quot;
+        if not BUTTON_REQUIRED:
+            return False
+        down = self._debounced()
+        was, self._was_down = self._was_down, down
+        if time.monotonic() &lt; self._ignore_until:
+            return False          # still letting go of the START press
+        return down and not was   # the rising edge is the stop</code></pre>
+<p>Both are <strong>edge triggered</strong> and debounced, so one physical press
+is one event however long you hold it. The hold-off after starting is what stops
+you <em>releasing</em> the start press and having that read as a stop.</p>
+</section>
+
+
+<section id="vision">
+<div class="filehdr"><span class="nm">robot.py</span>
+<span class="meta">part 2 of 5 &middot; vision</span></div>
+<p class="lede">Turning a picture into seven numbers.</p>
+
+<h3><code>wall_mask()</code> &mdash; the two-case rule</h3>
+<pre class="code"><code>def wall_mask(hsv):
+    &quot;&quot;&quot;Pixels that are genuinely a WALL - not a coloured line, not a mat marking.
+
+    wall = (V &lt; WALL_V_HARD)              very dark: definitely wall
+           or (V &lt; WALL_V_SOFT and S &lt; WALL_S_MAX)   dark AND desaturated
+    then a morphological open to drop the small printed dots.
+
+    The two-case test matters: HSV saturation is unreliable when V is tiny, so a
+    black wall can read S&gt;200 from noise. Testing saturation alone rejects real
+    walls; testing brightness alone accepts the blue/orange lines.
+    &quot;&quot;&quot;
+    global _WK
+    if _WK is None:
+        _WK = np.ones((WALL_OPEN_K, WALL_OPEN_K), np.uint8)
+    S = hsv[:, :, 1]
+    V = hsv[:, :, 2]
+    m = ((V &lt; WALL_V_HARD) | ((V &lt; WALL_V_SOFT) &amp; (S &lt; WALL_S_MAX)))
+    if MAGENTA_IS_WALL:
+        # the magenta parking walls are solid obstacles too - treat them as wall
+        m = m | (mask(hsv, &quot;magenta&quot;, clean=False) &gt; 0)
+    m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, _WK)
+    return m &gt; 0</code></pre>
+<div class="note"><span class="tag">Measured &middot; why both cases are needed</span>
+<p>Testing brightness alone accepts the blue and orange corner lines as walls
+&mdash; which biased the steering on every single frame and was the real cause
+of a control bug we hunted for weeks.</p>
+<p>But testing saturation alone is worse: HSV saturation is numerically
+unstable when brightness is low, so a genuinely black wall can report
+<code>S &gt; 200</code> from sensor noise. A saturation-only test discarded
+<strong>99&nbsp;%</strong> of a real nose-to-wall frame.</p></div>
+
+<h3><code>wall_readings()</code> and <code>front_reading()</code> &mdash; distance without a distance sensor</h3>
+<pre class="code"><code>def wall_readings(hsv):
+    &quot;&quot;&quot;Return (left_wall, right_wall) as black-fraction of each ROI half.&quot;&quot;&quot;
+    m = wall_mask(hsv)
+    half = PROC_W // 2
+    area = half * PROC_H
+    left = int(np.count_nonzero(m[:, :half])) / area
+    right = int(np.count_nonzero(m[:, half:])) / area
+    return left, right</code></pre>
+<pre class="code"><code>def front_reading(hsv):
+    &quot;&quot;&quot;Black fill fraction straight AHEAD (centre columns, upper rows).
+    High = a wall is close in front = we are at a corner.&quot;&quot;&quot;
+    m = wall_mask(hsv)
+    c0 = int(PROC_W * (1 - FRONT_COLS) / 2)
+    c1 = PROC_W - c0
+    r1 = int(PROC_H * FRONT_ROWS)
+    band = m[:r1, c0:c1]
+    return int(np.count_nonzero(band)) / max(1, band.size)</code></pre>
+<p>The car never measures distance. It measures how much of the picture a wall
+<em>fills</em>: nearer wall, more pixels. Every &ldquo;distance&rdquo; constant
+in this project is really a density, which is why they all have to be
+re-measured whenever the camera, its mounting, or the lighting changes.</p>
+
+<h3><code>line_counts()</code> &mdash; and where it looks</h3>
+<pre class="code"><code>def line_counts(hsv):
+    &quot;&quot;&quot;Return (blue_fraction, orange_fraction) in the LINE BAND only.
+
+    The band is the bottom LINE_ROWS of the ROI - the mat. Corner lines are
+    painted on the mat, so a line cannot appear above it; anything blue/orange
+    higher up is wall or background and must not be able to trigger a lap count.
+    &quot;&quot;&quot;
+    r0 = int(PROC_H * (1.0 - LINE_ROWS))
+    band = hsv[r0:, :, :]
+    area = band.shape[0] * band.shape[1]
+    b = int(np.count_nonzero(mask(band, &quot;blue&quot;))) / area
+    o = int(np.count_nonzero(mask(band, &quot;orange&quot;))) / area
+    return b, o
+
+
+# Everything the car can see in one frame.
+#   proc         the BGR image itself (for saving annotated frames)
+#   hsv          the same frame in HSV (for any extra colour work)
+#   left, right  fraction of that half of the image that is wall. BIGGER =
+#                CLOSER, because a nearer wall fills more of the picture.
+#   front        the same measure straight ahead - high means a corner
+#   blue, orange fraction of the bottom band that is each corner line
+View = collections.namedtuple(&quot;View&quot;, &quot;proc hsv left right front blue orange&quot;)</code></pre>
+<p>Restricting the search to the bottom band is a <em>geometric</em> fix, not a
+colour one: corner lines are painted on the mat, so they physically cannot
+appear high in the frame. Searching the whole image let bluish background at
+rows 0&ndash;13 trigger a false blue line on 41&nbsp;% of frames in one run.</p>
+
+<h3><code>look()</code> &mdash; the whole world in one call</h3>
+<pre class="code"><code>def look(cam):
+    &quot;&quot;&quot;Take one frame and measure everything from it.
+
+    This is the car&#x27;s entire sense of the world, in one call, so a challenge
+    loop starts with a single readable line:   view = R.look(cam)
+    &quot;&quot;&quot;
+    proc, hsv = read_hsv(cam)
+    left, right = wall_readings(hsv)
+    blue, orange = line_counts(hsv)
+    return View(proc, hsv, left, right, front_reading(hsv), blue, orange)</code></pre>
+<p>This is why every loop starts with a single readable line. <code>View</code>
+carries the five measurements plus both images, so <code>decide()</code> can do
+its own colour work when it needs to.</p>
+</section>
+
+
+<section id="laps">
+<div class="filehdr"><span class="nm">robot.py</span>
+<span class="meta">part 3 of 5 &middot; direction and laps</span></div>
+<p class="lede">Which way round, and how many corners so far.</p>
+
+<h3>Reading a line crossing exactly once</h3>
+<pre class="code"><code>    def _line_edges(self, blue_frac, orange_frac):
+        &quot;&quot;&quot;Turn a noisy colour fraction into ONE reading per physical crossing.
+
+        state 0 = absent, 1 = present, 2 = falling edge (the crossing is over).
+        After a falling edge the colour is LOCKED OUT for LINE_LOCKOUT_S seconds,
+        so a mask that flickers above/below threshold can only ever be read once
+        per crossing. The lockout is in SECONDS so it does not change with frame
+        rate.
+        &quot;&quot;&quot;
+        now = time.monotonic()
+
+        # ---- blue ----  (its OWN, higher, threshold - blue over-triggers)
+        if blue_frac &gt; LINE_FRACTION_BLUE:
+            self.blue_state = 1
+            if now &gt;= self._blue_next_t:      # not locked out -&gt; arm it
+                self._blue_det = True
+        else:
+            self.blue_state = 0
+            if self._blue_det:                # armed and now gone = one crossing
+                self.blue_state = 2
+                self._blue_next_t = now + LINE_LOCKOUT_S
+                self.blue_reads += 1
+            self._blue_det = False
+
+        # ---- orange ----  (its OWN, lower, threshold - orange is faint)
+        if orange_frac &gt; LINE_FRACTION_ORANGE:
+            self.orange_state = 1
+            if now &gt;= self._orange_next_t:
+                self._orange_det = True
+        else:
+            self.orange_state = 0
+            if self._orange_det:
+                self.orange_state = 2
+                self._orange_next_t = now + LINE_LOCKOUT_S
+                self.orange_reads += 1
+            self._orange_det = False</code></pre>
+<p>State 0 is absent, 1 present, 2 the falling edge &mdash; the moment the
+crossing is <em>over</em>. Acting on the falling edge, plus a lockout in
+<strong>seconds</strong>, is what makes one physical line produce one count.</p>
+<div class="note"><span class="tag">Measured &middot; why seconds, not frames</span>
+<p>The original guard was 10 cycles. At 30&nbsp;fps that is 0.33&nbsp;s, and a
+mask flickering above and below threshold turned one physical crossing into
+<strong>36</strong> counted crossings in a 45&nbsp;s run. Every debounce in this
+codebase is now a wall-clock timer, so none of them change with frame rate.</p></div>
+
+<h3>Deciding the direction &mdash; by confidence, not pixels</h3>
+<pre class="code"><code>        # ---------------- PHASE 1: fix the direction, once ----------------
+        if self.direction == 0:
+            # CONFIDENCE, not raw pixels: each colour is scored against ITS OWN
+            # threshold, so &quot;faint orange that cleared its bar&quot; can beat &quot;lots of
+            # blue that barely cleared its higher bar&quot;. Comparing raw fractions
+            # is what let stray blue call a CW run CCW.
+            o_conf = orange_frac / LINE_FRACTION_ORANGE
+            b_conf = blue_frac / LINE_FRACTION_BLUE
+            win, lose = max(o_conf, b_conf), min(o_conf, b_conf)
+            bigger = 1 if o_conf &gt; b_conf else -1                   # +1 CW, -1 CCW
+            # both lines convincing at once = ambiguous. Wait for a clearer frame
+            # rather than lock a direction that can never be undone.
+            ambiguous = (lose &gt; 0.0 and win &lt; lose * LINE_DIR_MIN_RATIO)
+            if win &gt; 1.0:
+                self.line_hint = bigger
+            if win &gt; 1.0 and ambiguous:
+                print(f&quot;[lap] direction AMBIGUOUS (orange {o_conf:.2f}x vs &quot;
+                      f&quot;blue {b_conf:.2f}x of their own thresholds) - waiting&quot;)
+            elif win &gt; 1.0:
+                # condition 2 - wall geometry, only when one side is clearly open
+                if abs(left - right) &gt;= GEOM_DIR_MIN_DIFF:
+                    self.geom_hint = -1 if left &lt; right else 1
+                self._lock_direction(bigger,
+                                     f&quot;{&#x27;orange&#x27; if bigger &gt; 0 else &#x27;blue&#x27;} line at &quot;
+                                     f&quot;{win:.2f}x its threshold&quot;)
+                if self.geom_hint:
+                    if self.geom_hint == self.direction:
+                        self.direction_confirmed = True
+                        print(&quot;[lap] direction CONFIRMED by wall geometry&quot;)
+                    else:
+                        self.disagreements += 1
+                        print(&quot;[lap] NOTE: geometry suggested the opposite; &quot;
+                              &quot;keeping the line decision&quot;)
+                # the lap timer starts running from the moment direction is fixed
+                self._last_count_t = now</code></pre>
+<div class="note"><span class="tag">Measured &middot; a CW run read as CCW</span>
+<pre>raw pixels       blue 0.030  &gt;  orange 0.025   &rarr; wrong
+own thresholds   blue 0.86x  &lt;  orange 2.08x   &rarr; right</pre>
+<p>Comparing raw counts favours whichever colour the camera happens to see more
+easily. Dividing each by <em>its own</em> threshold makes them comparable. And
+if both look convincing at once, the car waits for a clearer frame rather than
+locking a direction it can never undo.</p></div>
+
+<h3><code>set_direction()</code> &mdash; the fix from this review</h3>
+<pre class="code"><code>    def set_direction(self, d, why=&quot;set externally&quot;):
+        &quot;&quot;&quot;Fix the direction from OUTSIDE - a config override, or the parking lot.
+
+        ALWAYS use this instead of assigning .direction directly. Assigning the
+        attribute skips the line below, leaving the lap timer at 0.0 - and since
+        `elapsed = now - 0.0` is then the machine&#x27;s entire uptime, the timer
+        looks permanently expired and the very FIRST line crossing is counted
+        with no debounce at all. A car starting beside a line would begin the
+        run one quadrant ahead and stop a corner early.
+        &quot;&quot;&quot;
+        self._lock_direction(d, why)
+        self._last_count_t = time.monotonic()</code></pre>
+</section>
+
+
+<section id="control">
+<div class="filehdr"><span class="nm">robot.py</span>
+<span class="meta">part 4 of 5 &middot; control laws</span></div>
+
+<h3><code>OuterWallFollower</code> &mdash; follow one wall, not the middle</h3>
+<pre class="code"><code>    def steer(self, left, right, direction):
+        if direction &gt; 0:             # CW  - follow the LEFT wall
+            err = left - self.target
+        elif direction &lt; 0:           # CCW - follow the RIGHT wall
+            err = self.target - right
+        else:
+            # Direction not known yet (no corner line crossed). Do NOT guess a
+            # side - centre between the two walls, which is safe either way, and
+            # switch to true outer-wall following the moment a line fixes it.
+            err = (left - right) * 0.5
+        if abs(err) &lt; OUTER_DEADBAND:
+            err = 0.0
+        out = self.kp * err + self.kd * (err - self._prev)
+        self._prev = err
+        return max(-STEER_MAX, min(STEER_MAX, out))</code></pre>
+<div class="note"><span class="tag">Measured &middot; why centring failed</span>
+<p>A centring controller drove into every corner. Approaching one,
+<em>both</em> halves of the image darken together, so <code>left - right</code>
+goes to zero &mdash; the error vanishes exactly when the car most needs to turn.
+The single-wall law behaves the opposite way: the wall ahead raises the outer
+reading, which steers into the turn. Corners need no dedicated code at all.</p>
+<p>The <code>direction == 0</code> branch matters too: before the direction is
+known, the car centres. That is safe whichever way the track runs, whereas
+guessing a side is not.</p></div>
+
+<h3><code>wall_emergency()</code> &mdash; the highest priority in both programs</h3>
+<pre class="code"><code>def wall_emergency(left, right, outer=None, direction=0):
+    &quot;&quot;&quot;Escape steering when a wall is too close, or None if there is no danger.
+
+    THE HIGHEST PRIORITY IN BOTH CHALLENGES. Two hard-won details:
+
+    1. IT IS FLOORED BY THE NORMAL CONTROLLER. The first version ramped up from
+       zero, so just past the threshold it produced -0.8 deg while the wall
+       follower wanted -17 deg: the &quot;emergency&quot; actually seized control and
+       steered the car INTO the wall (log t=1.05 s, right=0.285). It now starts
+       at HALF lock and is never weaker than the normal command in that sense.
+
+    2. THE ESCAPE DIRECTION LATCHES when BOTH walls are close (facing into a
+       corner). Left and right densities crossing each other made the sign flip
+       between frames, so the car twitched instead of escaping.
+    &quot;&quot;&quot;
+    if left &lt;= WALL_EMERGENCY and right &lt;= WALL_EMERGENCY:
+        _esc[&quot;dir&quot;] = 0
+        return None
+
+    if left &gt; WALL_EMERGENCY and right &gt; WALL_EMERGENCY:
+        if _esc[&quot;dir&quot;] == 0:
+            _esc[&quot;dir&quot;] = 1 if left &gt; right else -1
+        return STEER_MAX * _esc[&quot;dir&quot;]
+
+    _esc[&quot;dir&quot;] = 0
+    if left &gt; WALL_EMERGENCY:                       # ramp 50% -&gt; 100% of lock
+        push = STEER_MAX * (0.5 + 0.5 * min(1.0, (left - WALL_EMERGENCY) / 0.12))
+    else:
+        push = -STEER_MAX * (0.5 + 0.5 * min(1.0, (right - WALL_EMERGENCY) / 0.12))
+
+    if outer is not None and direction != 0:        # never weaker than normal
+        normal = outer.steer(left, right, direction)
+        push = max(push, normal) if push &gt; 0 else min(push, normal)
+    return max(-STEER_MAX, min(STEER_MAX, push))</code></pre>
+<div class="note bug"><span class="tag">Measured &middot; an override that caused the crash</span>
+<p>The first version ramped up from zero. Just past the threshold it produced
+<strong>&minus;0.8&deg;</strong> while the wall follower wanted
+<strong>&minus;17&deg;</strong> &mdash; so the &ldquo;emergency&rdquo; seized
+control and steered the car <em>into</em> the wall. It now starts at half lock
+and is floored by the normal command, so it can never be the weaker choice.</p>
+<p>The latch matters too: with both walls close, left and right densities
+crossing each other made the escape direction flip between frames and the car
+twitched in place instead of escaping.</p></div>
+
+<h3><code>apply_bias()</code> &mdash; and where it must not go</h3>
+<pre class="code"><code>def apply_bias(steer):
+    &quot;&quot;&quot;Add the straight-line drift trim and re-clamp.
+
+    ONLY for lane-keeping. It must NOT be applied to corner turns or emergency
+    escapes, which need the full mechanical range: a -4 deg trim on a CW corner
+    turned +35 into +31, the car understeered and ran wide into the OUTER wall.
+    In CCW the same trim clamped harmlessly at -35, which is why the fault only
+    ever appeared clockwise.
+    &quot;&quot;&quot;
+    return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))</code></pre>
+</section>
+
+
+<section id="manoeuvres">
+<div class="filehdr"><span class="nm">robot.py</span>
+<span class="meta">part 5 of 5 &middot; manoeuvres</span></div>
+<p class="lede">Three open-loop moves. Each is time-boxed, because none of them
+can see whether it has finished.</p>
+
+<h3><code>TurnSequencer</code> &mdash; the scripted corner</h3>
+<pre class="code"><code>    def update(self, front=None):
+        &quot;&quot;&quot;End the turn when the corner is CLEARED, not on a fixed clock.
+
+        A fixed 1.1 s at full lock kept turning after the corner was done and
+        drove the car into the INNER wall (log: inner density climbed 0.126 -&gt;
+        0.195 -&gt; 0.278 during the turn, in both CW and CCW). Now the clock is
+        only a maximum; the turn exits as soon as the way ahead is clear.
+        &quot;&quot;&quot;
+        if not self.active:
+            return
+        now = time.monotonic()
+        if now &gt;= self._until:                      # hard cap
+            self.active = False
+            return
+        if front is not None and now &gt;= self._min_until and front &lt; FRONT_EXIT:
+            self.active = False</code></pre>
+<p>Fired by <em>crossing the corner line</em>, because the line proves the car
+is physically at the corner &mdash; far more reliable than waiting for a tuned
+wall fraction. The clock is only a maximum; the turn exits as soon as the way
+ahead is clear.</p>
+
+<h3><code>CornerKick</code> &mdash; getting out of a corner cleanly</h3>
+<pre class="code"><code>    def maybe_fire(self, direction, last_sign, now):
+        &quot;&quot;&quot;Call once on the frame a quadrant is counted. True if a kick started.&quot;&quot;&quot;
+        if not self.enabled or direction == 0:
+            return False
+        if last_sign != self.trigger_colour(direction):
+            return False
+        self._until = now + self.duration_s
+        self._dir = 1 if direction &gt; 0 else -1
+        self.fired += 1
+        print(f&quot;[kick] corner exit: last sign was {last_sign.upper()} in &quot;
+              f&quot;{&#x27;CW&#x27; if direction &gt; 0 else &#x27;CCW&#x27;} -&gt; &quot;
+              f&quot;{self.angle:.0f} deg {&#x27;RIGHT&#x27; if self._dir &gt; 0 else &#x27;LEFT&#x27;} &quot;
+              f&quot;for {self.duration_s:.1f}s&quot;)
+        return True</code></pre>
+<div class="scroll"><table>
+<thead><tr><th>Direction</th><th>Corner turns</th><th>Inner wall</th><th>Sign that pushes you inward</th><th>Kick</th></tr></thead>
+<tbody>
+<tr><td class="n">CW</td><td>right</td><td>right</td><td>red</td><td class="n">30&deg; right</td></tr>
+<tr><td class="n">CCW</td><td>left</td><td>left</td><td>green</td><td class="n">30&deg; left</td></tr>
+</tbody></table></div>
+<p>The rule is one idea: <em>the sign that shoved you toward the inside is the
+one that needs a big turn to recover.</em> Both trigger colours are constructor
+arguments, so the opposite convention is a one-line change.</p>
+
+<h3><code>ParkingExit</code> &mdash; the way out decides the lap direction</h3>
+<pre class="code"><code>    def update(self, view, now, known_direction=0):
+        &quot;&quot;&quot;Return (steer, mode, speed) while leaving, or None once finished.
+
+        `known_direction` is a direction already fixed elsewhere (FORCE_DIRECTION).
+        If given, it is OBEYED rather than measured: exiting the lot one way and
+        then racing the other would be worse than either choice on its own.
+        &quot;&quot;&quot;
+        if self.done:
+            return None
+
+        # ---- phase 1: stand still and measure ----
+        if self.direction == 0:
+            if known_direction:
+                self.direction = known_direction
+                self._until = now + self.time_s
+                self.reason = f&quot;direction already forced {&#x27;CW&#x27; if known_direction &gt; 0 else &#x27;CCW&#x27;}&quot;
+                print(f&quot;[park] {self.reason} - leaving that way without measuring&quot;)
+                return self.direction * self.angle, &quot;park-exit&quot;, self.speed
+
+            r = park_readings(view.hsv)
+            self._acc = [a + b for a, b in zip(self._acc, r)]
+            self._seen += 1
+            if self._seen &lt; self.settle_frames:
+                # SPEED 0. The car must be STILL for this: these are the only
+                # unblurred frames in the run, which is the whole reason the
+                # measurement is taken here rather than while moving.
+                return 0.0, &quot;park-look&quot;, 0
+
+            ml, mr, wl, wr = [a / self._seen for a in self._acc]
+            if max(ml, mr) &lt; self.min_magenta:
+                self.done = True
+                self.reason = (f&quot;only {max(ml, mr):.4f} magenta - not in a &quot;
+                               f&quot;parking lot, leaving direction to the lines&quot;)
+                print(f&quot;[park] {self.reason}&quot;)
+                return None
+
+            left = ml + (wl if self.use_wall else 0.0)
+            right = mr + (wr if self.use_wall else 0.0)
+            self.direction = 1 if left &gt; right else -1
+            self._until = now + self.time_s
+            print(f&quot;[park] magenta L={ml:.4f} R={mr:.4f} | &quot;
+                  f&quot;wall L={wl:.4f} R={wr:.4f}&quot;)
+            print(f&quot;[park] {&#x27;LEFT&#x27; if left &gt; right else &#x27;RIGHT&#x27;} side is more &quot;
+                  f&quot;blocked -&gt; leaving to the &quot;
+                  f&quot;{&#x27;RIGHT&#x27; if self.direction &gt; 0 else &#x27;LEFT&#x27;}, running &quot;
+                  f&quot;{&#x27;CW&#x27; if self.direction &gt; 0 else &#x27;CCW&#x27;}&quot;)
+            self.reason = f&quot;magenta L={ml:.4f} R={mr:.4f}&quot;
+
+        # ---- phase 2: drive out ----
+        if now &lt; self._until:
+            return self.direction * self.angle, &quot;park-exit&quot;, self.speed
+
+        self.done = True
+        print(f&quot;[park] out of the lot, direction locked &quot;
+              f&quot;{&#x27;CW&#x27; if self.direction &gt; 0 else &#x27;CCW&#x27;}&quot;)
+        return None</code></pre>
+<div class="note"><span class="tag">Measured &middot; why black is excluded</span>
+<p>Counting black wall alongside magenta cancels the measurement. The magenta
+wall <em>occludes</em> the black wall behind it, so the blocked side shows
+<strong>less</strong> black, while the open side looks across the track at the
+far outer wall and shows more:</p>
+<pre>magenta   L 0.60   R 0.05    &rarr; left is blocked
+wall      L 0.40   R 0.95    &rarr; says the opposite
+sum       L 1.00   R 1.00    &rarr; an exact tie</pre>
+<p>The two signals are anti-correlated. Magenta alone is the honest one.</p></div>
+</section>
+
+
+<section id="open">
+<div class="filehdr"><span class="nm">open_challenge.py</span>
+<span class="meta">program 1 &middot; three laps, empty track</span>
+<span class="pill run">run this</span></div>
+
+<h3>The brain</h3>
+<pre class="code"><code>def decide(view, laps, outer, turner):
+    &quot;&quot;&quot;Return (steer_deg, mode) for this frame. +steer = right.
+
+    PRIORITY LADDER - highest first, exactly one branch answers:
+
+        1. EMERGENCY  a wall is too close -&gt; escape. Outranks everything.
+        2. TURN       we are cornering. Fired by CROSSING THE CORNER LINE,
+                      because the line proves we are physically at the corner.
+                      A wall close AHEAD is the backup if a line is missed.
+        3. LANE       normal driving: PD on the distance to the OUTER wall.
+
+    Why the outer wall and not the middle: in this challenge the inner walls
+    move every round, so the corridor width changes. Centring chases a moving
+    reference; the outer wall is the one thing that stays put.
+    &quot;&quot;&quot;
+    # ---- 1. EMERGENCY ----
+    escape = R.wall_emergency(view.left, view.right, outer, laps.direction)
+    if escape is not None:
+        return Decision(escape, &quot;emergency&quot;)
+
+    # ---- 2. TURN ----
+    turner.update(view.front)
+    if turner.active:
+        return Decision(turner.steer(), &quot;turn&quot;)
+    if view.front &gt; R.FRONT_TURN_BACKUP and laps.direction != 0:
+        turner.trigger(laps.direction)          # line was missed - geometry saves us
+        return Decision(turner.steer(), &quot;turn-geom&quot;)
+
+    # ---- 3. LANE ----
+    return Decision(R.apply_bias(outer.steer(view.left, view.right, laps.direction)),
+                    &quot;lane&quot;)</code></pre>
+<p>Three rungs, and the order is the whole design. The emergency outranks
+everything because touching a wall ends the run. The scripted turn outranks
+lane keeping because during a corner the wall readings mean something different.
+Lane keeping is what happens the rest of the time.</p>
+
+<h3>The loop</h3>
+<pre class="code"><code>            # ---------------- LOOK ----------------
+            view = R.look(cam)
+            before = laps.quadrant
+            laps.update(view.blue, view.orange, view.left, view.right, view.front)
+            if laps.quadrant &gt; before:
+                turner.trigger(laps.direction)   # corner line crossed -&gt; turn
+
+            # ---------------- THINK ----------------
+            d = decide(view, laps, outer, turner)
+            speed = R.cruise_speed(CRUISE, d.steer)
+
+            # ---------------- ACT ----------------
+            R.servo(d.steer)
+            R.motor(speed)</code></pre>
+<p>Four steps, in the same order every frame. Note that the corner line firing
+the turn happens in the <em>loop</em>, not in <code>decide()</code>: crossing a
+line is an event, and <code>decide()</code> only ever answers about the present
+frame.</p>
+</section>
+
+
+<section id="obstacle">
+<div class="filehdr"><span class="nm">obstacle_challenge.py</span>
+<span class="meta">program 2 &middot; signs, parking exit</span>
+<span class="pill run">run this</span></div>
+
+<h3>Finding a sign</h3>
+<pre class="code"><code>def find_sign(hsv):
+    &quot;&quot;&quot;The biggest red/green blob that is TALLER THAN WIDE.
+
+    The aspect test is what rejects the corner lines and stray mat pixels: a
+    traffic sign is a standing block, so it is always taller than it is wide.
+    Returns (kind, cx, cy, area, bbox) or None.
+    &quot;&quot;&quot;
+    best = None
+    for kind in (&quot;red&quot;, &quot;green&quot;):
+        m = R.mask(hsv, kind)
+        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area &lt; PILLAR_MIN_AREA or (best and area &lt;= best[3]):
+                continue
+            x, y, w, h = cv2.boundingRect(c)
+            if h &lt; w * PILLAR_MIN_ASPECT:
+                continue
+            mm = cv2.moments(c)
+            if mm[&quot;m00&quot;] == 0:
+                continue
+            best = (kind, mm[&quot;m10&quot;] / mm[&quot;m00&quot;], mm[&quot;m01&quot;] / mm[&quot;m00&quot;],
+                    area, (x, y, w, h))
+    return best</code></pre>
+<p>The aspect test does the heavy lifting. A traffic sign is a standing block,
+so it is always taller than it is wide &mdash; which rejects the corner lines,
+mat markings and most stray pixels without any extra tuning.</p>
+
+<h3>Passing it, without knowing how far away it is</h3>
+<pre class="code"><code>def sign_error(kind, cx, cy):
+    &quot;&quot;&quot;How far the sign is from where we want it in the picture.
+
+    We never measure distance. We just keep pushing the sign toward one side of
+    the frame, and the car ends up on the correct side of it:
+
+        green -&gt; drive the sign to the RIGHT of the frame -&gt; we pass on its left
+        red   -&gt; drive the sign to the LEFT  of the frame -&gt; we pass on its right
+
+    The target slides further out as the sign gets nearer (the y term), so the
+    car commits harder the closer it gets instead of clipping the corner of it.
+    &quot;&quot;&quot;
+    y = cy * Y_SCALE
+    if kind == &quot;green&quot;:
+        return -((GREEN_TARGET_X + y * Y_GAIN) - cx)
+    return cx - (RED_TARGET_X - y * Y_GAIN)</code></pre>
+<p>We never estimate distance. We push the sign toward one side of the
+<em>frame</em>, and the car ends up on the correct side of it in the world. The
+target slides further out as the sign gets nearer, so the car commits harder the
+closer it gets rather than clipping the corner of it.</p>
+
+<h3>The full ladder</h3>
+<pre class="code"><code>def decide(now, view, sign, hold, kick, outer, direction, park=None):
+    &quot;&quot;&quot;Return a Decision for this frame. +steer = right.
+
+    PRIORITY LADDER - highest first, exactly one branch answers:
+
+        0. PARK   still leaving the parking lot. Runs once, at the very start,
+                  and locks the lap direction on the way out.
+        1. KICK   open-loop corner exit. It is a committed manoeuvre, so it
+                  outranks everything EXCEPT a wall closing from the far side.
+        2. WALL   a wall is too close -&gt; escape.
+        3. SIGN   a red/green sign is in view -&gt; steer to place it correctly.
+        4. HOLD   a sign was here in the last SIGN_HOLD_S. Do NOT hand back to
+                  lane keeping yet, or the wall follower drags the car back
+                  across the pass it is halfway through.
+        5. LANE   nothing else is happening -&gt; PD on the outer wall.
+
+    Pure logic: no hardware, no camera. That is what lets tools/test_logic.py
+    drive it directly, and it means changing how the car decides never means
+    reading the main loop.
+    &quot;&quot;&quot;
+    none = (&quot;&quot;, 0.0, 0.0, 0)
+
+    # ---- 0. PARK ----
+    # Deliberately ABOVE the wall escape: inside the lot the magenta walls are
+    # close on purpose, and an escape firing here would fight the way out.
+    if park is not None and not park.done:
+        out = park.update(view, now, known_direction=direction)
+        if out is not None:
+            steer, mode, speed = out
+            return Decision(steer, mode, *none, PARK_ANGLE, speed)
+
+    # ---- 1. KICK ----
+    escape = R.wall_emergency(view.left, view.right, outer, direction)
+    if kick.active(now):
+        k_steer, k_limit, k_speed = kick.command()
+        if not (escape is not None and escape * k_steer &lt; 0):
+            return Decision(k_steer, &quot;kick&quot;, *none, k_limit, k_speed)
+        kick.cancel()          # wall closing the other way - abandon the kick
+
+    # ---- 2. WALL ----
+    if escape is not None:
+        return Decision(escape, &quot;wall&quot;, *none, None, None)
+
+    # ---- 3. SIGN ----
+    if sign is not None:
+        kind, sx, sy, area, _ = sign
+        steer = sign_error(kind, sx, sy) * PILLAR_KP
+        hold[&quot;kind&quot;], hold[&quot;t&quot;], hold[&quot;steer&quot;] = kind, now, steer
+        return Decision(steer, &quot;sign-&quot; + kind, kind, sx, sy, area, None, None)
+
+    # ---- 4. HOLD ----
+    if hold[&quot;kind&quot;] and (now - hold[&quot;t&quot;]) &lt; SIGN_HOLD_S:
+        if (now - hold[&quot;t&quot;]) &lt; SIGN_STEER_HOLD_S:
+            steer, mode = hold[&quot;steer&quot;], &quot;sign-hold&quot;
+        else:
+            steer, mode = 0.0, &quot;sign-clear&quot;      # run straight past it
+        return Decision(steer, mode, hold[&quot;kind&quot;], 0.0, 0.0, 0, None, None)
+
+    # ---- 5. LANE ----
+    return Decision(outer.steer(view.left, view.right, direction),
+                    &quot;lane&quot;, *none, None, None)</code></pre>
+
+<h3>Recording which signs were passed</h3>
+<pre class="code"><code>    def _commit(self, now):
+        same_again = (self._kind == self._last_kind
+                      and now - self._last_t &lt; PASS_COOLDOWN_S)
+        if self._kind and self._peak &gt;= PASS_MIN_AREA and not same_again:
+            self.order.append(self._kind)
+            self._last_kind, self._last_t = self._kind, now
+            print(f&quot;  &gt;&gt; PASSED {self._kind.upper()} &quot;
+                  f&quot;(peak area {self._peak})  order so far: {self.order}&quot;)
+        self._kind, self._peak = &quot;&quot;, 0</code></pre>
+<div class="note"><span class="tag">Two bugs this had</span>
+<p><code>_last_t</code> started at <code>0.0</code>, which blocked the very
+first commit &mdash; it now starts at <code>-1e9</code>. And the cooldown
+originally blocked <em>different</em> signs instead of only repeats, so a green
+following a red was swallowed. Both were found by replaying a real run&rsquo;s
+log offline.</p></div>
+</section>
+
+
+<section id="tools">
+<div class="filehdr"><span class="nm">tools/</span>
+<span class="meta">proving it before it drives</span></div>
+
+<pre class="cmd">python tools/test_logic.py    # 102 assertions, laptop only, no Pi
+python tools/dryrun.py        # both programs, live camera, motor untouched</pre>
+
+<p><code>test_logic.py</code> stubs <code>RPi.GPIO</code> and
+<code>picamera2</code> so the real classes import on a laptop, then drives them
+with synthetic numbers. <strong>Every bug described in this document has a test
+pinning it</strong>, so none of them can return quietly.</p>
+
+<div class="note bug"><span class="tag">Why this exists</span>
+<p>A build once shipped with a <code>NameError</code> on a live code path
+because it had only been checked with <code>py_compile</code>. Compiling proves
+a file parses. It does not prove the code runs.</p></div>
+
+<div class="scroll"><table>
+<thead><tr><th>Tool</th><th>What it is for</th></tr></thead>
+<tbody>
+<tr><td class="n">test_logic.py</td><td>The whole brain, offline. Run before every deploy.</td></tr>
+<tr><td class="n">dryrun.py</td><td>Both programs against the real camera, motor never touched.</td></tr>
+<tr><td class="n">tune_colors.py</td><td>Venue recalibration: camera, then every colour, then overlap checks. Headless.</td></tr>
+<tr><td class="n">tune_walls.py</td><td><code>--detector</code> re-derives what a wall is; plain calibrates density &harr; cm.</td></tr>
+<tr><td class="n">button_test.py</td><td>Confirms the button wiring and that one press is one event.</td></tr>
+<tr><td class="n">venue_net.sh</td><td>Wired-only networking; refuses to disable Wi-Fi unless the cable is live.</td></tr>
+<tr><td class="n">servo_center.py</td><td>Finds the steering trim.</td></tr>
+</tbody></table></div>
+
+<p>Every run also writes a CSV row per frame. Nearly every number quoted in this
+document and in the field manual came out of one of those logs.</p>
+</section>
+
+
+</main>
+<footer>Team The Red Castle &middot; HMK AI and Robotics Club.
+Code excerpts generated directly from <code>src/</code> &mdash; if the source
+changes, regenerate rather than editing this page by hand.</footer>
+</div>

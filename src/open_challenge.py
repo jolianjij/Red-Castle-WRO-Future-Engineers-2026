@@ -111,7 +111,7 @@ def main():
 
     laps = R.LapTracker()
     if FORCE_DIRECTION:
-        laps.direction = FORCE_DIRECTION
+        laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
     outer = R.OuterWallFollower(target=LANE_TARGET)
     turner = R.TurnSequencer()
 

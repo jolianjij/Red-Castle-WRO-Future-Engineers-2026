@@ -537,6 +537,19 @@ class LapTracker:
             self.direction_source = why
             print(f"[lap] direction locked {'CW' if d > 0 else 'CCW'} ({why})")
 
+    def set_direction(self, d, why="set externally"):
+        """Fix the direction from OUTSIDE - a config override, or the parking lot.
+
+        ALWAYS use this instead of assigning .direction directly. Assigning the
+        attribute skips the line below, leaving the lap timer at 0.0 - and since
+        `elapsed = now - 0.0` is then the machine's entire uptime, the timer
+        looks permanently expired and the very FIRST line crossing is counted
+        with no debounce at all. A car starting beside a line would begin the
+        run one quadrant ahead and stop a corner early.
+        """
+        self._lock_direction(d, why)
+        self._last_count_t = time.monotonic()
+
     def summary(self):
         """One-line fusion report for the end of a run."""
         return (f"direction={'CW' if self.direction > 0 else 'CCW' if self.direction else '?'}"
@@ -606,18 +619,33 @@ class ParkingExit:
         self._acc = [0.0, 0.0, 0.0, 0.0]
         self._until = 0.0
 
-    def update(self, view, now):
-        """Return (steer, mode) while leaving, or None once it is finished."""
+    def update(self, view, now, known_direction=0):
+        """Return (steer, mode, speed) while leaving, or None once finished.
+
+        `known_direction` is a direction already fixed elsewhere (FORCE_DIRECTION).
+        If given, it is OBEYED rather than measured: exiting the lot one way and
+        then racing the other would be worse than either choice on its own.
+        """
         if self.done:
             return None
 
         # ---- phase 1: stand still and measure ----
         if self.direction == 0:
+            if known_direction:
+                self.direction = known_direction
+                self._until = now + self.time_s
+                self.reason = f"direction already forced {'CW' if known_direction > 0 else 'CCW'}"
+                print(f"[park] {self.reason} - leaving that way without measuring")
+                return self.direction * self.angle, "park-exit", self.speed
+
             r = park_readings(view.hsv)
             self._acc = [a + b for a, b in zip(self._acc, r)]
             self._seen += 1
             if self._seen < self.settle_frames:
-                return 0.0, "park-look"
+                # SPEED 0. The car must be STILL for this: these are the only
+                # unblurred frames in the run, which is the whole reason the
+                # measurement is taken here rather than while moving.
+                return 0.0, "park-look", 0
 
             ml, mr, wl, wr = [a / self._seen for a in self._acc]
             if max(ml, mr) < self.min_magenta:
@@ -641,7 +669,7 @@ class ParkingExit:
 
         # ---- phase 2: drive out ----
         if now < self._until:
-            return self.direction * self.angle, "park-exit"
+            return self.direction * self.angle, "park-exit", self.speed
 
         self.done = True
         print(f"[park] out of the lot, direction locked "

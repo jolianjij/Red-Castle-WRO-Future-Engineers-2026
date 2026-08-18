@@ -309,11 +309,11 @@ def park_view(mag_left, mag_right):
     return R.View(None, img, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
-def run_park(p, v, t0=0.0):
+def run_park(p, v, t0=0.0, known=0):
     """Drive a ParkingExit through settle -> exit -> done. Returns the modes."""
     modes = []
     for i in range(p.settle_frames + 2):
-        out = p.update(v, t0)
+        out = p.update(v, t0, known)
         modes.append(out[1] if out else "done")
         if out is None:
             break
@@ -325,6 +325,13 @@ p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
 m = run_park(p, park_view(0.60, 0.05))
 check("left blocked -> direction CW", p.direction, 1)
 check("left blocked -> steers RIGHT out", p.update(park_view(0.6, 0.05), 0.1)[0] > 0, True)
+# BUG FIXED: the settle phase used to return PARK_SPEED, so the car rolled
+# forward at 45% during the one measurement whose whole point is no motion blur.
+p_still = R.ParkingExit(angle=30.0, time_s=1.0, speed=45, use_wall=False)
+check("SPEED 0 while measuring", p_still.update(park_view(0.6, 0.05), 0.0)[2], 0)
+run_park(p_still, park_view(0.6, 0.05))
+check("...and its own speed while driving out",
+      p_still.update(park_view(0.6, 0.05), 0.1)[2], 45)
 check("settles before deciding", m[0], "park-look")
 check("then drives out", "park-exit" in m, True)
 
@@ -333,6 +340,14 @@ p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
 run_park(p, park_view(0.05, 0.60))
 check("right blocked -> direction CCW", p.direction, -1)
 check("right blocked -> steers LEFT out", p.update(park_view(0.05, 0.6), 0.1)[0] < 0, True)
+
+# BUG FIXED: a FORCED direction must WIN over the measurement. Exiting the lot
+# one way and then racing the other is worse than either choice alone.
+p_forced = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+out = p_forced.update(park_view(0.05, 0.60), 0.0, known_direction=1)  # lot says CCW
+check("forced CW beats a lot that measures CCW", p_forced.direction, 1)
+check("...and it exits to the RIGHT", out[0] > 0, True)
+check("...without wasting frames measuring", out[1], "park-exit")
 
 # the exit is time-boxed, then it hands back
 p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
@@ -376,6 +391,27 @@ check("magenta alone reads the lot correctly", p_mag.direction, 1)
 check("adding the black wall destroys that signal",
       p_both.direction != p_mag.direction or p_both.direction == 0, True)
 check("...which is why the default is magenta only", OBS.PARK_USE_WALL, False)
+
+# ==========================================================================
+section("set_direction starts the lap timer")
+# BUG FIXED: assigning .direction directly skipped the timer init, leaving
+# _last_count_t at 0.0. `elapsed = now - 0.0` is then the machine's uptime, so
+# the timer looked permanently expired and the FIRST line crossing counted with
+# no debounce - a car starting beside a line would begin one quadrant ahead.
+raw = R.LapTracker()
+raw.direction = 1                      # the WRONG way, kept here as the contrast
+check("assigning directly leaves the timer at zero", raw._last_count_t, 0.0)
+
+good = R.LapTracker()
+good.set_direction(1, "test")
+check("set_direction locks the direction", good.direction, 1)
+check("...and starts the lap timer", good._last_count_t > 0.0, True)
+check("...and records why", "test" in good.direction_source, True)
+
+# with the timer started, an immediate crossing is correctly IGNORED
+good.update(blue_frac=0.0, orange_frac=0.20, left=0.05, right=0.05, front=0.1)
+good.update(blue_frac=0.0, orange_frac=0.0, left=0.05, right=0.05, front=0.1)
+check("a crossing inside the lockout does not count", good.quadrant, 0)
 
 # ==========================================================================
 section("sign geometry and the pass logger")
