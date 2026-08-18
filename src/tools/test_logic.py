@@ -304,8 +304,8 @@ def hold0():
 
 
 d = OBS.decide(T, view(), None, hold0(), kick, outer, 1)
-check("clear track -> lane", d.mode, "lane")
-check("lane uses the outer follower", d.steer, 3.3)
+check("clear track -> straight (no lane keeping, their way)", d.mode, "straight")
+check("...and it really is straight", d.steer, 0.0)
 
 h = {"kind": "red", "t": T - 0.2, "steer": -8.0}
 d = OBS.decide(T, view(), None, h, kick, outer, 1)
@@ -318,8 +318,8 @@ check("hold elapsed -> sign-clear", d.mode, "sign-clear")
 check("sign-clear runs straight", d.steer, 0.0)
 
 h = {"kind": "red", "t": T - 5.0, "steer": -8.0}
-check("hold fully expired -> lane",
-      OBS.decide(T, view(), None, h, kick, outer, 1).mode, "lane")
+check("hold fully expired -> straight",
+      OBS.decide(T, view(), None, h, kick, outer, 1).mode, "straight")
 
 fake_sign = ("green", 100.0, 80.0, 900, (90, 60, 20, 40))
 hh = hold0()
@@ -327,8 +327,16 @@ d = OBS.decide(T, view(), fake_sign, hh, kick, outer, 1)
 check("sign in view -> sign-green", d.mode, "sign-green")
 check("sign refreshes the hold", hh["kind"], "green")
 
-d = OBS.decide(T, view(left=0.40), fake_sign, hold0(), kick, outer, 1)
-check("wall beats sign", d.mode, "wall")
+# While a sign is being placed the bar is SIGN_WALL_OVERRIDE, not WALL_EMERGENCY
+# - KyivRoboMagic override at about 0.42 and ours used to fire at 0.213, which
+# is why the escape was cancelling every pass.
+d = OBS.decide(T, view(left=OBS.SIGN_WALL_OVERRIDE - 0.05), fake_sign,
+               hold0(), kick, outer, 1)
+check("a wall the OLD threshold would have panicked at does not stop the pass",
+      d.mode, "sign-green")
+d = OBS.decide(T, view(left=OBS.SIGN_WALL_OVERRIDE + 0.05), fake_sign,
+               hold0(), kick, outer, 1)
+check("a genuinely close wall still beats the sign", d.mode, "wall")
 
 k5 = R.CornerKick(angle=30.0, sign_cw="red", sign_ccw="green")
 k5.maybe_fire(1, "red", T)
@@ -544,7 +552,7 @@ check("never flips sign", OBS.limit_toward_wall(-20.0, 0.99, 0.02) <= 0.0, True)
 d = OBS.decide(T, view(left=0.02, right=0.02), ("green", 100.0, 80.0, 900, None),
                hold0(), R.CornerKick(), outer, 1)
 check("in open space a green sign steers freely", d.mode, "sign-green")
-d = OBS.decide(T, view(left=R.WALL_EMERGENCY + 0.01, right=0.02),
+d = OBS.decide(T, view(left=OBS.SIGN_WALL_OVERRIDE + 0.05, right=0.02),
                ("green", 100.0, 80.0, 900, None), hold0(), R.CornerKick(), outer, 1)
 check("once the wall is genuinely close the ESCAPE takes over", d.mode, "wall")
 check("...and steers AWAY from it", d.steer > 0, True)
@@ -777,50 +785,58 @@ check("steering AWAY from the close wall is never faded",
 # ==========================================================================
 
 # ==========================================================================
-section("sign steering must be proportional, not an on/off switch")
-# MEASURED over 412 green-steering frames with KP=0.3:
-#     median error -60 px -> -18 deg of a 20 deg maximum
-#     46% of frames pinned at FULL LOCK
-# The car slammed to full left the moment it saw green, whatever the distance,
-# swung wide, lost the cube out of frame and never completed the pass. There is
-# only ONE green cube on the whole field, so 412 frames of full-lock steering
-# was never a response to pillars - it was a response to seeing any green at all.
-MEDIAN_ERR = -60.0        # the measured median green error, in pixels
-med = abs(MEDIAN_ERR * OBS.GREEN_KP)
-check("a TYPICAL error does not saturate", med < R.STEER_MAX * 0.6, True)
-check("...but still commands a real correction", med > 3.0, True)
-# a badly placed cube must STILL reach full lock - that is what it is for
-check("a badly placed cube still gets full lock",
-      abs(-436.0 * OBS.GREEN_KP) >= R.STEER_MAX, True)
-check("red is proportional too", abs(38.0 * OBS.RED_KP) < R.STEER_MAX * 0.6, True)
+section("the KyivRoboMagic sign law, and the authority it needs")
+# ADOPTED FROM THE TEAM THAT REACHED THE 2024 INTERNATIONAL FINAL on the same
+# hardware class, after four rounds of patching our own version failed to pass
+# a single green cube.
+#
+#     green   Err = -((180 + y*2) - x)
+#     red     Err =  (x - (140 - y*2))
+#     dir     = Err * 0.25,  steering +-45 deg
+#
+# Their target runs OFF-FRAME too - at y=120 green wants x=420 in a 320 px
+# image. We treated that as the bug and clamped it. It is not: it is a demand
+# for maximum lock, and it works BECAUSE they have 45 deg to saturate into.
+# Every earlier attempt here capped the sign at STEER_MAX = 20, which is not
+# enough to get round a cube, so the car swung wide and never finished.
+check("their gain", OBS.GREEN_KP, 0.25)
+check("their green target", OBS.GREEN_TARGET_X, 180.0)
+check("their red target", OBS.RED_TARGET_X, 140.0)
+check("their y term", OBS.Y_GAIN, 2.0)
+check("the target is deliberately NOT clamped", OBS.SIGN_TARGET_CLAMP, False)
 
+# THE AUTHORITY is the point. A sign must be able to ask for more than the
+# 20 deg used in ordinary driving.
+check("the sign may steer past STEER_MAX", OBS.SIGN_STEER_MAX > R.STEER_MAX, True)
+check("...but never past the linkage", OBS.SIGN_STEER_MAX <= R.STEER_MECH_MAX, True)
+d = OBS.decide(T, view(), ("green", 60.0, 120.0, 2000, None), hold0(),
+               R.CornerKick(), outer, 1)
+check("a green sign asks for more than 20 deg", abs(d.steer) > R.STEER_MAX, True)
+check("...and is allowed it", d.servo_limit, OBS.SIGN_STEER_MAX)
+check("clamped to the linkage, not to STEER_MAX",
+      abs(OBS.clamp_steer(d.steer, d.servo_limit)) > R.STEER_MAX, True)
 
-# ==========================================================================
-
-# ==========================================================================
-section("the sign target must be REACHABLE")
-# THE ROOT CAUSE of green never being passed. The frame is 320 px wide, but at
-# Y_GAIN=2.0 a cube near the bottom put the target at
-#     220 + 160*0.75*2.0 = 460
-# a position nothing in the image can ever reach. The error could never fall to
-# zero, so the law stopped being proportional and pinned at full lock BY
-# CONSTRUCTION - no value of KP could have fixed it. Measured: 45% of green
-# frames at full lock; with the target inside the frame, 10%.
-for cy in (0, 40, 80, 120, 160):
-    for kind, x in (("green", 100.0), ("red", 220.0)):
-        e = OBS.sign_error(kind, x, cy)
-        # both branches return  error = cx - target,  so target = cx - error
-        implied = x - e
-        check("%s target at cy=%d is inside the frame" % (kind, cy),
-              -1 <= implied <= R.PROC_W + 1, True)
-
-# and the law is still proportional at the measured errors
-check("a distant green cube does not saturate",
-      abs(OBS.sign_error("green", 100.0, 25) * OBS.GREEN_KP) < R.STEER_MAX, True)
-check("a badly-placed green cube still can",
-      abs(OBS.sign_error("green", 5.0, 145) * OBS.GREEN_KP) >= R.STEER_MAX * 0.7, True)
 check("green still steers LEFT (negative)", OBS.sign_error("green", 100.0, 80) < 0, True)
 check("red still steers RIGHT (positive)", OBS.sign_error("red", 220.0, 80) > 0, True)
+
+# ==========================================================================
+
+# ==========================================================================
+section("between signs: straight, not lane keeping")
+# KyivRoboMagic have NO lane keeping in the obstacle challenge. No sign in view
+# means zero error, zero steering, and only the wall override intervenes.
+# Ours ran an outer-wall PD there and it FOUGHT the sign law - the moment a pass
+# pushed the car off line, the lane keeper pulled it back. Measured on a real
+# run: 42% lane keeping, 41% wall escape, 5% actually placing a sign.
+check("lane keeping is off by default", OBS.LANE_KEEPING, False)
+d = OBS.decide(T, view(left=0.05, right=0.05), None, hold0(), R.CornerKick(),
+               FakeOuter(9.9), 1)
+check("nothing in view -> straight", d.mode, "straight")
+check("...and dead straight, not the PD's 9.9", d.steer, 0.0)
+# the wall override is still the safety net out there
+d = OBS.decide(T, view(left=R.WALL_EMERGENCY + 0.05), None, hold0(),
+               R.CornerKick(), FakeOuter(9.9), 1)
+check("a close wall still overrides going straight", d.mode, "wall")
 
 
 # ==========================================================================

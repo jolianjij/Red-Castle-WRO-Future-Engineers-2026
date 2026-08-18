@@ -1112,7 +1112,7 @@ def apply_bias(steer):
     return max(-STEER_MAX, min(STEER_MAX, steer + STEER_BIAS))
 
 
-def wall_emergency(left, right, outer=None, direction=0):
+def wall_emergency(left, right, outer=None, direction=0, threshold=None):
     """Escape steering when a wall is too close, or None if there is no danger.
 
     THE HIGHEST PRIORITY IN BOTH CHALLENGES. Two hard-won details:
@@ -1127,20 +1127,21 @@ def wall_emergency(left, right, outer=None, direction=0):
        corner). Left and right densities crossing each other made the sign flip
        between frames, so the car twitched instead of escaping.
     """
-    if left <= WALL_EMERGENCY and right <= WALL_EMERGENCY:
+    bar = WALL_EMERGENCY if threshold is None else threshold
+    if left <= bar and right <= bar:
         _esc["dir"] = 0
         return None
 
-    if left > WALL_EMERGENCY and right > WALL_EMERGENCY:
+    if left > bar and right > bar:
         if _esc["dir"] == 0:
             _esc["dir"] = 1 if left > right else -1
         return STEER_MAX * _esc["dir"]
 
     _esc["dir"] = 0
-    if left > WALL_EMERGENCY:                       # ramp 50% -> 100% of lock
-        push = STEER_MAX * (0.5 + 0.5 * min(1.0, (left - WALL_EMERGENCY) / 0.12))
+    if left > bar:                                  # ramp 50% -> 100% of lock
+        push = STEER_MAX * (0.5 + 0.5 * min(1.0, (left - bar) / 0.12))
     else:
-        push = -STEER_MAX * (0.5 + 0.5 * min(1.0, (right - WALL_EMERGENCY) / 0.12))
+        push = -STEER_MAX * (0.5 + 0.5 * min(1.0, (right - bar) / 0.12))
 
     if outer is not None and direction != 0:        # never weaker than normal
         normal = outer.steer(left, right, direction)
