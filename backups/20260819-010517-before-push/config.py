@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""
+config.py - EVERY tunable number for the car, in one place.
+
+At the competition you should only ever need to edit THIS file (plus the
+generated colors.json / servo_center.txt / camera_settings.json).
+Nothing here imports anything, so it is safe to edit under pressure.
+
+Sign conventions used everywhere:
+    steering : 0 = straight, POSITIVE = RIGHT, NEGATIVE = LEFT
+    speed    : -100..100, positive = forward
+    direction: +1 = clockwise (turns right), -1 = counter-clockwise (turns left)
+"""
+
+# ==========================================================================
+# HARDWARE PINS (BCM)
+# ==========================================================================
+SERVO_PIN = 13          # steering servo
+MOTOR_IN1 = 24          # L9110S A-IA : PWM here = FORWARD
+MOTOR_IN2 = 23          # L9110S A-IB : PWM here = REVERSE
+SERVO_HZ = 50
+MOTOR_HZ = 1000
+
+# ---- START / STOP BUTTON -------------------------------------------------
+# One push button does both jobs, exactly as the rules expect: the car sits
+# still until you press it, and a second press stops it (the emergency stop).
+#
+# WIRING (the default, and the one that needs no extra parts):
+#     one leg -> GPIO19,  other leg -> any GND pin
+# The Pi's INTERNAL pull-up holds the pin HIGH, and pressing pulls it to GND,
+# so PRESSED = LOW. That is what BUTTON_PULL_UP = True means.
+# If instead you wired the button to 3V3, set BUTTON_PULL_UP = False.
+# Not sure? Run:  python tools/button_test.py   - it tells you which you have.
+BUTTON_PIN = 19
+BUTTON_PULL_UP = True    # True = wired to GND (pressed reads LOW)
+BUTTON_DEBOUNCE_S = 0.05 # ignore contact bounce for this long after any change
+BUTTON_HOLDOFF_S = 0.8   # after the start press, ignore the button this long,
+                         # so releasing the start press cannot read as a stop
+BUTTON_REQUIRED = True   # False = fall back to pressing Enter (bench testing
+                         # without the button wired up)
+
+STOP_FLIP_DELAY = 0.3   # s to coast before reversing (protects the regulator)
+STEER_MAX = 20          # deg - SOFTWARE steering limit actually used when driving.
+                        # The Ackermann linkage reaches 35 deg mechanically, but the
+                        # car is run at 20 for stability at full speed.
+STEER_MECH_MAX = 35     # deg - the ACKERMANN LINKAGE's real mechanical limit. Only
+                        # deliberate manoeuvres that ask for it (the corner kick)
+                        # may go past STEER_MAX, and never past this.
+SERVO_MIN_DUTY = 2.5    # duty at 0 deg
+SERVO_MAX_DUTY = 12.5   # duty at 180 deg
+
+# DRIFT TRIM - added to every DRIVING steering command (not to servo() itself,
+# so centring the wheels at shutdown still centres them).
+#   NEGATIVE = push LEFT      POSITIVE = push RIGHT
+# MEASURED: across four runs the car always sat closer to the RIGHT wall
+# (right density 0.094/0.027/0.062/0.162 vs left 0.027/0.017/0.023/0.018) even
+# though the controller was already commanding LEFT on average. Steering
+# direction and centre were verified correct by hand, so this is a residual
+# mechanical/alignment pull. Make it MORE negative if it still drifts right,
+# less negative (toward 0) if it now hugs the left wall.
+STEER_BIAS = -4.0
+
+# ==========================================================================
+# SPEEDS
+# ==========================================================================
+CRUISE_OPEN = 100       # base speed, Open Challenge (%)
+CRUISE_OBSTACLE = 100   # base speed, Obstacle Challenge (%)
+SPEED_CORNER_CUT = 0.5  # how much to slow at full steering (0.5 = half speed)
+MIN_SPEED = 35          # never command less than this while driving (%)
+
+# ==========================================================================
+# IMAGE / ROI
+# ==========================================================================
+CAM_W, CAM_H = 640, 480 # camera output
+ROI_TOP = 160           # rows above this are background clutter -> ignored
+PROC_W, PROC_H = 320, 160   # processing buffer size
+BLUR_KSIZE = 5          # median blur before HSV (0/1 = off) - kills sensor noise
+
+# ==========================================================================
+# WHAT COUNTS AS A WALL
+# ==========================================================================
+# A plain "value < 62" test also catches the BLUE and ORANGE corner lines and the
+# mat's printed dotted markings, because they are dark too. They were being
+# counted as walls on every frame - and unevenly between the two halves, so they
+# injected a steering bias (measured on a failure frame: left 0.164 -> 0.072,
+# right 0.256 -> 0.172 once removed).
+#
+# A real wall is either VERY dark, or dark AND desaturated. The first case matters
+# because HSV saturation is numerically unstable at very low brightness - a black
+# wall can report S>200 from noise, so a saturation test alone throws real walls
+# away (it discarded 99% of a nose-to-wall frame).
+WALL_V_HARD = 32        # below this it is a wall regardless of saturation
+WALL_V_SOFT = 62        # up to this it is a wall ONLY if desaturated
+WALL_S_MAX = 90         # coloured lines exceed this and are rejected
+WALL_OPEN_K = 5         # morphological open, removes the small dotted markings
+
+# MAGENTA COUNTS AS A WALL. The purple/magenta parking-lot pixels are added to
+# left_wall/right_wall until the parking phase begins. We have no parking walls
+# to calibrate against yet, so magenta stays a wall for the whole run and the
+# car simply avoids the parking lot.
+MAGENTA_IS_WALL = True
+
+# ==========================================================================
+# WALL DENSITY METHOD  (proportional wall-density control - the proven fallback)
+# ==========================================================================
+WALL_TARGET = 0.14      # outer-wall fill when nicely positioned
+WALL_EMERGENCY = 0.213  # ~18 cm from the wall (22 cm of margin below the 40 cm
+                        # driving line). Re-measured with the corrected mask.
+                        # the escape begins before the car is already against it)
+CENTER_DEADBAND = 0.03  # ignore tiny left-right differences (anti-jitter)
+WALL_KP = 200.0         # MEASURED: left/right densities on this camera run
+WALL_KD = 50.0          # 0.03-0.09, not the ~0.5 the old gains assumed, so the
+                        # controller was ~5x too soft to hold a line.
+
+# ==========================================================================
+# FREE-SPACE / FOLLOW-THE-GAP METHOD  (method "B")
+# ==========================================================================
+# For each column we scan UP from the bottom and find the mat->wall boundary.
+# free[x] = PROC_H - boundary_row  ->  BIG = open road, SMALL = wall close.
+FREE_MIN_RUN = 6        # a wall must be >= this many consecutive dark rows.
+                        # This is what stops the mat's dotted lines being read
+                        # as a wall. Raise it if dots/marks cause false walls.
+FREE_SMOOTH = 9         # moving-average width over columns (noise smoothing)
+FREE_EDGE_IGNORE = 20   # ignore this many columns at each edge (the fisheye is
+                        # worst there and can see PAST a wall at the extremes)
+
+GAP_OPEN_FRAC = 0.80    # a column counts as "open" if free >= this * PROC_H.
+                        # MEASURED on the field: a wall 25 cm ahead scores 0.74,
+                        # 40 cm scores 0.82, clear track scores 0.94. 0.80 puts
+                        # the cut between "wall at 25-30 cm" and "clear".
+GAP_MIN_WIDTH = 60      # a gap narrower than this many columns is NOT drivable.
+                        # The car is ~20 cm wide, so a real opening occupies a
+                        # big fraction of the frame. MEASURED: with this at 12 a
+                        # 12-px fisheye sliver at the frame edge was mistaken for
+                        # an opening and produced a +23 deg steer into a wall.
+GAP_KP = 80.0           # steering gain on the gap-centre error.
+                        # MEASURED: at 26 the largest correction produced in a
+                        # whole run was 6.9 deg out of 35 available, and 61% of
+                        # frames steered less than 2 deg - far too weak.
+GAP_BLOCKED_FRAC = 0.35 # if the best free value is below this * PROC_H the way
+                        # ahead is blocked -> commit to the locked turn direction
+
+# ==========================================================================
+# OUTER-WALL METHOD  ("outer")  <-- the strongest camera-only strategy: track
+# ONE wall instead of trying to centre between two.
+# ==========================================================================
+# ONE reference, ONE error term: the distance to the OUTER wall.
+#   clockwise        -> the outer wall is on the LEFT
+#   counter-clockwise-> the outer wall is on the RIGHT
+# The inner walls are randomised each round, so they are never referenced at all.
+# There is no gap threshold and no front-wall threshold to tune.
+# The control law is a single proportional term per direction:
+#     CW  : dir = (left_wall  - TARGET) * kp
+#     CCW : dir = (TARGET - right_wall) * kp
+#
+# GAIN IS SET FROM OUR OWN MEASUREMENT ON OUR OWN CAMERA, not copied from any
+# published number - our density-vs-distance response depends on our exact
+# camera height/FOV/mount, so a borrowed gain would not transfer.
+#
+# CALIBRATED with the CORRECTED wall mask (lines no longer counted as walls),
+# car parallel to the outer wall, gap measured car-side -> wall-face:
+#     40 cm -> 0.1032      25 cm -> 0.1783
+#     slope  = 0.00501 density per cm closer
+#     60cm=0.003  50cm=0.053  40cm=0.103  30cm=0.153  20cm=0.203  10cm=0.253
+# Earlier numbers (29cm->0.204) came from the OLD mask and are void.
+OUTER_TARGET = 0.1032   # the 40 cm driving line. Centred in the corridor is
+                        # ~45 cm, so this keeps real margin on the inner side.
+                        # +0.0050 on this number ~= 1 cm closer to the wall.
+OUTER_KP = 200.0        # 5 cm off -> 5 deg, 10 cm off -> 10 deg, full lock at
+                        # 20 cm of error. Gentle enough not to saturate on the
+                        # straights, firm enough to hold the line.
+OUTER_KD = 55.0         # damps the weave (they used pure P and it oscillated)
+OUTER_DEADBAND = 0.02   # ignore tiny errors so it runs straight
+
+# CORNER = a scripted turn TRIGGERED BY THE LINE, not by a tuned wall threshold.
+# Crossing the driving-direction line means we are physically at the corner, so
+# the turn timing is deterministic instead of depending on a front-wall fraction.
+FRONT_TURN_BACKUP = 0.45  # SAFETY NET for the corner turn: if the corner line
+                        # is ever missed, a front-wall fill this high forces the
+                        # turn anyway so the car cannot drive into the wall.
+                        # Set ABOVE FRONT_ENTER so the line stays the primary cue.
+TURN_MIN_S = 0.35       # always turn at least this long (commit to the corner)
+TURN_DURATION_S = 1.1   # MAXIMUM hold; the turn normally exits earlier, as soon
+                        # as the way ahead is clear (front < FRONT_EXIT). A fixed
+                        # 1.1 s over-rotated into the INNER wall in both directions.
+TURN_LOCK_FRAC = 1.0    # fraction of STEER_MAX to use during the turn
+
+# ==========================================================================
+# CORNERS / LAP COUNTING
+# ==========================================================================
+FRONT_COLS = 0.40       # centre fraction of width treated as "ahead"
+FRONT_ROWS = 0.55       # upper fraction of ROI treated as "ahead"
+# MEASURED front values head-on to a wall: 0.15 far, 0.40 at 40 cm, 0.54 at 25 cm.
+# 'front' separates distance far better than left+right, so corner detection uses it.
+FRONT_ENTER = 0.30      # front fill this high -> a corner is here.
+                        # 0.38 fired at ~40 cm which was too late at full speed -
+                        # the car reached the wall before the turn developed.
+                        # 0.30 fires further out (~55-60 cm) so the turn starts early.
+FRONT_EXIT = 0.20       # front cleared below this -> corner finished
+CORNER_TOTAL = 0.55     # left+right fill meaning a wall is AHEAD (density method)
+
+MIN_CORNER_CYCLES = 6   # must be in the corner this long before it counts
+MAX_CORNER_CYCLES = 90  # safety: never stay stuck in a corner
+CORNER_DEBOUNCE = 25    # min CYCLES between two counted corners
+
+# TIME-based guard: a real corner cannot physically happen twice within this
+# many seconds. This is the reliable one - cycle counts change with frame rate,
+# seconds do not. Raise it if one corner gets counted twice; lower it if a
+# genuine corner is missed because it came too soon after the previous one.
+CORNER_MIN_INTERVAL_S = 2.5    # (steering-corner guard, geometry side)
+
+# THE LAP TIMER. After a quadrant is counted, NO further count is allowed until
+# this many seconds have passed - and the timer RESTARTS on every count. A lap
+# quadrant therefore needs BOTH: a line crossing AND an expired timer.
+LAP_COUNT_LOCKOUT_S = 2.5
+CORNER_MAX_INTERVAL_S = 25.0   # if no corner for this long, something is wrong
+                               # (logged as a warning, does not stop the run)
+
+QUADRANTS_PER_RUN = 12  # 12 corners = 3 laps (reference)
+
+# STOP RULE: finish after this many counted quadrants AND once the lap timer has
+# expired - so the car keeps driving through the last segment and comes to rest
+# in the start/finish section instead of halting on the line itself.
+STOP_AFTER_QUADRANT = 11
+FINISH_EXTRA_CYCLES = 60   # keep driving briefly after the last corner
+MAX_RUNTIME_S = 90      # SAFETY: hard stop after this long
+
+# ==========================================================================
+# COLOURED LINES (direction hint only - NOT required for lap counting)
+# ==========================================================================
+# The corner lines are painted on the MAT, so they can only appear in the LOWER
+# part of the frame. Searching the whole ROI let bluish WALL/background pixels in
+# the top corners trigger the blue line: measured 41% of a run above threshold,
+# with the pixels sitting at rows 0-13 (the very top). Restricting the search to
+# the bottom band removes that class of false positive geometrically, without
+# depending on colour tuning at all.
+LINE_ROWS = 0.45        # only the BOTTOM 45% of the ROI is searched for lines
+
+# ---- PER-COLOUR LINE THRESHOLDS -----------------------------------------
+# One shared threshold does NOT work, because the two lines are not equally
+# easy to see on this camera:
+#   ORANGE is the hard one. It is a warm colour on a warm cream mat, so its
+#          saturation collapses with distance - measured S~41 far away against
+#          the S>=72 floor the mask needs, i.e. it simply vanishes until close.
+#   BLUE   is the easy one, and that is the problem: it over-triggers on bluish
+#          wall/background pixels, so a CW run could be read as CCW purely
+#          because blue crossed the bar first.
+# So orange gets a LOWER bar (easier to accept) and blue a HIGHER one (must be
+# convincing). Raise BLUE if a CW run is still called CCW; lower ORANGE if a
+# genuine orange crossing is missed.
+LINE_FRACTION_ORANGE = 0.040   # MEASURED. Real orange crossings peak 0.078-0.185;
+                               # the noise floor is ~0.014. 0.040 sits in that gap
+                               # with margin on both sides.
+LINE_FRACTION_BLUE   = 0.150   # MEASURED, with a real line in front of the car:
+                               #   bare mat        0.0999
+                               #   real blue line  0.2159
+                               # The bar was 0.100 - ONE PERCENT above the bare
+                               # mat, so a flicker of noise on empty floor read
+                               # as a line crossing and locked the direction.
+                               # 0.150 puts the mat at 0.67x and the line at
+                               # 1.44x, which is a real separation.
+
+# DIRECTION is decided by CONFIDENCE, not by raw pixel count. Comparing the raw
+# fractions is unfair when one colour is intrinsically fainter - blue wins on
+# pixels even when orange is the line actually being crossed. Confidence is
+# each colour's fraction divided by ITS OWN threshold, so both are measured in
+# "how far over my own bar am I", which is comparable.
+# The winner must also beat the loser by this ratio before the direction locks;
+# below it the frame is treated as ambiguous and the decision simply waits for a
+# clearer one. Raise it if the direction is still occasionally wrong.
+LINE_DIR_MIN_RATIO = 1.30
+
+# TIME lockout: once a line has been READ ONCE, that colour is ignored for this
+# many seconds. This is what stops one physical crossing being counted many
+# times. It MUST be in seconds, not cycles - the old 10-cycle debounce was only
+# 0.33 s at 30 fps, so a flickering mask produced 36 "crossings" in a 45 s run.
+LINE_LOCKOUT_S = 2.5    # a line cannot be read again for this long
+LINE_DEBOUNCE = 10      # (legacy cycle guard, kept as a secondary floor)
+# SENSOR FUSION. Both signals run together and cross-check each other:
+#   geometry (front wall)  - always available, never depends on colour tuning
+#   colour lines           - the official WRO cue (orange=CW, blue=CCW)
+# Direction: whichever arrives first locks it, the second CONFIRMS or warns.
+# Corners:   EITHER may raise one; the time guard means it is still counted once.
+USE_LINES_FOR_DIRECTION = True   # False = decide direction purely from geometry
+USE_LINES_FOR_CORNERS = True     # lines DO count corners - each crossing is read
+                                 # ONCE thanks to the LINE_LOCKOUT_S timer above.
+GEOM_DIR_MIN_DIFF = 0.08         # |left-right| must exceed this before the wall
+                                 # geometry is allowed an opinion on direction.
+                                 # MEASURED: head-on to a corner the two halves
+                                 # read 0.26 vs 0.22 (diff 0.04) - too symmetric
+                                 # to mean anything, and it produced a confident
+                                 # but arbitrary guess that fought the line cue.
+
+# ==========================================================================
+# OBSTACLE CHALLENGE - traffic signs
+# ==========================================================================
+PILLAR_MIN_AREA = 120       # min contour area in the PROC buffer
+PILLAR_MIN_ASPECT = 1.1     # height/width must exceed this (signs are tall)
+PILLAR_SIDE_MARGIN = 0.18   # red -> aim sign to x=0.18*W, green -> 0.82*W
+PILLAR_KP = 90.0
+PILLAR_SPEED = 60           # speed while passing a sign (%)
+PILLAR_MEMORY_CYCLES = 12   # keep steering for a sign this long after losing it
+
+# ==========================================================================
+# OBSTACLE CHALLENGE - parking
+# ==========================================================================
+PARK_STOP_AREA = 9000   # magenta area at which we are parked
+PARK_SPEED = 30
+PARK_KP = 90.0
+
+# ==========================================================================
+# COMPETITION SPECIAL CASES
+# Flip these at the venue without touching any logic.
+# ==========================================================================
+FORCE_DIRECTION = 0     # 0 = auto-detect from the first corner line seen (+ geometry
+                        # backup). Set +1 (CW) or -1 (CCW) only to override at a venue.
+                        # +1 = force clockwise, -1 = force counter-clockwise
+                        # Use this if the judges tell you the run direction.
+
+INVERT_STEERING = False # True if the servo turns the wrong way after a rebuild
+INVERT_MOTOR = False    # True if the motor drives backwards after a rewire
+
+DEBUG_EVERY = 15        # print a status line every N cycles (0 = silent)
+SAVE_DEBUG_FRAMES = 0   # save an annotated frame every N cycles (0 = off).
+                        # Useful to review a bad run; costs ~10ms per save.
