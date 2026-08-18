@@ -185,6 +185,33 @@ def shutdown():
 _K = np.ones((3, 3), np.uint8)
 _esc = {"dir": 0}   # latched escape direction for emergency-both
 
+# IS MAGENTA A WALL RIGHT NOW? This changes DURING a run, which is why it is a
+# runtime flag and not the config constant it starts from.
+#   inside the parking lot  - NO. The magenta walls are what the car is
+#                             measuring and driving between; calling them walls
+#                             would make the escape fight the way out.
+#   once out                - YES. From then on the lot is just another
+#                             obstacle to stay away from, exactly like the
+#                             black walls, and it must be avoided for the rest
+#                             of the run.
+_magenta_wall = {"on": MAGENTA_IS_WALL}
+
+
+def magenta_is_wall(on=None):
+    """Read, or change, whether magenta counts as a wall.
+
+    Called with no argument it reports. ParkingExit switches it off while
+    leaving the lot and back on the moment it is clear, so the same pixels
+    mean different things before and after - which is correct, because they do.
+    """
+    if on is not None:
+        was = _magenta_wall["on"]
+        _magenta_wall["on"] = bool(on)
+        if was != bool(on):
+            print("[wall] magenta now counts as %s"
+                  % ("a WALL - avoid it" if on else "the parking lot - drive out of it"))
+    return _magenta_wall["on"]
+
 # ---- colours ----
 _DEFAULT_COLORS = {
     "black":   [0, 179, 0, 255, 0, 70],
@@ -265,7 +292,7 @@ def wall_mask(hsv):
     S = hsv[:, :, 1]
     V = hsv[:, :, 2]
     m = ((V < WALL_V_HARD) | ((V < WALL_V_SOFT) & (S < WALL_S_MAX)))
-    if MAGENTA_IS_WALL:
+    if _magenta_wall["on"]:
         # the magenta parking walls are solid obstacles too - treat them as wall
         m = m | (mask(hsv, "magenta", clean=False) > 0)
     m = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_OPEN, _WK)
@@ -692,6 +719,12 @@ class LapTracker:
             enter, exit_ = FRONT_ENTER, FRONT_EXIT
         else:
             enter, exit_ = CORNER_TOTAL, CORNER_TOTAL * 0.75
+        # NOTE: in_corner is NOT read by either challenge any more - the
+        # TurnSequencer replaced this geometry corner detector. It is kept
+        # because a surprise challenge might want it, but do not trust it as
+        # "the car is cornering": nothing exercises it, so nothing would notice
+        # if it were wrong. Same for turn_bias, stalled, corner_source,
+        # corners_geom, last_gap_s and line_hint.
         if not self.in_corner:
             if self.front > enter:
                 self.in_corner = True
@@ -814,6 +847,11 @@ class ParkingExit:
         self.direction = 0
         self.done = not enabled
         self.reason = "disabled" if not enabled else ""
+        # While leaving, the magenta walls are the LOT, not an obstacle. If they
+        # counted as walls the escape would read them as danger and fight the
+        # exit it is halfway through.
+        if enabled:
+            magenta_is_wall(False)
         self._seen = 0
         self._acc = [0.0, 0.0, 0.0, 0.0]
         self._until = 0.0
@@ -849,6 +887,7 @@ class ParkingExit:
             ml, mr, wl, wr = [a / self._seen for a in self._acc]
             if max(ml, mr) < self.min_magenta:
                 self.done = True
+                magenta_is_wall(True)     # not in a lot after all - treat it as wall
                 self.reason = (f"only {max(ml, mr):.4f} magenta - not in a "
                                f"parking lot, leaving direction to the lines")
                 print(f"[park] {self.reason}")
@@ -873,8 +912,10 @@ class ParkingExit:
             return self.direction * self.angle, "park-exit", self.speed
 
         self.done = True
+        # OUT. From here the lot is just another thing to avoid, like any wall.
+        magenta_is_wall(True)
         print(f"[park] out of the lot, direction locked "
-              f"{'CW' if self.direction > 0 else 'CCW'}")
+              f"{'CW' if self.direction > 0 else 'CCW'} - magenta is now a wall")
         return None
 
 

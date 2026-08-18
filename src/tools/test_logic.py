@@ -580,7 +580,45 @@ check("a tracker with no override still uses the config value",
       _lt2.ready_to_finish(0.0), True)
 
 # ==========================================================================
-print("\n" + "=" * 62)
+
+# ==========================================================================
+section("magenta: the lot while leaving, a wall afterwards")
+# The same pixels mean different things before and after the exit, and that is
+# correct. Inside the lot the magenta walls are what the car is driving BETWEEN,
+# so counting them as walls would make the escape fight the way out. Once clear,
+# the lot is just another obstacle.
+R.magenta_is_wall(True)                       # whatever the config said
+p = R.ParkingExit(angle=30.0, time_s=1.0, use_wall=False)
+check("constructing an ENABLED exit turns magenta off", R.magenta_is_wall(), False)
+run_park(p, park_view(0.60, 0.05))
+check("still off while driving out",
+      R.magenta_is_wall() or not p.done, True)
+p.update(park_view(0.60, 0.05), 99.0)         # past the exit time -> done
+check("done", p.done, True)
+check("...and magenta is a WALL again", R.magenta_is_wall(), True)
+
+# a DISABLED exit must not touch the flag at all
+R.magenta_is_wall(True)
+R.ParkingExit(enabled=False)
+check("a disabled exit leaves the flag alone", R.magenta_is_wall(), True)
+
+# no lot found -> it is a wall, not something to drive into
+R.magenta_is_wall(True)
+p2 = R.ParkingExit(use_wall=False)
+run_park(p2, park_view(0.0, 0.0))
+check("no lot found -> magenta counts as a wall", R.magenta_is_wall(), True)
+
+# and the mask itself actually honours the flag
+_mv = park_view(0.60, 0.05)
+R.magenta_is_wall(False)
+_off = int(np.count_nonzero(R.wall_mask(_mv.hsv)))
+R.magenta_is_wall(True)
+_on = int(np.count_nonzero(R.wall_mask(_mv.hsv)))
+check("wall_mask includes magenta only when the flag is on", _on > _off, True)
+R.magenta_is_wall(R.MAGENTA_IS_WALL)          # leave it as configured
+
+# ==========================================================================
+print(chr(10) + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")
     sys.exit(1)

@@ -18,9 +18,10 @@ To write a new challenge: copy this file, rewrite decide(), leave main()
 almost alone. See src/README.md.
 ===========================================================================
 
-It also records the ORDER of the signs it passed (sign_order.txt) and saves
-annotated frames of each pass (frames/), which is what the video and the
-engineering journal are built from.
+It also records the ORDER of the signs it passed (sign_order.txt) and saves the
+frames where the run was DECIDED (frames/, with 00-WHAT-HAPPENED.txt listing
+them in order) - which is what the video and the engineering journal are built
+from, and what makes a bad run diagnosable afterwards.
 
 Run on the Pi:
     cd ~/wro2026 && source .venv/bin/activate && python obstacle_challenge.py
@@ -147,7 +148,6 @@ PASS_COOLDOWN_S  = 0.8     # ignore a re-detection of the SAME colour this soon
 
 # --- frame saving ---
 SAVE_FRAMES      = True
-SAVE_EVERY       = 3       # while a sign is in view, save every Nth frame
 MAX_SAVES        = 120
 
 # --- run control ---
@@ -371,28 +371,6 @@ class PassLogger:
         return self.order
 
 
-def annotate(view, sign, d):
-    """Original frame on top, what the car understood underneath."""
-    vis = view.proc.copy()
-    vis[R.wall_mask(view.hsv)] = (0, 0, 255)                 # red = wall
-    if sign is not None:
-        kind, cx, cy, area, (x, y, w, h) = sign
-        col = (0, 0, 255) if kind == "red" else (0, 255, 0)
-        cv2.rectangle(vis, (x, y), (x + w, y + h), col, 1)
-        cv2.circle(vis, (int(cx), int(cy)), 2, (0, 255, 255), -1)
-        tx = (GREEN_TARGET_X + cy * Y_SCALE * Y_GAIN) if kind == "green" \
-            else (RED_TARGET_X - cy * Y_SCALE * Y_GAIN)
-        tx = int(max(0, min(R.PROC_W - 1, tx)))
-        cv2.line(vis, (tx, 0), (tx, R.PROC_H), col, 1)       # where we want it
-        cv2.putText(vis, f"{kind} a={int(area)}", (4, 24),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, col, 1)
-    cv2.line(vis, (R.PROC_W // 2, 0), (R.PROC_W // 2, R.PROC_H), (255, 255, 0), 1)
-    cv2.putText(vis, f"{d.mode} s{d.steer:+.0f} "
-                f"L{view.left:.2f} R{view.right:.2f}", (4, 12),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
-    return np.vstack([view.proc, vis])
-
-
 # ==========================================================================
 # 3. THE LOOP
 # ==========================================================================
@@ -462,7 +440,6 @@ def main():
 
     t0 = time.time()
     frame = 0
-    saves = 0
     reason = "?"
     R.motor(CRUISE)
     try:
