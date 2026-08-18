@@ -438,7 +438,20 @@ for mod, name in ((OPEN, "open_challenge"), (OBS, "obstacle_challenge")):
     check(f"{name} has CRUISE", isinstance(mod.CRUISE, (int, float)), True)
     check(f"{name} has LANE_TARGET", isinstance(mod.LANE_TARGET, float), True)
 
-# ==========================================================================
+
+# ---- PARK_INVERT: the one-line venue flip ----
+section("PARK_INVERT")
+pn = R.ParkingExit(use_wall=False, invert=False)
+run_park(pn, park_view(0.60, 0.05))
+pi_ = R.ParkingExit(use_wall=False, invert=True)
+run_park(pi_, park_view(0.60, 0.05))
+check("normal: left blocked -> CW", pn.direction, 1)
+check("inverted: same view -> CCW", pi_.direction, -1)
+check("...and it steers the other way",
+      pn.update(park_view(0.6, 0.05), 0.1)[0] > 0
+      and pi_.update(park_view(0.6, 0.05), 0.1)[0] < 0, True)
+check("default is NOT inverted", OBS.PARK_INVERT, False)
+
 print("\n" + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

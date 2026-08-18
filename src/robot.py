@@ -198,11 +198,15 @@ _DEFAULT_COLORS = {
                                             # not 30: the RED pillar's fringe reaches
                                             # H=30, and a 30 floor matched 74 px of it
                                             # as "green" - enough to pass MIN_AREA.
-    "red":     [174, 10, 170, 255, 60, 255], # MEASURED H~1 S~199. The wrap starts
-                                            # at 174, ABOVE magenta at H170-172,
-                                            # which red used to swallow whole.
-    "magenta": [163, 178, 95, 168, 90, 255],# MEASURED H170-172 S111-151. S ceiling
-                                            # 168 keeps the red pillar (S~199) out.
+    "red":     [178, 12, 170, 255, 45, 255], # MEASURED. The wrap starts at 178,
+                                            # ABOVE the magenta parking wall which
+                                            # sits at H171-177: at 174 red claimed a
+                                            # 119x20 slab of that WALL as a "sign".
+    "magenta": [158, 177, 90, 255, 40, 255],# MEASURED on the PARKING WALL up close,
+                                            # not the block at distance: S165-229,
+                                            # V47-85. The old S<=168 / V>=90 excluded
+                                            # the whole shadowed body and matched only
+                                            # its lit top edge - 290 px instead of 29k.
 }
 if os.path.exists("colors.json"):
     COLORS = json.load(open("colors.json"))
@@ -604,7 +608,7 @@ class ParkingExit:
     """
 
     def __init__(self, angle=30.0, time_s=1.6, speed=45, settle_frames=8,
-                 min_magenta=0.010, use_wall=True, enabled=True):
+                 min_magenta=0.010, use_wall=True, enabled=True, invert=False):
         self.angle = angle
         self.time_s = time_s
         self.speed = speed
@@ -612,6 +616,10 @@ class ParkingExit:
         self.min_magenta = min_magenta
         self.use_wall = use_wall
         self.enabled = enabled
+        self.invert = invert      # flip the whole mapping if a venue proves it
+                                  # backwards. The measurement is trustworthy;
+                                  # whether "blocked left" means CW depends on
+                                  # the track's physical layout, not on us.
         self.direction = 0
         self.done = not enabled
         self.reason = "disabled" if not enabled else ""
@@ -658,6 +666,8 @@ class ParkingExit:
             left = ml + (wl if self.use_wall else 0.0)
             right = mr + (wr if self.use_wall else 0.0)
             self.direction = 1 if left > right else -1
+            if self.invert:
+                self.direction = -self.direction
             self._until = now + self.time_s
             print(f"[park] magenta L={ml:.4f} R={mr:.4f} | "
                   f"wall L={wl:.4f} R={wr:.4f}")

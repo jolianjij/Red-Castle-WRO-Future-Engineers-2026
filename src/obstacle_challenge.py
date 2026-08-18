@@ -64,6 +64,11 @@ PARK_SETTLE      = 8       # frames averaged before deciding. The car is still,
 PARK_MIN_MAGENTA = 0.010   # if neither side has at least this much magenta the
                            # car is not in a lot: give up rather than guess, and
                            # let the corner lines decide as usual.
+PARK_INVERT      = False   # ONE-LINE VENUE FIX. The measurement of which side
+                           # is blocked is reliable; whether "blocked on the
+                           # left" means CW depends on your track's physical
+                           # layout. If the car reads the lot correctly but
+                           # leaves the wrong way, set this True.
 PARK_USE_WALL    = False   # count the black wall as well as magenta?
                            # DEFAULT OFF, and this is deliberate. The magenta
                            # wall physically HIDES the black wall behind it, so
@@ -337,7 +342,8 @@ def main():
     park = R.ParkingExit(angle=PARK_ANGLE, time_s=PARK_TIME_S,
                          speed=PARK_SPEED, settle_frames=PARK_SETTLE,
                          min_magenta=PARK_MIN_MAGENTA,
-                         use_wall=PARK_USE_WALL, enabled=PARK_START)
+                         use_wall=PARK_USE_WALL, enabled=PARK_START,
+                         invert=PARK_INVERT)
     hold = {"kind": "", "t": -1e9, "steer": 0.0}
     last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
                                # gap between a sign and the corner it precedes
