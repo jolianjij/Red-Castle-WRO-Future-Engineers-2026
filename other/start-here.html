@@ -1,0 +1,271 @@
+<title>Red Castle Documentation Hub</title>
+<style>
+:root{
+  --ground:#F7F6F4; --surface:#FFFFFF; --sunk:#EEECE8; --ink:#15140F;
+  --muted:#63605A; --line:#E2DFD8; --accent:#8A2E2E; --accent2:#1F5F4E;
+  --ok:#1F7A4D; --warn:#A8620C; --stop:#9C3A2E;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
+  --sans:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0E0E0C; --surface:#171714; --sunk:#1E1E1A; --ink:#EBE9E3;
+  --muted:#9C9890; --line:#28271F; --accent:#E8746A; --accent2:#5FC7A8;
+  --ok:#5CC98D; --warn:#E0A552; --stop:#F0796A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0E0E0C; --surface:#171714; --sunk:#1E1E1A; --ink:#EBE9E3;
+  --muted:#9C9890; --line:#28271F; --accent:#E8746A; --accent2:#5FC7A8;
+  --ok:#5CC98D; --warn:#E0A552; --stop:#F0796A;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);
+ font-size:16px;line-height:1.62;margin:0;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 90px}
+header.top{padding:64px 0 34px;border-bottom:3px double var(--ink);margin-bottom:36px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+ text-transform:uppercase;color:var(--accent);margin:0 0 16px}
+h1{font-size:clamp(2.3rem,6vw,3.6rem);line-height:1.02;letter-spacing:-.034em;
+ margin:0 0 18px;text-wrap:balance}
+.standfirst{color:var(--muted);max-width:62ch;margin:0 0 28px;font-size:1.12rem}
+.facts{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:18px}
+.fact{padding-right:30px;margin-right:30px;border-right:1px solid var(--line)}
+.fact:last-child{border-right:0;margin-right:0;padding-right:0}
+.fact dt{font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+ text-transform:uppercase;color:var(--muted);margin:0 0 3px}
+.fact dd{margin:0;font-weight:650;font-size:.96rem;font-variant-numeric:tabular-nums}
+h2{font-size:1.5rem;letter-spacing:-.022em;margin:42px 0 6px;text-wrap:balance}
+h2 .n{font-family:var(--mono);font-size:.6em;color:var(--accent);margin-right:11px}
+.lede{color:var(--muted);max-width:70ch;margin:0 0 20px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+ padding:16px 17px;display:flex;flex-direction:column;gap:7px;
+ text-decoration:none;color:inherit;transition:border-color .12s,transform .12s}
+a.card:hover,a.card:focus-visible{border-color:var(--accent);transform:translateY(-1px)}
+.card .kind{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+ text-transform:uppercase;color:var(--accent)}
+.card .t{font-weight:650;font-size:1.02rem;line-height:1.25}
+.card .d{font-size:.88rem;color:var(--muted);flex:1}
+.card .w{font-size:.82rem;color:var(--accent2);font-weight:600}
+.card.file .kind{color:var(--accent2)}
+.scroll{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:7px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;
+ color:var(--muted);background:var(--sunk);font-weight:500;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td.n{font-family:var(--mono);white-space:nowrap;font-size:12.5px}
+code{font-family:var(--mono);font-size:.87em;background:var(--sunk);padding:.1em .34em;border-radius:3px}
+pre.cmd{font-family:var(--mono);font-size:12.5px;background:var(--sunk);
+ border:1px solid var(--line);border-radius:7px;padding:13px 15px;
+ overflow-x:auto;margin:14px 0;max-width:76ch;line-height:1.55}
+pre.cmd .c{color:var(--muted)}
+.note{background:var(--surface);border:1px solid var(--line);
+ border-left:3px solid var(--warn);border-radius:0 7px 7px 0;
+ padding:15px 17px;margin:18px 0;max-width:76ch;font-size:.94rem}
+.note.stop{border-left-color:var(--stop)}
+.note.go{border-left-color:var(--ok)}
+.note b{color:var(--ink)}
+.status{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
+ font-size:11px;white-space:nowrap}
+.status::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.status.done{color:var(--ok)} .status.part{color:var(--warn)} .status.miss{color:var(--stop)}
+ol.steps{counter-reset:s;list-style:none;padding:0;max-width:74ch}
+ol.steps li{counter-increment:s;position:relative;padding-left:38px;margin-bottom:13px}
+ol.steps li::before{content:counter(s);position:absolute;left:0;top:1px;
+ font-family:var(--mono);font-size:11px;font-weight:700;color:var(--surface);
+ background:var(--accent);width:22px;height:22px;border-radius:50%;
+ display:grid;place-items:center}
+footer{border-top:1px solid var(--line);padding-top:20px;margin-top:44px;
+ color:var(--muted);font-size:13px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <p class="eyebrow">WRO 2026 Future Engineers &middot; Team The Red Castle</p>
+  <h1>Start here</h1>
+  <p class="standfirst">Everything written about this car, in one place &mdash;
+  what to read, in what order, and which one answers the question you actually
+  have right now.</p>
+  <dl class="facts">
+    <div class="fact"><dt>Documents</dt><dd>7</dd></div>
+    <div class="fact"><dt>Offline tests</dt><dd>146 passing</dd></div>
+    <div class="fact"><dt>Programs</dt><dd>2</dd></div>
+    <div class="fact"><dt>Sensors</dt><dd>One camera</dd></div>
+  </dl>
+</header>
+
+<h2><span class="n">01</span>If you only read one</h2>
+<p class="lede">Pick by the question you have.</p>
+
+<div class="cards">
+  <a class="card" href="https://claude.ai/code/artifact/7f37ec62-d296-48cb-86c0-63955ce47f7d">
+    <span class="kind">Understand it</span>
+    <span class="t">Field Manual</span>
+    <span class="d">How the car works end to end: what it sees, how it decides,
+    and the measurements that overturned nearly every assumption we started with.</span>
+    <span class="w">&ldquo;How does this thing actually work?&rdquo;</span>
+  </a>
+  <a class="card" href="https://claude.ai/code/artifact/65dac6fd-08f6-4b40-8bfc-52691ae68cd5">
+    <span class="kind">Fix it</span>
+    <span class="t">Tunables</span>
+    <span class="d">Every number you can change, its current value, and which way
+    to move it for each symptom. Includes how to tune the walls.</span>
+    <span class="w">&ldquo;It is misbehaving &mdash; what do I change?&rdquo;</span>
+  </a>
+  <a class="card" href="https://claude.ai/code/artifact/0aa1178b-3f06-4877-93a2-f09560b3b01d">
+    <span class="kind">Build on it</span>
+    <span class="t">API Reference</span>
+    <span class="d">Every function and method: what it takes, what it returns.
+    Plus the recipes a surprise challenge needs.</span>
+    <span class="w">&ldquo;What can I call?&rdquo;</span>
+  </a>
+  <a class="card" href="https://claude.ai/code/artifact/70a030ec-2ea3-402b-9c8e-f76a0ec7b2d2">
+    <span class="kind">Read the code</span>
+    <span class="t">Code Walkthrough</span>
+    <span class="d">Every function explained, with the real source pulled
+    straight out of <code>src/</code>.</span>
+    <span class="w">&ldquo;Why is this line here?&rdquo;</span>
+  </a>
+</div>
+
+<h2><span class="n">02</span>In the repository</h2>
+<p class="lede">Markdown, so they work offline and on a phone.</p>
+
+<div class="cards">
+  <div class="card file">
+    <span class="kind">Competition day</span>
+    <span class="t">other/tuning-strategy.md</span>
+    <span class="d">The venue procedure in the order the measurements depend on
+    each other, plus how to read a log and how to use the backups.</span>
+    <span class="w">Read this the night before.</span>
+  </div>
+  <div class="card file">
+    <span class="kind">Commands</span>
+    <span class="t">other/ssh-commands.md</span>
+    <span class="d">Every terminal command for moving code and files between the
+    laptop and the Pi, copy-pasteable.</span>
+    <span class="w">&ldquo;How do I copy that across?&rdquo;</span>
+  </div>
+  <div class="card file">
+    <span class="kind">Networking</span>
+    <span class="t">other/venue-setup.md</span>
+    <span class="d">Wired networking, recalibration, and starting the car with
+    no laptop at the start line.</span>
+    <span class="w">&ldquo;No wireless allowed &mdash; now what?&rdquo;</span>
+  </div>
+  <div class="card file">
+    <span class="kind">Judges</span>
+    <span class="t">README.md</span>
+    <span class="d">The scored document: mobility, power, sensing, software,
+    engineering process.</span>
+    <span class="w">This is what is marked.</span>
+  </div>
+</div>
+
+<h2><span class="n">03</span>The five commands</h2>
+<p class="lede">Almost everything is one of these.</p>
+
+<pre class="cmd">./sync.sh pull          <span class="c"># Pi -> laptop. Do this BEFORE editing.</span>
+./sync.sh push-safe     <span class="c"># laptop -> Pi, only if the tests pass</span>
+./backup.sh save "it worked"
+./backup.sh undo        <span class="c"># undo the last push or restore</span>
+ssh pi@raspberrypi</pre>
+
+<div class="note stop"><b>Pull before you edit.</b> You tune values directly on
+the Pi between runs. <code>push</code> overwrites them &mdash; that is what push
+means. If it has already happened, <code>./backup.sh undo</code>.</div>
+
+<h2><span class="n">04</span>Before every run</h2>
+
+<pre class="cmd">python tools/test_logic.py   <span class="c"># 146 assertions, laptop, no Pi needed</span>
+python tools/dryrun.py       <span class="c"># live camera, motor never touched</span></pre>
+
+<div class="note"><b>Compiling is not testing.</b> A build once shipped with a
+<code>NameError</code> on a live code path because it had only been checked with
+<code>py_compile</code>. Every bug found in this project has a test pinning it,
+so none of them can come back quietly.</div>
+
+<h2><span class="n">05</span>Where things stand</h2>
+
+<div class="scroll"><table>
+<thead><tr><th>item</th><th>state</th><th>note</th></tr></thead>
+<tbody>
+<tr><td>Open Challenge</td><td><span class="status done">full marks</span></td><td>both directions</td></tr>
+<tr><td>Video</td><td><span class="status done">filmed</span></td><td>&mdash;</td></tr>
+<tr><td>Button, backups, docs</td><td><span class="status done">done</span></td><td>restore proven by round trip</td></tr>
+<tr><td>Parking exit</td><td><span class="status done">runs on track</span></td><td>1.6&times; margin; magenta becomes a wall on exit</td></tr>
+<tr><td>Obstacle Challenge</td><td><span class="status part">not re-run</span></td><td>per-colour sign tuning is untested on track</td></tr>
+<tr><td><code>KICK_TIME_S</code></td><td><span class="status part">estimated</span></td><td>nobody has timed how fast this car rotates</td></tr>
+<tr><td>Wired networking</td><td><span class="status miss">laptop side</span></td><td>the Pi is ready; this laptop has no Ethernet</td></tr>
+<tr><td>SD card image</td><td><span class="status miss">not taken</span></td><td>the one backup nothing else covers</td></tr>
+</tbody></table></div>
+
+<h2><span class="n">06</span>The wired connection</h2>
+<p class="lede">The Pi is finished. The laptop is the blockage.</p>
+
+<div class="scroll"><table>
+<thead><tr><th>on the Pi</th><th>state</th></tr></thead>
+<tbody>
+<tr><td><code>eth0</code> fixed address <code>192.168.50.1/24</code></td><td><span class="status done">set, autoconnects</span></td></tr>
+<tr><td>Hands the laptop an address itself (<code>dnsmasq</code>)</td><td><span class="status done">running</span></td></tr>
+<tr><td>SSH on every interface</td><td><span class="status done">0.0.0.0:22</span></td></tr>
+<tr><td>VNC on every interface</td><td><span class="status done">*:5900</span></td></tr>
+<tr><td><code>raspberrypi.local</code> over the cable</td><td><span class="status done">avahi active</span></td></tr>
+<tr><td>This laptop&rsquo;s Ethernet controller</td><td><span class="status miss">Present: False</span></td></tr>
+</tbody></table></div>
+
+<div class="note stop"><b>Windows cannot see the Ethernet hardware at all.</b>
+The <code>Realtek PCIe GbE Family Controller</code> reports
+<code>Present: False</code>, error code 45 &mdash; &ldquo;not connected to the
+computer&rdquo;. That is not a driver problem: a missing driver still shows the
+device with a warning. It means the controller is switched off below the
+operating system, so no cable and no setting on the Pi can help until it comes
+back.</div>
+
+<ol class="steps">
+  <li><b>A true cold boot.</b> Windows Fast Startup means &ldquo;Shut down&rdquo;
+  restores a saved state, so a device that failed to appear stays missing across
+  many shutdowns. Hold <b>Shift</b> while clicking Shut down &mdash; or simply
+  <b>Restart</b>, which does do a full boot.</li>
+  <li><b>UEFI.</b> Tap <b>F2</b> at the Lenovo splash. Look under Configuration
+  for LAN / Onboard LAN / Ethernet. If you cannot find it, <b>Load Setup
+  Defaults (F9)</b> then Save &amp; Exit re-enables a disabled LAN without
+  hunting.</li>
+  <li><b>Rescan</b>, from an Administrator terminal:
+  <code>pnputil /scan-devices</code></li>
+  <li><b>A USB-to-Ethernet adapter.</b> About $10, any RTL8153 or AX88179 based
+  one &mdash; Windows 11 has the drivers built in, and the Pi needs no changes
+  at all. <b>Buy one regardless of how the checks above go:</b> this single link
+  is the only path to the robot at a venue that bans wireless, and there is
+  currently no spare.</li>
+</ol>
+
+<p>Once any of those gives you a wired adapter, there is nothing to configure
+&mdash; leave it on automatic DHCP, plug in, wait about ten seconds:</p>
+
+<pre class="cmd">ssh pi@192.168.50.1            <span class="c"># proves the CABLE specifically</span>
+./tools/venue_net.sh status    <span class="c"># must say the laptop is ANSWERING</span>
+./tools/venue_net.sh wifi-off  <span class="c"># only then</span></pre>
+
+<div class="note"><b>Use the address, not the name, to test the cable.</b> With
+Wi-Fi and the cable both up, the Pi advertises both of its addresses over mDNS,
+so <code>raspberrypi.local</code> may quietly resolve to the Wi-Fi one and you
+will not have tested the cable at all.</div>
+
+<div class="note go"><b>The guard will protect you.</b>
+<code>wifi-off</code> refuses unless the laptop has actually taken an address
+from the Pi <em>and</em> answers a ping. A carrier alone is not enough &mdash; a
+router or an idle port raises one too, and that exact mistake once left the
+robot unreachable.</div>
+
+<footer>
+Team The Red Castle &middot; HMK AI and Robotics Club &middot; Coach Ahmad Kalthom
+&middot; Jolian Wassof, Omar Shammout, Louay Rashwan.<br>
+Every figure quoted across these documents came from a run log or a bench
+measurement on this car.
+</footer>
+
+</div>
