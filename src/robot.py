@@ -215,7 +215,10 @@ def magenta_is_wall(on=None):
 # ---- colours ----
 _DEFAULT_COLORS = {
     "black":   [0, 179, 0, 255, 0, 70],
-    "blue":    [90, 135, 60, 255, 70, 200],
+    "blue":    [96, 135, 140, 255, 70, 200],# MEASURED against a real line: the MAT
+                                            # reads S~68 and the LINE S~238. The old
+                                            # floor of 60 swallowed the mat, which was
+                                            # 5x bigger than the line.
     "orange":  [2, 13, 72, 170, 70, 255],   # MEASURED: the LINE is H5-8 S86-94,
                                             # but the MAT ITSELF is H17-19 S42-53
                                             # (a warm cream). H<=13 and S>=72 are

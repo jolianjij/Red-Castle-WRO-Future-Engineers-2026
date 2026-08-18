@@ -108,17 +108,37 @@ LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 #               1.0 = "taller than wide". Raise toward 1.5 to be stricter.
 GREEN_KP         = 0.3
 GREEN_TARGET_X   = 220.0
-GREEN_MIN_AREA   = 70
+GREEN_MIN_AREA   = 300
 GREEN_MIN_ASPECT = 1.0
 
 RED_KP           = 0.3
 RED_TARGET_X     = 120.0
-RED_MIN_AREA     = 70
+RED_MIN_AREA     = 300
 RED_MIN_ASPECT   = 1.0
 
 Y_GAIN           = 2.0     # how much the target slides outward as a sign nears
 
 # --- what counts as a sign (shared) ---
+SIGN_MIN_SEEN_S  = 0.25    # A SIGN MUST BE SEEN THIS LONG BEFORE THE CAR ACTS.
+                           # MEASURED on a real run: 35 separate green
+                           # "approaches" in 38.6 s - one every 1.1 s, when
+                           # there are about five pillars. The real ones peak at
+                           # 2000-13300 px and last 0.6-2.1 s; the other thirty
+                           # peak at 88-565 px and last 0.0-0.3 s. Size alone
+                           # does not separate them, because a real pillar is
+                           # small too while it is still far away. PERSISTENCE
+                           # does: a pillar cannot vanish between frames, and a
+                           # speck cannot survive.
+                           # SWEPT against that run, with the min areas below:
+                           #   0.15s/150px -> 31 sightings, 17 still noise-sized
+                           #   0.25s/300px -> 17 sightings,  6 still noise-sized
+                           #   0.25s/600px -> 12 sightings,  1 still noise-sized
+                           #   0.35s/600px ->  8 sightings,  1 still noise-sized
+                           # 600px is cleaner but only sees a pillar once it is
+                           # CLOSE - a real approach takes ~0.5s to grow from
+                           # 300 to 600px, and that is reaction time you do not
+                           # get back. Raise both if it still twitches; lower
+                           # them if it reacts too late.
 SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
                            # keeping for this long - it would drag the car back
                            # across the pass it is halfway through
@@ -227,6 +247,41 @@ def find_sign(hsv):
             best = (kind, mm["m10"] / mm["m00"], mm["m01"] / mm["m00"],
                     area, (x, y, w, h))
     return best
+
+
+class SignGate:
+    """Only let a sign through once it has been there long enough to be real.
+
+    Detection fragments: a genuine pillar and a speck of noise both appear as
+    "green, area 200" in a single frame, and no size threshold tells them apart
+    because a real pillar is small while it is still far away. What does tell
+    them apart is that a pillar is STILL THERE the next frame, and the one after.
+
+    A short dropout does not reset the clock - detection flickers on real
+    pillars too, and restarting the timer on every flicker would reject the
+    thing this is meant to protect.
+    """
+
+    def __init__(self, min_seen_s=0.15, tolerate_gap_s=0.20):
+        self.min_seen_s = min_seen_s
+        self.tolerate_gap_s = tolerate_gap_s
+        self.kind = ""
+        self._first = 0.0
+        self._last = 0.0
+        self.rejected = 0          # how many specks it threw away, for the log
+
+    def accept(self, sign, now):
+        """The sign if it has earned it, else None."""
+        if sign is None:
+            return None
+        kind = sign[0]
+        if kind != self.kind or (now - self._last) > self.tolerate_gap_s:
+            self.kind, self._first = kind, now      # a new approach starts here
+        self._last = now
+        if (now - self._first) >= self.min_seen_s:
+            return sign
+        self.rejected += 1
+        return None
 
 
 def sign_error(kind, cx, cy):
@@ -419,6 +474,7 @@ def main():
                          min_magenta=PARK_MIN_MAGENTA,
                          use_wall=PARK_USE_WALL, enabled=PARK_START,
                          invert=PARK_INVERT)
+    gate = SignGate(min_seen_s=SIGN_MIN_SEEN_S)
     hold = {"kind": "", "t": -1e9, "steer": 0.0}
     last_mode = ""
     last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
@@ -440,6 +496,7 @@ def main():
           if FORCE_DIRECTION else "  direction : auto from the corner lines")
     print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
           f"(density {LANE_TARGET:.4f})")
+    print(f"  gate      : a sign must persist {SIGN_MIN_SEEN_S:.2f}s to count")
     print(f"  green     : kp={GREEN_KP} ->x{GREEN_TARGET_X:.0f} "
           f"area>{GREEN_MIN_AREA} aspect>{GREEN_MIN_ASPECT}")
     print(f"  red       : kp={RED_KP} ->x{RED_TARGET_X:.0f} "
@@ -476,7 +533,8 @@ def main():
             before, had_dir = laps.quadrant, laps.direction
             laps.update(view.blue, view.orange, view.left, view.right, view.front)
 
-            sign = find_sign(view.hsv)
+            raw_sign = find_sign(view.hsv)
+            sign = gate.accept(raw_sign, now)     # ignore specks that vanish
             passes.update(sign, now)
             t = now - t0
 
@@ -565,6 +623,8 @@ def main():
               f"{1000*dt/max(frame,1):.1f} ms/frame")
         print(f"  SIGN ORDER PASSED : {order if order else '(none)'}")
         print(f"  corner kicks fired: {kick.fired}")
+        print(f"  specks rejected   : {gate.rejected} "
+              f"(seen briefly, never long enough to be a real sign)")
         idx = rec.write_index()
         print(f"  decisive frames   : {rec.saved} -> frames/")
         if idx:

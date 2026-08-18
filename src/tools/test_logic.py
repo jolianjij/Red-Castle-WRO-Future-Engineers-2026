@@ -645,6 +645,108 @@ check("wall_mask includes magenta only when the flag is on", _on > _off, True)
 R.magenta_is_wall(R.MAGENTA_IS_WALL)          # leave it as configured
 
 # ==========================================================================
+
+# ==========================================================================
+section("OPEN: turns come from the WALL AHEAD, not from lines")
+# The lines were firing the turn, so cornering depended on colour tuning. When
+# blue began matching the bare mat the car turned at corners that were not
+# there. A wall ahead is geometry: no tuning, and it cannot be faked by light.
+laps = R.LapTracker(); laps.set_direction(1, "test")
+outer = FakeOuter(3.3)
+turner = R.TurnSequencer()
+
+d = OPEN.decide(view(front=0.05), laps, outer, turner)
+check("clear ahead -> lane", d.mode, "lane")
+
+d = OPEN.decide(view(front=OPEN.TURN_ON_FRONT + 0.05), laps, outer, turner)
+check("wall ahead -> turn", d.mode, "turn")
+check("CW turns right", d.steer > 0, True)
+
+# with no direction yet it must STILL turn - toward the side with more room
+turner2 = R.TurnSequencer()
+laps0 = R.LapTracker(); laps0.direction = 0
+# below WALL_EMERGENCY on both sides, or the escape would answer first - which
+# it should, and does.
+d = OPEN.decide(view(front=OPEN.TURN_ON_FRONT + 0.05, left=0.15, right=0.02),
+                laps0, outer, turner2)
+check("no direction yet -> still turns", d.mode, "turn-blind")
+check("...toward the side with more room (left blocked -> go right)",
+      d.steer > 0, True)
+d = OPEN.decide(view(front=OPEN.TURN_ON_FRONT + 0.05, left=0.02, right=0.15),
+                laps0, outer, R.TurnSequencer())
+check("...and the other way round", d.steer < 0, True)
+
+# a line crossing must NOT start a turn any more
+turner3 = R.TurnSequencer()
+laps3 = R.LapTracker(); laps3.set_direction(1, "test")
+d = OPEN.decide(view(front=0.05, blue=0.99), laps3, outer, turner3)
+check("a line in view does not trigger a turn", d.mode, "lane")
+check("...and the turner stays idle", turner3.active, False)
+
+# ==========================================================================
+section("blue sees the LINE, not the mat")
+# MEASURED with a real blue line in front of the car. Two "line-like" blobs sat
+# in the band and they were completely different things:
+#     the MAT   235x30 px at S~68    <- 5x BIGGER than the line
+#     the LINE  161x6  px at S~238
+# Blue's saturation floor was 60, so it swallowed the mat, and the fraction
+# measured the floor rather than the paint. No threshold could separate them:
+#     bare mat 0.0999 / far line 0.1361 / near line 0.2159 - they OVERLAP.
+# Raising the floor to 140 did, and only then could the bar come back down.
+check("blue's S floor excludes the mat (S~68)", R.COLORS["blue"][2] > 68, True)
+check("...while keeping the line (S~238)", R.COLORS["blue"][2] < 238, True)
+check("the mat now reads 0.0000, under the bar", 0.0 < R.LINE_FRACTION_BLUE, True)
+check("a real line reads 0.0297, over it", 0.0297 > R.LINE_FRACTION_BLUE, True)
+check("...with real margin", (0.0297 / R.LINE_FRACTION_BLUE) > 2.0, True)
+check("orange bar clears its noise floor (0.014)",
+      0.014 < R.LINE_FRACTION_ORANGE < 0.078, True)
+
+
+# ==========================================================================
+
+# ==========================================================================
+section("SignGate - a speck is not a sign")
+# MEASURED on a real run: 35 separate green "approaches" in 38.6 s, when the
+# track has about five pillars. Real ones peak at 2000-13300 px and last
+# 0.6-2.1 s; the other thirty peak at 88-565 px and last 0.0-0.3 s. Size alone
+# cannot separate them - a real pillar is small while it is far away - but
+# PERSISTENCE can.
+g = OBS.SignGate(min_seen_s=0.15, tolerate_gap_s=0.20)
+S1 = ("green", 100.0, 80.0, 900, (0, 0, 10, 20))
+
+check("first frame of a sighting is NOT acted on", g.accept(S1, 0.00), None)
+check("still not, 0.10s in", g.accept(S1, 0.10), None)
+check("accepted once it has persisted", g.accept(S1, 0.16), S1)
+check("and stays accepted", g.accept(S1, 0.30), S1)
+
+# a speck that vanishes never gets through
+g2 = OBS.SignGate(min_seen_s=0.15, tolerate_gap_s=0.20)
+check("a 0.05s speck is rejected", g2.accept(S1, 0.00), None)
+check("...and again after it vanished and something new appeared",
+      g2.accept(S1, 5.00), None)
+check("rejections are counted", g2.rejected > 0, True)
+
+# a real pillar flickers too - a short dropout must NOT restart the clock
+g3 = OBS.SignGate(min_seen_s=0.15, tolerate_gap_s=0.20)
+g3.accept(S1, 0.00)
+g3.accept(S1, 0.10)
+# 0.12s gap - shorter than tolerate_gap_s, so the approach continues
+check("a short dropout does not reset the clock", g3.accept(S1, 0.22), S1)
+
+# a colour change starts a fresh approach
+g4 = OBS.SignGate(min_seen_s=0.15, tolerate_gap_s=0.20)
+S2 = ("red", 100.0, 80.0, 900, (0, 0, 10, 20))
+g4.accept(S1, 0.00)
+g4.accept(S1, 0.20)                      # green is through
+check("a DIFFERENT colour must earn it separately", g4.accept(S2, 0.21), None)
+check("...and does, once it persists", g4.accept(S2, 0.40), S2)
+
+check("no sign in, nothing out", g4.accept(None, 1.0), None)
+check("min areas now reject the measured noise band (88-565)",
+      OBS.GREEN_MIN_AREA > 88 and OBS.RED_MIN_AREA > 88, True)
+
+
+# ==========================================================================
 print(chr(10) + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

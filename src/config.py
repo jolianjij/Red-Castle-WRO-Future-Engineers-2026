@@ -248,8 +248,18 @@ LINE_ROWS = 0.45        # only the BOTTOM 45% of the ROI is searched for lines
 # So orange gets a LOWER bar (easier to accept) and blue a HIGHER one (must be
 # convincing). Raise BLUE if a CW run is still called CCW; lower ORANGE if a
 # genuine orange crossing is missed.
-LINE_FRACTION_ORANGE = 0.006   # orange is faint -> accept it sooner
-LINE_FRACTION_BLUE   = 0.1   # blue over-triggers -> demand more of it
+LINE_FRACTION_ORANGE = 0.040   # MEASURED. Real orange crossings peak 0.078-0.185;
+                               # the noise floor is ~0.014. 0.040 sits in that gap
+                               # with margin on both sides.
+LINE_FRACTION_BLUE   = 0.012   # MEASURED, with a real line in front of the car.
+                               # This only became a sane number once blue stopped
+                               # matching the MAT. With the old S floor of 60 the
+                               # mat was a 235x30 blob at S~68 and the real line
+                               # a 161x6 blob at S~238 - the mat was FIVE TIMES
+                               # BIGGER than the line, so the fraction measured
+                               # the floor, not the paint. No threshold could fix
+                               # that; raising blue's S floor to 140 did.
+                               # Now: mat 0.0000, line 0.0297 = 2.5x this bar.
 
 # DIRECTION is decided by CONFIDENCE, not by raw pixel count. Comparing the raw
 # fractions is unfair when one colour is intrinsically fainter - blue wins on

@@ -59,6 +59,11 @@ TURN_ON_FRONT    = 0.30    # front wall fill that STARTS a corner turn. Bigger
 TURN_OFF_FRONT   = 0.20    # ...and the fill it must drop below to END it. Kept
                            # well under TURN_ON_FRONT so a noisy reading cannot
                            # flicker the turn on and off.
+TURN_BLIND       = True    # turn even BEFORE the direction is known, toward
+                           # whichever side has more room. Without this the car
+                           # drives straight into the first corner while it
+                           # waits for a line it may never read - and with the
+                           # lines now only counting, it might wait a long time.
 TURN_MIN_GAP_S   = 1.5     # a corner cannot physically follow another sooner
                            # than this, so ignore a re-trigger inside it
 
@@ -101,9 +106,9 @@ def decide(view, laps, outer, turner):
     PRIORITY LADDER - highest first, exactly one branch answers:
 
         1. EMERGENCY  a wall is too close -> escape. Outranks everything.
-        2. TURN       we are cornering. Fired by CROSSING THE CORNER LINE,
-                      because the line proves we are physically at the corner.
-                      A wall close AHEAD is the backup if a line is missed.
+        2. TURN       a wall AHEAD means a corner. Geometric, so it needs no
+                      colour tuning and cannot be faked by lighting. The lines
+                      are for COUNTING laps only.
         3. LANE       normal driving: PD on the distance to the OUTER wall.
 
     Why the outer wall and not the middle: in this challenge the inner walls
@@ -127,9 +132,16 @@ def decide(view, laps, outer, turner):
     turner.update(view.front)
     if turner.active:
         return Decision(turner.steer(), "turn")
-    if view.front > TURN_ON_FRONT and laps.direction != 0:
-        turner.trigger(laps.direction)
-        return Decision(turner.steer(), "turn")
+    if view.front > TURN_ON_FRONT:
+        if laps.direction != 0:
+            turner.trigger(laps.direction)
+            return Decision(turner.steer(), "turn")
+        if TURN_BLIND:
+            # No direction yet. A wall ahead still has to be dealt with, and
+            # driving into it while waiting for a line is the worse option, so
+            # turn toward whichever side has more ROOM.
+            return Decision(R.STEER_MAX * (1 if view.left > view.right else -1),
+                            "turn-blind")
 
     # ---- 3. LANE ----
     return Decision(R.apply_bias(outer.steer(view.left, view.right, laps.direction)),
@@ -165,7 +177,8 @@ def main():
           if FORCE_DIRECTION else "  direction : auto from the corner lines")
     print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
           f"(density {LANE_TARGET:.4f})")
-    print(f"  turns     : on front wall > {TURN_ON_FRONT}, ends below "
+    print(f"  turns     : {'blind before direction known, ' if TURN_BLIND else ''}"
+          f"on front wall > {TURN_ON_FRONT}, ends below "
           f"{TURN_OFF_FRONT}  (lines do NOT steer)")
     print(f"  lines     : COUNTING ONLY.  orange>{R.LINE_FRACTION_ORANGE:.3f} "
           f"blue>{R.LINE_FRACTION_BLUE:.3f} ratio>{R.LINE_DIR_MIN_RATIO:.2f}")
@@ -210,7 +223,7 @@ def main():
             speed = R.cruise_speed(CRUISE, d.steer)
 
             # each ESCAPE and each TURN, once at the moment it starts
-            if d.mode != prev_mode and d.mode in ("emergency", "turn", "turn-geom"):
+            if d.mode != prev_mode and d.mode in ("emergency", "turn", "turn-blind"):
                 rec.moment(view, "%s-%s" % (d.mode, "%05.1fs" % t), t,
                            lines=["%s  steer %+.1f" % (d.mode.upper(), d.steer),
                                   "L %.3f  R %.3f  (escape at %.3f)"
