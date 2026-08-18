@@ -35,6 +35,9 @@ MOTOR_IN1 = 24          # PWM here = FORWARD
 MOTOR_IN2 = 23
 BUTTON_PIN = 19
 SERVO_TRIM = -9.0       # PORTED: their `angle += 0`; ours is measured at -9
+STEER_DEVIATION = 35    # PORTED: their deviation was 45. OUR ACKERMANN LINKAGE
+                        # STOPS AT 35 - commanding more drives the servo into
+                        # its own mechanical stop, where it stalls and buzzes.
 
 speed = 100
 
@@ -146,7 +149,7 @@ def servo(angle):
     global SERVO_PIN
 
     angle += 90
-    deviation = 45
+    deviation = STEER_DEVIATION      # PORTED: was 45; our linkage stops at 35
     if angle < 90 - deviation:
         angle = 90 - deviation
     if angle > 90 + deviation:

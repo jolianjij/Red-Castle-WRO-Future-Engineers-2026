@@ -1,734 +1,706 @@
 #!/usr/bin/env python3
 """
-obstacle_challenge.py - WRO 2026 Future Engineers, OBSTACLE CHALLENGE.
-Three laps past red and green traffic signs.
+obstacle_challenge.py - the team's PROVEN obstacle program, ported to this car.
 
-    GREEN -> pass it on its LEFT     RED -> pass it on its RIGHT
+This is "promad obstacle.py" with its LOGIC AND STRUCTURE UNCHANGED. Same
+functions, same order, same control law, same constants, same parking exit.
+The only edits are the ones this car physically forces, and every one is marked
 
-=========================== HOW THIS FILE WORKS ===========================
-Same three parts as open_challenge.py, in the same order:
+    PORTED:
 
-    1. TUNABLES   the numbers you change.  Nothing else needs editing.
-    2. decide()   the brain: ONE frame in, one steering decision out.
-                  Pure logic - no camera, no motor - so it can be tested
-                  on a laptop with tools/test_logic.py.
-    3. main()     the loop: LOOK -> THINK -> ACT, over and over.
+so you can find them all with a single search.
 
-To write a new challenge: copy this file, rewrite decide(), leave main()
-almost alone. See src/README.md.
-===========================================================================
-
-It also records the ORDER of the signs it passed (sign_order.txt) and saves the
-frames where the run was DECIDED (frames/, with 00-WHAT-HAPPENED.txt listing
-them in order) - which is what the video and the engineering journal are built
-from, and what makes a bad run diagnosable afterwards.
-
-Run on the Pi:
-    cd ~/wro2026 && source .venv/bin/activate && python obstacle_challenge.py
-Then PRESS THE BUTTON to start. Press it again to stop.
+Run:  cd ~/wro2026 && source .venv/bin/activate && python obstacle_challenge.py
 """
-import collections
-import csv
-import os
-import time
-
 import cv2
+import sys
 import numpy as np
+import time
+from picamera2 import Picamera2
+from libcamera import Transform            # PORTED: our camera is upside down
+import RPi.GPIO as GPIO
+from array import array
+import csv
+# PORTED: `import board` / `import neopixel` removed - no LED on this car.
 
-import robot as R
-
-# ==========================================================================
-# 1. TUNABLES - everything you might want to change lives here
-# ==========================================================================
-
-# --- speed ---
-CRUISE           = 80      # base speed %  (falls with steering)
-
-# --- direction ---
-FORCE_DIRECTION  = 0       # +1 CW, -1 CCW, 0 = work it out from the parking lot
-                           # (below), falling back to the corner lines. Until
-                           # the direction is known the car CENTRES between the
-                           # walls, which is safe whichever way the track runs.
-
-# --- leaving the parking lot (this also decides the direction) ---
-# The car starts inside the magenta parking lot. Whichever side is more blocked
-# is the side it cannot leave by, so:
-#     more magenta on the LEFT   -> leave RIGHT -> run CW
-#     more magenta on the RIGHT  -> leave LEFT  -> run CCW
-# One measurement, taken before the car moves, answers both questions.
-PARK_START       = False    # False = skip it and start already on the track
-PARK_ANGLE       = 40.0    # deg of lock while pulling out (may exceed STEER_MAX)
-PARK_TIME_S      = 2     # how long to hold it. Longer = tighter exit.
-PARK_SPEED       = 50      # % speed while leaving
-PARK_SETTLE      = 8       # frames averaged before deciding. The car is still,
-                           # so these are the sharpest frames of the whole run.
-PARK_MIN_MAGENTA = 0.010   # if neither side has at least this much magenta the
-                           # car is not in a lot: give up rather than guess, and
-                           # let the corner lines decide as usual.
-PARK_INVERT      = False   # ONE-LINE VENUE FIX. The measurement of which side
-                           # is blocked is reliable; whether "blocked on the
-                           # left" means CW depends on your track's physical
-                           # layout. If the car reads the lot correctly but
-                           # leaves the wrong way, set this True.
-PARK_USE_WALL    = False   # count the black wall as well as magenta?
-                           # OFF, but for a plainer reason than first recorded.
-                           # A synthetic test suggested the two signals were
-                           # ANTI-correlated (the magenta wall hides the black
-                           # one behind it). ON THE REAL TRACK THEY AGREE:
-                           # measured in the lot, magenta read L 0.716 R 0.449
-                           # and the wall read L 0.174 R 0.093 - both naming
-                           # the same side. The anti-correlation was an
-                           # artifact of the synthetic image, where the blank
-                           # background counted as wall.
-                           # It stays off because magenta alone already gives a
-                           # clear margin and is the DIRECT signal: the lot is
-                           # defined by magenta, whereas black is every wall on
-                           # the track. Turn it on only if magenta's margin is
-                           # marginal and the wall's is not.
-
-# --- lane keeping, when no sign is near ---
-LANE_DISTANCE_CM = 40.0    # hold this far from the OUTER wall between signs
-# density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured)
-LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
-
-# --- how hard the car reacts to a sign ---
-# GREEN AND RED ARE TUNED SEPARATELY. They are not symmetric in practice: on a
-# real run green was detected 738 frames with a MEDIAN AREA of 186 px while red
-# was detected 351 frames at a median of 718 - green arrives as smaller, more
-# broken-up blobs, so the same numbers do not suit both.
-#   *_KP        deg of steering per PIXEL of error. This is the one that turns
-#               the law from proportional control into an on/off switch if it
-#               is too big. MEASURED at 0.3 over 412 green-steering frames:
-#                   median error   -60 px  ->  -18 deg, of a 20 deg maximum
-#                   46% of frames were at FULL LOCK
-#               So the car slammed to full left the moment it saw green,
-#               whatever the distance, swung wide, lost the cube out of frame,
-#               and never completed the pass. At 0.12 the same median becomes
-#               -7.2 deg and only 21% saturate - full lock is then reserved for
-#               a cube that really is badly placed, which is what it is for.
-#   *_TARGET_X  the column the sign is pushed toward. Centre is 160, so
-#               GREEN > 160 (drive it right, we pass on its left) and
-#               RED   < 160 (drive it left,  we pass on its right).
-#               FURTHER from 160 = a wider berth around the sign.
-#   *_MIN_AREA  smaller than this and it is ignored. Raise it if the car
-#               chases distant specks; lower it if it notices signs too late.
-#   *_MIN_ASPECT height/width. A standing sign is taller than it is wide, and
-#               this is what rejects lines, markings and patches of floor.
-#               1.0 = "taller than wide". Raise toward 1.5 to be stricter.
-GREEN_KP         = 0.25
-GREEN_TARGET_X   = 180.0
-GREEN_MIN_AREA   = 300
-GREEN_MIN_ASPECT = 1.0
-
-RED_KP           = 0.25
-RED_TARGET_X     = 140.0
-RED_MIN_AREA     = 300
-RED_MIN_ASPECT   = 1.0
-
-Y_GAIN           = 2.0     # how much the target slides outward as a sign nears.
-                           # THIS WAS 2.0 AND IT BROKE THE WHOLE LAW. The frame
-                           # is 320 px wide, and at 2.0 a cube near the bottom
-                           # put the target at 220 + 160*0.75*2.0 = 460 - a
-                           # position NOTHING IN THE IMAGE CAN EVER REACH. The
-                           # error therefore never approached zero and the
-                           # controller demanded maximum steering BY
-                           # CONSTRUCTION, whatever KP was set to.
-                           # Measured on the run: 45% of green frames pinned at
-                           # full lock. At 0.5 the target peaks at 280, inside
-                           # the frame, and saturation falls to 10%.
-                           # The target is also clamped in sign_error(), so a
-                           # future value cannot recreate this.
-SIGN_TARGET_CLAMP = False  # KyivRoboMagic do NOT clamp the target, and their
-                           # target runs off-frame too - it works because they
-                           # have 45 deg of steering to saturate INTO. Ours
-                           # stops at 35. Set True to clamp it back inside.
-SIGN_TARGET_MARGIN = 20    # ...and how far inside the edge, if clamped
-
-# THE SIGN LAW GETS MORE STEERING THAN NORMAL DRIVING.
-# This is the difference that matters. KyivRoboMagic steer +-45 deg; every
-# earlier attempt here capped the sign at STEER_MAX = 20, which is not enough
-# lock to get round a cube - the car saturated, swung wide and never completed
-# the pass. Placing a sign is a deliberate manoeuvre, exactly like the corner
-# kick, so it may use the linkage's real range.
-SIGN_STEER_MAX   = 35.0    # capped at STEER_MECH_MAX by servo() regardless
-
-# HOW CLOSE A WALL MUST BE BEFORE IT OVERRIDES A SIGN.
-# Their override fires at 0.625 of a 160x80 normalisation over a 160x120 half,
-# i.e. about 0.42 as a true fraction - roughly TWICE our WALL_EMERGENCY of
-# 0.213. That is why our car sat in escape mode 40% of a run while theirs did
-# not: ours was calling "danger" at a distance theirs called "driving".
-# The OPEN challenge keeps 0.213 - it scores full marks with it.
-SIGN_WALL_OVERRIDE = 0.42
-
-# BETWEEN SIGNS: DRIVE STRAIGHT, OR FOLLOW THE OUTER WALL?
-# KyivRoboMagic drive STRAIGHT. With no sign in view their error is zero, so
-# the steering is zero, and nothing but the wall override touches it. There is
-# no lane keeping in their obstacle challenge at all.
-# Ours ran an outer-wall PD controller there, and it FOUGHT the sign law: the
-# moment a pass pushed the car off the racing line, the lane keeper started
-# pulling it back, and between them neither finished. Measured on a real run:
-# 42% of frames lane keeping, 41% in the wall escape, and 5% actually placing
-# a sign.
-LANE_KEEPING     = False   # False = their way, straight between signs.
-                           # True  = outer-wall PD (what fought the sign law).
-
-# --- what counts as a sign (shared) ---
-SIGN_MIN_SEEN_S  = 0.25    # A SIGN MUST BE SEEN THIS LONG BEFORE THE CAR ACTS.
-                           # MEASURED on a real run: 35 separate green
-                           # "approaches" in 38.6 s - one every 1.1 s, when
-                           # there are about five pillars. The real ones peak at
-                           # 2000-13300 px and last 0.6-2.1 s; the other thirty
-                           # peak at 88-565 px and last 0.0-0.3 s. Size alone
-                           # does not separate them, because a real pillar is
-                           # small too while it is still far away. PERSISTENCE
-                           # does: a pillar cannot vanish between frames, and a
-                           # speck cannot survive.
-                           # SWEPT against that run, with the min areas below:
-                           #   0.15s/150px -> 31 sightings, 17 still noise-sized
-                           #   0.25s/300px -> 17 sightings,  6 still noise-sized
-                           #   0.25s/600px -> 12 sightings,  1 still noise-sized
-                           #   0.35s/600px ->  8 sightings,  1 still noise-sized
-                           # 600px is cleaner but only sees a pillar once it is
-                           # CLOSE - a real approach takes ~0.5s to grow from
-                           # 300 to 600px, and that is reaction time you do not
-                           # get back. Raise both if it still twitches; lower
-                           # them if it reacts too late.
-SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
-                           # keeping for this long - it would drag the car back
-                           # across the pass it is halfway through
-SIGN_WALL_GUARD  = 0.95    # where the sign steer starts fading, as a fraction
-                           # of WALL_EMERGENCY. 1.0 disables the fade entirely.
-                           #
-                           # THIS WAS 0.70 AND THAT WAS WRONG. The ESCAPE
-                           # already outranks the sign, so below the escape
-                           # threshold the wall is BY DEFINITION not yet
-                           # dangerous - and that is exactly the band this was
-                           # fading. Measured over 412 green-steering frames:
-                           #   the escape fired on   0 of them
-                           #   the worst left reading was 0.212 (escape 0.213)
-                           #   yet 58% were being faded, rising to 74% when the
-                           #   sign was CLOSEST and the pass most needed to finish
-                           # A green sign is passed on its LEFT, and in CW the
-                           # outer wall IS on the left, so a green pass steers
-                           # toward a wall BY GEOMETRY. Fading it there was
-                           # blocking the manoeuvre, not protecting anything.
-                           # At 0.95 the fade is a narrow taper in the last
-                           # sliver before the escape takes over, so the handoff
-                           # is smooth rather than a jump from full sign steer
-                           # to full escape. Set 1.0 to remove it completely.
-SIGN_WALL_FLOOR  = 0.55    # ...and how much of the sign steer SURVIVES the fade.
-                           # THIS MUST NOT BE 0. A green sign is passed on its
-                           # LEFT and in CW the outer wall IS on the left, so
-                           # fading to nothing means the pass can never finish.
-SIGN_STEER_HOLD_S= 0.9     # of that hold, keep steering as the sign commanded
-                           # for this long, then run straight for the remainder
-
-# --- corner-exit kick ---
-# When a corner is counted AND the last sign pushed the car toward the INNER
-# wall, fire a fixed hard turn so the next section comes into view.
-#     CW  : inner wall is RIGHT, RED   pushes the car right -> kick RIGHT
-#     CCW : inner wall is LEFT,  GREEN pushes the car left  -> kick LEFT
-CORNER_KICK      = True
-KICK_ANGLE       = 35.0    # deg. May exceed STEER_MAX (20) - that is the point.
-                           # Hard ceiling is the linkage, STEER_MECH_MAX = 35.
-KICK_TIME_S      = 1     # how long to hold it. Longer = tighter turn.
-KICK_SPEED       = 100      # % speed during the kick
-KICK_SIGN_CW     = "red"   # sign colour that arms the kick when running CW
-KICK_SIGN_CCW    = "green" # ...and when running CCW
-
-# --- recording the order of signs passed ---
-PASS_MIN_AREA    = 300     # a sign must have got this big to count as passed
-PASS_LOST_S      = 3     # ...and then be gone this long
-PASS_COOLDOWN_S  = 0.8     # ignore a re-detection of the SAME colour this soon
-
-# --- frame saving ---
-SAVE_FRAMES      = True
-MAX_SAVES        = 120
-
-# --- run control ---
-STOP_ON_LAPS     = True    # True = stop by itself after the quadrants below.
-                           # False = run until the button is pressed.
-STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 plus the
-                           # coast below leaves the car resting in the start
-                           # section rather than halting on the line.
-STOP_EXTRA_S     = 3.0     # how long to keep driving past that last corner
-MAX_RUNTIME_S    = 300     # SAFETY net
-DEBUG_EVERY      = 15      # console status line every N frames (0 = silent)
-
-# WHEN THE PARKING EXIT DECIDES THE DIRECTION, ONE MORE QUADRANT IS NEEDED.
-# Normally the direction is learned by CROSSING the first corner line, and that
-# crossing is itself quadrant 1 - so the count and the distance travelled line
-# up. Starting from the parking lot, the direction is already known before the
-# car has crossed anything, so that first line is still ahead of it: without
-# this the car would stop one corner short of where it should.
-STOP_QUADRANT = STOP_AFTER_QUADRANT + (1 if PARK_START else 0)
+#two new var
+green_start_timer = None
+red_start_timer = None
+#parking out
+purple_left=0.0
+purple_right=0.0
+Zaid=False
 
 # ==========================================================================
-
-Y_SCALE = 120.0 / R.PROC_H   # map our 160-row frame onto the 120-row reference
-
-# Everything that differs between the two sign colours, in one place, so adding
-# a third colour for the surprise challenge is a new entry rather than a new
-# branch in every function.
-SIGN = {
-    "green": dict(kp=GREEN_KP, target_x=GREEN_TARGET_X,
-                  min_area=GREEN_MIN_AREA, min_aspect=GREEN_MIN_ASPECT),
-    "red":   dict(kp=RED_KP,   target_x=RED_TARGET_X,
-                  min_area=RED_MIN_AREA,   min_aspect=RED_MIN_ASPECT),
-}
-
-
+# TUNABLES - the only numbers you should need to change
 # ==========================================================================
-# 2. THE BRAIN - one frame in, one decision out
+# PORTED: our pin map (was SERVO 23, MOTOR 27/22, BUTTON 9)
+SERVO_PIN = 13
+MOTOR_IN1 = 24          # PWM here = FORWARD
+MOTOR_IN2 = 23
+BUTTON_PIN = 19
+
+# PORTED: their servo centred on 105 with a deviation of 50. OUR ACKERMANN
+# LINKAGE STOPS AT 35 DEGREES - commanding more drives the servo into its own
+# mechanical stop and it stalls there, drawing current and buzzing. Centre is
+# 90 plus our measured trim.
+SERVO_CENTER = 90
+SERVO_TRIM = -9.0
+STEER_DEVIATION = 35
+
+speed=0
+
+# PORTED: our camera is fixed, mounted UPSIDE DOWN, and must have exposure and
+# white balance LOCKED - on auto they drift and move every threshold below.
+CAM_FLIP_180 = True
+CAM_EXPOSURE_US = 12000
+CAM_GAIN = 8.0
+CAM_COLOUR_GAINS = (1.329, 1.446)
+CAM_SATURATION = 1.3
+CAM_CONTRAST = 1.1
+# PORTED: their process_frame rotated the crop 180 because their camera was not
+# flipped in hardware. Ours is. Verified by correlating the column brightness
+# profile against our proven pipeline: False +0.803, True -0.466.
+ROTATE_180 = False
+
+# PORTED: colour tests. Theirs are kept EXCEPT the blue saturation floor: at 60
+# it matched OUR MAT, which reads S~68 against the blue line's S~238 - and the
+# mat is five times bigger than the line, so the count measured the floor.
+RED_SAT_MIN, RED_VAL_MIN, RED_VAL_MAX = 120, 60, 240
+RED_HUE_LO, RED_HUE_HI = 15, 175          # hue < 15 OR hue > 175
+GREEN_SAT_MIN, GREEN_VAL_MIN, GREEN_VAL_MAX = 120, 60, 240
+GREEN_HUE_MIN, GREEN_HUE_MAX = 45, 90
+PURPLE_SAT_MIN, PURPLE_VAL_MIN, PURPLE_VAL_MAX = 120, 60, 240
+PURPLE_HUE_MIN, PURPLE_HUE_MAX = 135, 175
+BLUE_SAT_MIN, BLUE_VAL_MIN, BLUE_VAL_MAX = 140, 70, 200   # PORTED: 60 -> 140
+BLUE_HUE_MIN, BLUE_HUE_MAX = 90, 135
+ORANGE_SAT_MIN, ORANGE_VAL_MIN, ORANGE_VAL_MAX = 60, 125, 240
+ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
+WALL_VAL_MAX = 70
 # ==========================================================================
-Decision = collections.namedtuple(
-    "Decision", "steer mode kind sx sy area servo_limit speed_cap")
+
+LED_PIN = 10
+OUTPUT = GPIO.OUT
+INPUT = GPIO.IN
+#
+pre_line = 0
+# Global variables
+STOP = False
+wall_aligment_state = 0
+# direction swap mechanic disabled, keep structure
+direction_swap_cycle_threshould = -1
+direction_swap_havent_started = True
+
+cycle_count = 0
+direction = 0
+quadrant_count = 0
+
+red_index = 0
+green_index = 1
+
+R, G, B = 0, 0, 0
+
+traffic_index_not_changed_on_cycle_12 = True
+
+parking_near_outer_wall_setup_quadrant = 12
+parking_caused_program_override_quadrant_threshould = 13
+parking_wall_detected_as_a_wall_quadrant_threshould = 14
+
+# Image variables
+raw_frame = np.empty((480, 640, 3), dtype=np.uint8)
+frame = np.empty((120, 320, 3), dtype=np.uint8)
+hsv = np.empty((120, 320, 3), dtype=np.uint8)
+
+# Traffic light variables
+red_mask = np.zeros((120, 320), dtype=np.uint8)
+green_mask = np.zeros((120, 320), dtype=np.uint8)
+
+PARALELIPIPED_MIN_AREA = 75
+
+last_detected_traffic_light = -1
+
+target = array('i', [0, 0, 0, 0])  # Biggest traffic light {x, y, area, type}
+
+red_box = []
+green_box = []
+
+# Wall variables
+left_wall = 0.0
+right_wall = 0.0
+
+# Map lines variables
+line_cycle_delay = 20
+blue_line_threshould = 900
+orange_line_threshould = 900
+
+blue_line_pixel_count = 0
+blue_line_next_allowed_cycle = 0
+orange_line_pixel_count = 0
+orange_line_next_allowed_cycle = 0
+
+blue_line_detected = False
+orange_line_detected = False
+
+blue_line_state = 0
+orange_line_state = 0
+
+# P controller variables
+kp = 0.05
+Err = 0
+dir = 0.0
+
+# Parking
+PARKING_MIN_AREA = 1000
+purple_mask = np.zeros((120, 320), dtype=np.uint8)
+parking = array('i', [0, 0, 0])  # parking gate {x, y, area}
+purple_box = []
+
+# CSV logging setup
+logfile = open("robot_log.csv", "w", newline="")
+logwriter = csv.writer(logfile)
+logwriter.writerow(["cycle", "Err", "dir", "quadrant", "traffic_light", "target_x", "target_y", "target_area"])
 
 
-def find_sign(hsv):
-    """The biggest red/green blob that is TALLER THAN WIDE.
-
-    The aspect test is what rejects the corner lines and stray mat pixels: a
-    traffic sign is a standing block, so it is always taller than it is wide.
-    Returns (kind, cx, cy, area, bbox) or None.
-    """
-    best = None
-    for kind in ("red", "green"):
-        cfg = SIGN[kind]
-        m = R.mask(hsv, kind)
-        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if area < cfg["min_area"] or (best and area <= best[3]):
-                continue
-            x, y, w, h = cv2.boundingRect(c)
-            if h < w * cfg["min_aspect"]:
-                continue
-            mm = cv2.moments(c)
-            if mm["m00"] == 0:
-                continue
-            best = (kind, mm["m10"] / mm["m00"], mm["m01"] / mm["m00"],
-                    area, (x, y, w, h))
-    return best
+def LED_color(r, g, b):
+    # PORTED: no NeoPixel on this car. Kept so every call site is unchanged.
+    pass
 
 
-class SignGate:
-    """Only let a sign through once it has been there long enough to be real.
-
-    Detection fragments: a genuine pillar and a speck of noise both appear as
-    "green, area 200" in a single frame, and no size threshold tells them apart
-    because a real pillar is small while it is still far away. What does tell
-    them apart is that a pillar is STILL THERE the next frame, and the one after.
-
-    A short dropout does not reset the clock - detection flickers on real
-    pillars too, and restarting the timer on every flicker would reject the
-    thing this is meant to protect.
-    """
-
-    def __init__(self, min_seen_s=0.15, tolerate_gap_s=0.20):
-        self.min_seen_s = min_seen_s
-        self.tolerate_gap_s = tolerate_gap_s
-        self.kind = ""
-        self._first = 0.0
-        self._last = 0.0
-        self.rejected = 0          # how many specks it threw away, for the log
-
-    def accept(self, sign, now):
-        """The sign if it has earned it, else None."""
-        if sign is None:
-            return None
-        kind = sign[0]
-        if kind != self.kind or (now - self._last) > self.tolerate_gap_s:
-            self.kind, self._first = kind, now      # a new approach starts here
-        self._last = now
-        if (now - self._first) >= self.min_seen_s:
-            return sign
-        self.rejected += 1
-        return None
+def LED_hsv(hue_val, sat, val):
+    # PORTED: no NeoPixel on this car. Kept so every call site is unchanged.
+    pass
 
 
-def sign_error(kind, cx, cy):
-    """How far the sign is from where we want it in the picture.
-
-    We never measure distance. We just keep pushing the sign toward one side of
-    the frame, and the car ends up on the correct side of it:
-
-        green -> drive the sign to the RIGHT of the frame -> we pass on its left
-        red   -> drive the sign to the LEFT  of the frame -> we pass on its right
-
-    The target slides further out as the sign gets nearer (the y term), so the
-    car commits harder the closer it gets instead of clipping the corner of it.
-    """
-    y = cy * Y_SCALE                    # our 160 rows -> their 120-row reference
-    tx = SIGN[kind]["target_x"]
-    lo, hi = SIGN_TARGET_MARGIN, R.PROC_W - SIGN_TARGET_MARGIN
-    if kind == "green":
-        target = tx + y * Y_GAIN
-        if SIGN_TARGET_CLAMP:
-            target = min(hi, target)
-        return -(target - cx)
-    target = tx - y * Y_GAIN
-    if SIGN_TARGET_CLAMP:
-        target = max(lo, target)
-    return cx - target
+def is_button_down():
+    # PORTED: ours is wired to GND with the internal pull-up, so PRESSED = LOW.
+    # Their obstacle file already read it this way, so this matches.
+    return GPIO.input(BUTTON_PIN) == 0
 
 
-def limit_toward_wall(steer, left, right):
-    """Fade a steering command out as it aims at a wall that is already close.
+def servo(angle):
+    """Adjust and set the servo angle using RPi.GPIO."""
 
-    The sign law does not know walls exist - it will command full lock to place
-    a sign, and in a 3 m corridor that means driving into the wall until the
-    escape fires and the two fight. Measured on a failed run: 37% of frames
-    past the escape threshold, the sign law asking -20 deg while the left wall
-    read 0.20 against 0.213.
+    global SERVO_PIN
 
-    It fades to SIGN_WALL_FLOOR, NOT to zero - see that setting for why. The
-    ESCAPE is the real safety line and outranks the sign entirely; this only
-    stops a DISTANT sign causing a full-lock charge at a wall.
-    """
-    approaching = left if steer < 0 else right   # -steer = left = the LEFT wall
-    start = R.WALL_EMERGENCY * SIGN_WALL_GUARD
-    if approaching <= start:
-        return steer
-    span = max(1e-6, R.WALL_EMERGENCY - start)
-    frac = min(1.0, (approaching - start) / span)
-    # fade DOWN TO THE FLOOR, never to nothing. A GREEN sign is passed on its
-    # LEFT, and in CW the outer wall IS on the left - so a green pass steers
-    # toward a wall by geometry, not by mistake. Fading to zero meant the car
-    # could never finish one: measured, 226 of 388 green-steering frames were
-    # being faded, and when green was closest the left wall sat at 0.172, right
-    # in the middle of the fade band.
-    keep = 1.0 - (1.0 - SIGN_WALL_FLOOR) * frac
-    return steer * keep
+    # PORTED: their centre was 105 with a deviation of 50. Ours is 90 plus a
+    # measured trim, clamped to the linkage's real 35 degrees.
+    angle += SERVO_CENTER
+    deviation = STEER_DEVIATION
+    if angle < SERVO_CENTER - deviation:
+        angle = SERVO_CENTER - deviation
+    if angle > SERVO_CENTER + deviation:
+        angle = SERVO_CENTER + deviation
+    angle += SERVO_TRIM
+
+    min_duty = 2.5  # Duty cycle for 0 degrees
+    max_duty = 12.5 # Duty cycle for 180 degrees
+
+    duty_range = max_duty - min_duty
+    duty = min_duty + (angle / 180.0) * duty_range
+
+    servo_pwm.ChangeDutyCycle(duty)
+    time.sleep(0.1)
+    servo_pwm.ChangeDutyCycle(0)
 
 
-def clamp_steer(steer, servo_limit):
-    """Clamp to STEER_MAX, or to a raised (kick) ceiling that never exceeds the
-    linkage's mechanical limit."""
-    ceiling = R.STEER_MAX if servo_limit is None \
-        else min(servo_limit, R.STEER_MECH_MAX)
-    return max(-ceiling, min(ceiling, steer))
+def motor(speed):  # Speed is -1 to 1
+    global MOTOR_IN1, MOTOR_IN2
+
+    speed = max(-100, min(100, speed))
+    speed_pwm = abs(speed)  # Calculate absolute speed for PWM
+
+    if speed > 0:  # Forward
+
+        motor1_pwm.ChangeDutyCycle(speed_pwm)
+        motor2_pwm.ChangeDutyCycle(0)
+    elif speed < 0:  # Reverse
+        motor1_pwm.ChangeDutyCycle(0)
+        motor2_pwm.ChangeDutyCycle(speed_pwm)
+    else:  # Stop
+        motor1_pwm.ChangeDutyCycle(0)
+        motor2_pwm.ChangeDutyCycle(0)
 
 
-def decide(now, view, sign, hold, kick, outer, direction, park=None):
-    """Return a Decision for this frame. +steer = right.
+def Setup_GPIO():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)          # PORTED
 
-    PRIORITY LADDER - highest first, exactly one branch answers:
+    GPIO.setup(SERVO_PIN, OUTPUT)
+    GPIO.setup(MOTOR_IN1, OUTPUT)
+    GPIO.setup(MOTOR_IN2, OUTPUT)
+    # PORTED: GPIO.setup(10, OUTPUT) was the NeoPixel data pin - not on this car
+    GPIO.setup(BUTTON_PIN, INPUT, pull_up_down=GPIO.PUD_UP)   # PORTED: pull-up
+    global servo_pwm, motor1_pwm, motor2_pwm
+    servo_pwm = GPIO.PWM(SERVO_PIN, 50)
+    servo_pwm.start(0)
 
-        0. PARK   still leaving the parking lot. Runs once, at the very start,
-                  and locks the lap direction on the way out.
-        1. KICK   open-loop corner exit. It is a committed manoeuvre, so it
-                  outranks everything EXCEPT a wall closing from the far side.
-        2. WALL   a wall is too close -> escape.
-        3. SIGN   a red/green sign is in view -> steer to place it correctly.
-        4. HOLD   a sign was here in the last SIGN_HOLD_S. Do NOT hand back to
-                  lane keeping yet, or the wall follower drags the car back
-                  across the pass it is halfway through.
-        5. LANE   nothing else is happening -> PD on the outer wall.
+    motor1_pwm = GPIO.PWM(MOTOR_IN1, 1000)
+    motor2_pwm = GPIO.PWM(MOTOR_IN2, 1000)
+    motor1_pwm.start(0)
+    motor2_pwm.start(0)
 
-    Pure logic: no hardware, no camera. That is what lets tools/test_logic.py
-    drive it directly, and it means changing how the car decides never means
-    reading the main loop.
-    """
-    none = ("", 0.0, 0.0, 0)
-    # WHILE A SIGN IS BEING PLACED, the wall has to be MUCH closer before it
-    # takes over. KyivRoboMagic override at about 0.42 as a true fraction; ours
-    # fires at 0.213, so our car called "danger" at a distance theirs called
-    # "driving" - and spent 40% of a run in escape mode, overriding every pass.
-    # Outside a sign approach the normal, more cautious threshold still applies.
-    near_sign = sign is not None or (
-        hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S)
-    wall_bar = SIGN_WALL_OVERRIDE if near_sign else R.WALL_EMERGENCY
-
-    # ---- 0. PARK ----
-    # Deliberately ABOVE the wall escape: inside the lot the magenta walls are
-    # close on purpose, and an escape firing here would fight the way out.
-    if park is not None and not park.done:
-        out = park.update(view, now, known_direction=direction)
-        if out is not None:
-            steer, mode, speed = out
-            return Decision(steer, mode, *none, PARK_ANGLE, speed)
-
-    # ---- 1. KICK ----
-    escape = R.wall_emergency(view.left, view.right, outer, direction,
-                              threshold=wall_bar)
-    if kick.active(now):
-        k_steer, k_limit, k_speed = kick.command()
-        if not (escape is not None and escape * k_steer < 0):
-            return Decision(k_steer, "kick", *none, k_limit, k_speed)
-        kick.cancel()          # wall closing the other way - abandon the kick
-
-    # ---- 2. WALL ----
-    if escape is not None:
-        return Decision(escape, "wall", *none, None, None)
-
-    # ---- 3. SIGN ----
-    if sign is not None:
-        kind, sx, sy, area, _ = sign
-        steer = sign_error(kind, sx, sy) * SIGN[kind]["kp"]
-        steer = limit_toward_wall(steer, view.left, view.right)
-        hold["kind"], hold["t"], hold["steer"] = kind, now, steer
-        # SIGN_STEER_MAX, not STEER_MAX. Placing a sign is a deliberate
-        # manoeuvre and needs the lock to actually get round the cube.
-        return Decision(steer, "sign-" + kind, kind, sx, sy, area,
-                        SIGN_STEER_MAX, None)
-
-    # ---- 4. HOLD ----
-    if hold["kind"] and (now - hold["t"]) < SIGN_HOLD_S:
-        if (now - hold["t"]) < SIGN_STEER_HOLD_S:
-            steer = limit_toward_wall(hold["steer"], view.left, view.right)
-            mode, lim = "sign-hold", SIGN_STEER_MAX
-        else:
-            steer, mode, lim = 0.0, "sign-clear", None   # run straight past it
-        return Decision(steer, mode, hold["kind"], 0.0, 0.0, 0, lim, None)
-
-    # ---- 5. LANE ----
-    # Their way: nothing in view, so nothing to steer for. Straight, and let
-    # the wall override be the only thing that intervenes. The PD controller
-    # that used to live here spent the run undoing the sign law's work.
-    if not LANE_KEEPING:
-        return Decision(0.0, "straight", *none, None, None)
-    return Decision(outer.steer(view.left, view.right, direction),
-                    "lane", *none, None, None)
+    # PORTED: NeoPixel initialisation removed
 
 
-class PassLogger:
-    """Builds the ORDER of the signs the car has passed, e.g. [red, green, red].
+def Setup_Camera():
+    global picam2
+    picam2 = Picamera2()
+    # PORTED: flipped in hardware, exposure and white balance locked
+    tf = Transform(hflip=1, vflip=1) if CAM_FLIP_180 else Transform()
+    config = picam2.create_preview_configuration(
+        main={"format": 'RGB888', "size": (640, 480)}, transform=tf)
+    picam2.configure(config)
+    picam2.start()
+    picam2.set_controls({
+        "AeEnable": False, "ExposureTime": CAM_EXPOSURE_US,
+        "AnalogueGain": CAM_GAIN,
+        "AwbEnable": False, "ColourGains": CAM_COLOUR_GAINS,
+        "Saturation": CAM_SATURATION, "Contrast": CAM_CONTRAST,
+    })
+    time.sleep(1)
+    return picam2
 
-    A sign counts as passed once it grew to at least PASS_MIN_AREA (so it was
-    genuinely approached, not a distant speck) and then stayed out of view for
-    PASS_LOST_S. The cooldown stops ONE sign being recorded twice when the
-    detection flickers; it must never block a DIFFERENT sign, because two real
-    signs of the same colour can follow each other.
-    """
 
-    def __init__(self):
-        self.order = []
-        self._kind = ""
-        self._peak = 0
-        self._seen = 0.0
-        self._last_kind = ""
-        self._last_t = -1e9        # NOT 0.0 - that blocked the very first commit
+def capture_array(picam2):
+    raw_frame_arr = picam2.capture_array()
+    return raw_frame_arr
 
-    def update(self, sign, now):
-        if sign is not None:
-            kind, _, _, area, _ = sign
-            if kind != self._kind:                 # a different sign appeared
-                self._commit(now)
-                self._kind, self._peak = kind, int(area)
+
+def process_frame(raw_frame_arr, frame_arr):
+    # PORTED: identical result to their per-pixel loop, with numpy slicing.
+    crop = raw_frame_arr[240:480:2, 0:640:2]
+    if ROTATE_180:
+        crop = crop[::-1, ::-1]
+    frame_arr[:] = crop
+
+
+def process_hsv(hsv_arr, red_data, green_data, purple_data):
+    # PORTED: identical result to their per-pixel loop, with numpy.
+    global blue_line_pixel_count, orange_line_pixel_count, left_wall, right_wall,purple_left,purple_right
+    global Zaid
+
+    h = hsv_arr[:, :, 0].astype(np.int16)
+    s = hsv_arr[:, :, 1].astype(np.int16)
+    v = hsv_arr[:, :, 2].astype(np.int16)
+
+    red_m = ((s > RED_SAT_MIN) & (v > RED_VAL_MIN) & (v < RED_VAL_MAX) &
+             ((h < RED_HUE_LO) | (h > RED_HUE_HI)))
+    green_m = ((s > GREEN_SAT_MIN) & (v > GREEN_VAL_MIN) & (v < GREEN_VAL_MAX) &
+               (h > GREEN_HUE_MIN) & (h < GREEN_HUE_MAX))
+    purple_m = ((s > PURPLE_SAT_MIN) & (v > PURPLE_VAL_MIN) & (v < PURPLE_VAL_MAX) &
+                (h >= PURPLE_HUE_MIN) & (h <= PURPLE_HUE_MAX))
+
+    red_data[:] = np.where(red_m, 255, 0).astype(np.uint8)
+    green_data[:] = np.where(green_m, 255, 0).astype(np.uint8)
+    purple_data[:] = np.where(purple_m, 255, 0).astype(np.uint8)
+
+    blue_line_pixel_count = int(np.count_nonzero(
+        (s > BLUE_SAT_MIN) & (v > BLUE_VAL_MIN) & (v < BLUE_VAL_MAX) &
+        (h > BLUE_HUE_MIN) & (h < BLUE_HUE_MAX)))
+    orange_line_pixel_count = int(np.count_nonzero(
+        (s > ORANGE_SAT_MIN) & (v > ORANGE_VAL_MIN) & (v < ORANGE_VAL_MAX) &
+        (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX)))
+
+    purple_left = float(np.count_nonzero(purple_m[:, :160]))
+    purple_right = float(np.count_nonzero(purple_m[:, 160:]))
+
+    dark = v < WALL_VAL_MAX
+    left_wall = float(np.count_nonzero(dark[:, :160]))
+    right_wall = float(np.count_nonzero(dark[:, 160:]))
+
+    # their extra: purple counts as wall too, before the parking quadrant
+    if quadrant_count < parking_wall_detected_as_a_wall_quadrant_threshould and Zaid:
+        pw = purple_m & (v >= 70)
+        left_wall += 0.8 * float(np.count_nonzero(pw[:, :160]))
+        right_wall += 0.8 * float(np.count_nonzero(pw[:, 160:]))
+
+    left_wall /= (160 * 80)
+    right_wall /= (160 * 80)
+
+
+def update_lines():
+    global blue_line_state, blue_line_detected, blue_line_next_allowed_cycle
+    global orange_line_state, orange_line_detected, orange_line_next_allowed_cycle
+    global cycle_count,pre_line,direction
+
+    if blue_line_pixel_count > blue_line_threshould:
+        blue_line_state = 1
+        if cycle_count >= blue_line_next_allowed_cycle:
+            blue_line_detected = True
+    else:
+        blue_line_state = 0
+        if blue_line_detected:
+            blue_line_state = 2
+            blue_line_next_allowed_cycle = cycle_count + line_cycle_delay
+        blue_line_detected = False
+
+    if orange_line_pixel_count > orange_line_threshould:
+        orange_line_state = 1
+        if cycle_count >= orange_line_next_allowed_cycle:
+            orange_line_detected = True
+    else:
+        orange_line_state = 0
+        if orange_line_detected:
+            orange_line_state = 2
+            orange_line_next_allowed_cycle = cycle_count + line_cycle_delay
+        orange_line_detected = False
+
+
+def process_traffic_contours(box, type_idx):
+    global target
+    for contour in box:
+        area = cv2.contourArea(contour)
+        if area > target[2]:
+            boundingBox = cv2.boundingRect(contour)
+            if boundingBox[2] < boundingBox[3]:
+                moments = cv2.moments(contour)
+                if moments['m00'] != 0:
+                    x = int(moments['m10'] / moments['m00'])
+                    y = int(moments['m01'] / moments['m00'])
+                    target = array('i', [x, y, int(area), type_idx])
+
+
+def process_parking_contours(box):
+    global parking
+    for contour in box:
+        area = cv2.contourArea(contour)
+        if area > parking[2]:
+            moments = cv2.moments(contour)
+            if moments['m00'] != 0:
+                x = int(moments['m10'] / moments['m00'])
+                y = int(moments['m01'] / moments['m00'])
+                parking = array('i', [x, y, int(area)])
+
+
+def draw(frame, box_red, box_grn):
+    for i, contour in enumerate(box_red):
+        area = cv2.contourArea(contour)
+        if area > PARALELIPIPED_MIN_AREA:
+            cv2.drawContours(frame, box_red, i, (0, 0, 255), 2)
+            moments = cv2.moments(contour)
+            if moments['m00'] != 0:
+                center = (int(moments['m10'] / moments['m00']), int(moments['m01'] / moments['m00']))
+                cv2.circle(frame, center, 5, (0, 0, 255), -1)
+            boundingBox = cv2.boundingRect(contour)
+            if boundingBox[2] < boundingBox[3]:
+                cv2.rectangle(frame, (boundingBox[0], boundingBox[1]),
+                             (boundingBox[0] + boundingBox[2], boundingBox[1] + boundingBox[3]),
+                             (0, 0, 255), 3)
             else:
-                self._peak = max(self._peak, int(area))
-            self._seen = now
-        elif self._kind and (now - self._seen) >= PASS_LOST_S:
-            self._commit(now)
+                cv2.rectangle(frame, (boundingBox[0], boundingBox[1]),
+                             (boundingBox[0] + boundingBox[2], boundingBox[1] + boundingBox[3]),
+                             (255, 0, 122), 3)
 
-    def _commit(self, now):
-        same_again = (self._kind == self._last_kind
-                      and now - self._last_t < PASS_COOLDOWN_S)
-        if self._kind and self._peak >= PASS_MIN_AREA and not same_again:
-            self.order.append(self._kind)
-            self._last_kind, self._last_t = self._kind, now
-            print(f"  >> PASSED {self._kind.upper()} "
-                  f"(peak area {self._peak})  order so far: {self.order}")
-        self._kind, self._peak = "", 0
+    for i, contour in enumerate(box_grn):
+        area = cv2.contourArea(contour)
+        if area > PARALELIPIPED_MIN_AREA:
+            cv2.drawContours(frame, box_grn, i, (0, 255, 0), 2)
+            moments = cv2.moments(contour)
+            if moments['m00'] != 0:
+                center = (int(moments['m10'] / moments['m00']), int(moments['m01'] / moments['m00']))
+                cv2.circle(frame, center, 5, (0, 255, 0), -1)
+            boundingBox = cv2.boundingRect(contour)
+            if boundingBox[2] < boundingBox[3]:
+                cv2.rectangle(frame, (boundingBox[0], boundingBox[1]),
+                             (boundingBox[0] + boundingBox[2], boundingBox[1] + boundingBox[3]),
+                             (0, 255, 0), 3)
+            else:
+                cv2.rectangle(frame, (boundingBox[0], boundingBox[1]),
+                             (boundingBox[0] + boundingBox[2], boundingBox[1] + boundingBox[3]),
+                             (255, 122, 0), 3)
 
-    def finish(self, now):
-        self._commit(now)
-        return self.order
+
+def extra_imagery(hsv_arr):
+    # PORTED: same three images, numpy instead of a per-pixel loop
+    h = hsv_arr[:, :, 0].astype(np.int16)
+    s = hsv_arr[:, :, 1].astype(np.int16)
+    v = hsv_arr[:, :, 2].astype(np.int16)
+    blue_mask = np.where(
+        (s > BLUE_SAT_MIN) & (v > BLUE_VAL_MIN) & (v < BLUE_VAL_MAX) &
+        (h > BLUE_HUE_MIN) & (h < BLUE_HUE_MAX), 255, 0).astype(np.uint8)
+    orange_mask = np.where(
+        (s > ORANGE_SAT_MIN) & (v > ORANGE_VAL_MIN) & (v < ORANGE_VAL_MAX) &
+        (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX), 255, 0).astype(np.uint8)
+    walls = np.where(v < WALL_VAL_MAX, 255, 0).astype(np.uint8)
+    cv2.imwrite("blue.png", blue_mask)
+    cv2.imwrite("orange.png", orange_mask)
+    cv2.imwrite("walls.png", walls)
 
 
-# ==========================================================================
-# 3. THE LOOP
-# ==========================================================================
+def cycle(picam2):
+    global R, G, B, cycle_count, dir, target, parking, red_box, green_box, purple_box
+    global Err, last_detected_traffic_light, quadrant_count, direction ,green_start_timer
+    global red_index, green_index, traffic_index_not_changed_on_cycle_12 ,red_start_timer
+    global direction_swap_havent_started, direction_swap_cycle_threshould
+    global STOP, wall_aligment_state, raw_frame, frame, hsv,Zaid,pre_line
+
+    R, G, B = 122, 122, 122
+    cycle_count += 1
+    dir = 0.0
+
+    target = array('i', [160, 0, PARALELIPIPED_MIN_AREA, -1])
+    parking = array('i', [160, 0, PARKING_MIN_AREA])
+
+    raw = capture_array(picam2)
+    raw_frame[:] = raw
+    frame = np.empty((120, 320, 3), dtype=np.uint8)
+    process_frame(raw_frame, frame)
+    hsv_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    process_hsv(hsv_mat, red_mask, green_mask, purple_mask)
+
+    red_box, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    green_box, _ = cv2.findContours(green_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    purple_box, _ = cv2.findContours(purple_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    process_traffic_contours(red_box, red_index)
+    process_traffic_contours(green_box, green_index)
+    process_parking_contours(purple_box)
+
+    update_lines()
+
+    if blue_line_state != 0 and direction == 0:
+        direction = -1
+    if orange_line_state != 0 and direction == 0:
+        direction = 1
+
+    if direction >= 0:
+        if orange_line_state == 2:
+            quadrant_count += 1
+        if blue_line_state ==2:
+            pre_line +=1
+        quadrant_count = max(quadrant_count,pre_line)
+    else:
+        if blue_line_state == 2:
+            quadrant_count += 1
+        if orange_line_state == 2:
+            pre_line +=1
+        quadrant_count = max(quadrant_count,pre_line)
+    #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    if direction >= 0:
+        if target[3] in [1, 2]:  # Green
+            Err = -((260 + target[1] * 5) - target[0])
+            if target[0] > 220:
+                Err = 0
+            if target[2] > 1000:
+                last_detected_traffic_light = 1
+        elif target[3] in [0, 3]:  # Red
+            Err = (target[0] - (120 - target[1] * 5))
+            if target[2] > 1000:
+                last_detected_traffic_light = 0
+                red_start_timer =time.time()
+        else:
+            Err = 0
+    if direction < 0:
+        if target[3] in [1, 2]:  # Green
+            Err = -((220 + target[1] * 5) - target[0])
+            if target[2] > 1500:
+                last_detected_traffic_light = 1
+                green_start_timer = time.time()
+        elif target[3] in [0, 3]:  # Red
+            Err = (target[0] - (120 - target[1] * 5))
+            if target[0] < 90:
+                Err = 0
+            if target[2] > 1500:
+                last_detected_traffic_light = 0
+
+        else:
+            Err = 0
+    if last_detected_traffic_light == 0 and red_start_timer is not None and direction == 1:
+        if time.time() - red_start_timer >= 2.5:   # 5 seconds passed
+            last_detected_traffic_light = 1
+            print(time.time() - red_start_timer)
+            red_start_timer = None
+    if last_detected_traffic_light ==1 and green_start_timer is not None and direction ==-1:
+        if time.time() - green_start_timer >= 2.5:   # 5 seconds passed
+            last_detected_traffic_light = 0
+            green_start_timer = None
+            print("Traffic light back to Red (default)")
+
+    if target[3] % 2 == 1:
+        R, G, B = 0, 255, 0
+    if target[3] % 2 == 0:
+        R, G, B = 255, 0, 0
+    if blue_line_state != 0:
+        R, G, B = 0, 0, 255
+    if orange_line_state != 0:
+        R, G, B = 255, 122, 0
+
+    dir = Err * kp
+    # check if we need to return to green
+    if direction >= 0:
+        if last_detected_traffic_light == 0:
+            if right_wall > 0.6:
+                dir = -40*right_wall
+        else:
+            if left_wall > 0.6:
+                dir = 30*left_wall
+            elif right_wall > 0.6:
+                dir =-30*right_wall
+        if last_detected_traffic_light ==1 and orange_line_state==2:
+            servo(45)
+            time.sleep(0.7)
+    else:
+        if last_detected_traffic_light == 1:
+            if left_wall > 0.6:
+                dir = 40*left_wall
+        else:
+            if right_wall > 0.6:
+                dir = -30*left_wall
+            elif left_wall > 0.6:
+                dir = 30*right_wall
+        if last_detected_traffic_light ==0 and blue_line_state==2:
+            servo(-45)
+            time.sleep(0.7)
+    # --- Disabled swap mechanic ---
+    # if quadrant_count == 8 and direction_swap_havent_started:
+    #     direction *= -1
+    #     direction_swap_cycle_threshould = cycle_count + 20
+    #     direction_swap_havent_started = False
+
+    # if cycle_count < direction_swap_cycle_threshould:
+    #     dir = 45 if direction >= 0 else -45
+    # --------------------------------
+
+    if (quadrant_count == parking_near_outer_wall_setup_quadrant and
+            traffic_index_not_changed_on_cycle_12 and abs(dir) < 15):
+        if direction == 1:
+            red_index = 2
+        if direction == -1:
+            green_index = 3
+        traffic_index_not_changed_on_cycle_12 = False
+        motor(60)  # Scale back to 0-255 range
+
+    # Enter parking mode at quadrant >= 12
+    if quadrant_count >= 12:
+        if wall_aligment_state == 0:
+            dir = 0
+            if left_wall + right_wall > 0.8:
+                wall_aligment_state = 1
+        else:
+            if direction >= 0:
+                dir = (left_wall - 0.8) * 50
+                if right_wall > 0.5:
+                    dir = 45
+            else:
+                dir = (0.8 - right_wall) * 50
+                if left_wall > 0.5:
+                    dir = -45
+
+            if parking[2] > 3400:
+                STOP = True
+
+            R, G, B = 255, 0, 255
+    # Debug log to console
+    print(f"[left_wall {left_wall}] right_wall={right_wall}, dir={dir:.2f}, quadrant={quadrant_count}, target={list(target)}, traffic={last_detected_traffic_light}")
+
+    # Log to CSV
+    logwriter.writerow([cycle_count, Err, dir, quadrant_count, last_detected_traffic_light,
+                        target[0], target[1], target[2]])
+    logfile.flush()
+
+    servo(dir)
+    LED_color(R, G, B)
+
+
 def main():
-    R.setup_hardware()
-    R.servo(0)
-    button = R.Button()
-    cam = R.open_camera()
+    global STOP, cycle_count, raw_frame, frame, hsv, red_mask, green_mask, purple_mask,Zaid
+    global servo_pwm, motor_pwm, picam2, direction
 
-    laps = R.LapTracker()
-    if FORCE_DIRECTION:
-        laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
-    laps.stop_quadrant = STOP_QUADRANT
-    outer = R.OuterWallFollower(target=LANE_TARGET)
-    passes = PassLogger()
-    rec = R.FrameRecorder(enabled=SAVE_FRAMES, max_saves=MAX_SAVES)
-    kick = R.CornerKick(angle=KICK_ANGLE, duration_s=KICK_TIME_S,
-                        speed=KICK_SPEED, sign_cw=KICK_SIGN_CW,
-                        sign_ccw=KICK_SIGN_CCW, enabled=CORNER_KICK)
-    park = R.ParkingExit(angle=PARK_ANGLE, time_s=PARK_TIME_S,
-                         speed=PARK_SPEED, settle_frames=PARK_SETTLE,
-                         min_magenta=PARK_MIN_MAGENTA,
-                         use_wall=PARK_USE_WALL, enabled=PARK_START,
-                         invert=PARK_INVERT)
-    gate = SignGate(min_seen_s=SIGN_MIN_SEEN_S)
-    hold = {"kind": "", "t": -1e9, "steer": 0.0}
-    last_mode = ""
-    last_sign_kind = ""        # most recent sign COLOUR seen, kept across the
-                               # gap between a sign and the corner it precedes
+    Setup_GPIO()
+    picam2 = Setup_Camera()
+    LED_hsv(0, 255, 255)  # Initial blue
 
-    os.makedirs("logs", exist_ok=True)
-    os.makedirs("frames", exist_ok=True)
-    for f in os.listdir("frames"):
-        os.remove(os.path.join("frames", f))
+    button_sum = 0
 
-    logpath = time.strftime("logs/obstacle_%Y%m%d_%H%M%S.csv")
-    logf = open(logpath, "w", newline="")
-    log = csv.writer(logf)
-    log.writerow(["t_ms", "frame", "dir", "quad", "mode", "sign", "sx", "sy",
-                  "area", "left", "right", "front", "steer", "speed", "file"])
+    # PORTED: wait for the button before anything moves. Their program drove off
+    # immediately; the rules want the car still until it is pressed.
+    print("Obstacle Challenge ready. PRESS THE BUTTON to start...")
+    while not is_button_down():
+        time.sleep(0.01)
+    while is_button_down():
+        time.sleep(0.01)
+    print("  GO")
 
-    print("OBSTACLE CHALLENGE")
-    print(f"  direction : {'FORCED ' + ('CW' if FORCE_DIRECTION > 0 else 'CCW')}"
-          if FORCE_DIRECTION else "  direction : auto from the corner lines")
-    print(f"  between   : " + ("STRAIGHT (KyivRoboMagic - no lane keeping)"
-                                if not LANE_KEEPING else "outer-wall PD"))
-    print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
-          f"(density {LANE_TARGET:.4f})")
-    print(f"  gate      : a sign must persist {SIGN_MIN_SEEN_S:.2f}s to count")
-    print(f"  green     : kp={GREEN_KP} ->x{GREEN_TARGET_X:.0f} "
-          f"area>{GREEN_MIN_AREA} aspect>{GREEN_MIN_ASPECT}")
-    print(f"  red       : kp={RED_KP} ->x{RED_TARGET_X:.0f} "
-          f"area>{RED_MIN_AREA} aspect>{RED_MIN_ASPECT}")
-    print(f"  parking   : {'ON' if PARK_START else 'OFF'} "
-          f"{PARK_ANGLE:.0f}deg for {PARK_TIME_S:.1f}s @ {PARK_SPEED}%  "
-          f"(more magenta LEFT -> out RIGHT -> CW)")
-    print(f"  kick      : {'ON' if CORNER_KICK else 'OFF'} {KICK_ANGLE:.0f}deg "
-          f"for {KICK_TIME_S:.1f}s @ {KICK_SPEED}%  "
-          f"(CW<-{KICK_SIGN_CW}, CCW<-{KICK_SIGN_CCW})")
-    print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f} "
-          f"blue>{R.LINE_FRACTION_BLUE:.3f}")
-    print(f"  speed     : {CRUISE}%")
-    print(f"  stop      : " + (
-        f"after quadrant {STOP_QUADRANT} + {STOP_EXTRA_S:.1f}s"
-        f"  ({STOP_AFTER_QUADRANT}"
-        + (" +1 because the parking exit sets the direction)" if PARK_START else ")")
-        if STOP_ON_LAPS else "button only"))
-    print(f"  log       : {logpath}")
+    start = time.time()
 
-    button.wait_for_start("Obstacle Challenge")
+    cycle(picam2)
+    if purple_left > purple_right:
+        direction=1
+        motor(50)
+        servo(45)
+        time.sleep(0.7)
+        Zaid=True
+        servo(-35)
+        time.sleep(0.7)
+    else:
+        direction=-1
+        motor(50)
+        servo(-45)
+        time.sleep(0.6)
+        Zaid=True
+        servo(35)
+        time.sleep(0.9)
+    LED_hsv(85, 255, 255)  # Green for startScale to 0-255 range
+    servo(0)
+    motor(50)
+    while not STOP:
+        cycle(picam2)
+        print(purple_right,purple_left)
+        if is_button_down():
+            button_sum += 1
+            break                # PORTED: the button is also the emergency stop
 
-    t0 = time.time()
-    frame = 0
-    reason = "?"
-    R.motor(CRUISE)
-    try:
-        while True:
-            frame += 1
-            now = time.time()
+    if button_sum < 30:
+        motor(0.5 * 255)  # Scale to 0-255 range
+        if direction >= 0:
+            servo(30)
+            time.sleep(0.45)
+            servo(-30)
+            time.sleep(1.3)
+            servo(0)
+            time.sleep(0.3)
+        else:
+            motor(0.5 * 255)
+            servo(-30)
+            time.sleep(0.45)
+            servo(30)
+            time.sleep(1.3)
+            servo(0)
+            time.sleep(0.3)
 
-            # ---------------- LOOK ----------------
-            view = R.look(cam)
-            before, had_dir = laps.quadrant, laps.direction
-            laps.update(view.blue, view.orange, view.left, view.right, view.front)
+    motor(0)
+    servo(0)
+    LED_hsv(0, 255, 255)  # Back to blue
 
-            raw_sign = find_sign(view.hsv)
-            sign = gate.accept(raw_sign, now)     # ignore specks that vanish
-            passes.update(sign, now)
-            t = now - t0
+    end = time.time()
+    full_time = (end - start) * 1000.0
 
-            # the direction: the one decision the whole run rests on
-            if had_dir == 0 and laps.direction != 0:
-                rec.moment(view, "direction-%s" % ("CW" if laps.direction > 0 else "CCW"),
-                           t, lines=["DIRECTION LOCKED %s" % laps.direction_source,
-                                     "blue %.4f  orange %.4f" % (view.blue, view.orange)])
-            # each sign, the FIRST time that colour appears in this approach
-            if sign is not None:
-                k, sx, sy, area, bb = sign
-                if k != last_sign_kind:
-                    col = (0, 0, 255) if k == "red" else (0, 255, 0)
-                    rec.moment(view, "sign-%s-first" % k, t,
-                               lines=["%s FIRST SEEN  area %d" % (k.upper(), int(area)),
-                                      "at x=%.0f y=%.0f -> target x=%.0f"
-                                      % (sx, sy, SIGN[k]["target_x"]),
-                                      "L %.3f  R %.3f" % (view.left, view.right)],
-                               boxes=[(bb[0], bb[1], bb[2], bb[3], col, k)])
-                last_sign_kind = k
+    print("\n")
+    print(f"time         : {full_time / 1000.0:.3f} s")
+    print(f"cycle amount : {cycle_count} cycles")
+    print(f"speed        : {full_time / cycle_count if cycle_count else 0:.3f} ms / cycle")
 
-            if laps.quadrant > before:
-                rec.moment(view, "quadrant-%02d" % laps.quadrant, t,
-                           lines=["QUADRANT %d of %d" % (laps.quadrant, STOP_QUADRANT),
-                                  "blue %.4f  orange %.4f" % (view.blue, view.orange)])
-            # a corner was just counted -> maybe kick out of it
-            if laps.quadrant > before:
-                if kick.maybe_fire(laps.direction, last_sign_kind, now):
-                    last_sign_kind = ""      # consumed; don't re-fire next corner
+    hsv_mat = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    extra_imagery(hsv_mat)
+    draw(frame, red_box, green_box)
+    cv2.imwrite("input.png", raw_frame)
+    cv2.imwrite("frame.png", frame)
+    cv2.imwrite("red.png", red_mask)
+    cv2.imwrite("green.png", green_mask)
+    cv2.imwrite("purple.png", purple_mask)
 
-            # ---------------- THINK ----------------
-            prev_mode = last_mode
-            d = decide(now, view, sign, hold, kick, outer, laps.direction, park)
-            last_mode = d.mode
-            # each escape, kick and parking phase, once as it starts
-            if d.mode != prev_mode and d.mode in (
-                    "wall", "kick", "park-look", "park-exit"):
-                rec.moment(view, "%s-%05.1fs" % (d.mode, t), t,
-                           lines=["%s  steer %+.1f" % (d.mode.upper(), d.steer),
-                                  "L %.3f  R %.3f  (escape at %.3f)"
-                                  % (view.left, view.right, R.WALL_EMERGENCY)])
-            if park.direction and laps.direction == 0:
-                # the way out of the lot IS the way round the track
-                laps.set_direction(park.direction, "parking-lot exit")
-            steer = clamp_steer(d.steer, d.servo_limit)
-            speed = d.speed_cap if d.speed_cap is not None \
-                else R.cruise_speed(CRUISE, steer)
+    # PORTED: their final "press to exit" loop spun with no delay, pinning a
+    # core. Same behaviour, but it sleeps between polls.
+    button_sum = 0
+    while button_sum < 10:
+        if is_button_down():
+            button_sum += 1
+        time.sleep(0.01)
 
-            # ---------------- ACT ----------------
-            R.servo(steer, limit=d.servo_limit)
-            R.motor(speed)
-
-            # ---------------- RECORD / FINISH ----------------
-            fname = ""
-
-            t_ms = int((now - t0) * 1000)
-            log.writerow([t_ms, frame, laps.direction, laps.quadrant, d.mode,
-                          d.kind, f"{d.sx:.0f}", f"{d.sy:.0f}", int(d.area),
-                          f"{view.left:.3f}", f"{view.right:.3f}",
-                          f"{view.front:.3f}", f"{steer:.1f}", f"{speed:.0f}",
-                          fname])
-            if DEBUG_EVERY and frame % DEBUG_EVERY == 0:
-                logf.flush()
-                print(f"  t={t_ms/1000:5.1f}s q={laps.quadrant:2d} {d.mode:10s} "
-                      f"L={view.left:.3f} R={view.right:.3f} "
-                      f"area={int(d.area):4d} steer={steer:+6.1f}")
-
-            if button.stop_pressed():
-                reason = "BUTTON pressed"
-                break
-            if STOP_ON_LAPS and laps.ready_to_finish(STOP_EXTRA_S):
-                reason = (f"{laps.quadrant} quadrants + {STOP_EXTRA_S:.1f}s coast")
-                break
-            if now - t0 > MAX_RUNTIME_S:
-                reason = "SAFETY timeout"
-                break
-
-    except KeyboardInterrupt:
-        reason = "Ctrl+C"
-    finally:
-        R.motor(0)
-        R.servo(0)
-        order = passes.finish(time.time())
-        dt = time.time() - t0
-        print(f"\nFINISHED ({reason})  {frame} frames  {dt:.1f}s  "
-              f"{1000*dt/max(frame,1):.1f} ms/frame")
-        print(f"  SIGN ORDER PASSED : {order if order else '(none)'}")
-        print(f"  corner kicks fired: {kick.fired}")
-        print(f"  specks rejected   : {gate.rejected} "
-              f"(seen briefly, never long enough to be a real sign)")
-        idx = rec.write_index()
-        print(f"  decisive frames   : {rec.saved} -> frames/")
-        if idx:
-            print(f"  what happened     : {idx}")
-        print(f"  fusion: {laps.summary()}")
-        with open("sign_order.txt", "w") as f:
-            f.write(",".join(order) + "\n")
-        log.writerow([])
-        log.writerow(["#", reason, "sign order", " ".join(order)])
-        logf.flush()
-        logf.close()
-        R.shutdown()
-        cam.close()
-        print(f"  log saved: {logpath}   order also in sign_order.txt")
+    LED_hsv(0, 0, 0)  # Off
+    picam2.close()
+    GPIO.cleanup()
+    sys.exit(0)
 
 
-if __name__ == "__main__":
-    main()
+main()
