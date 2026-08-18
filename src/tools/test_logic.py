@@ -796,6 +796,34 @@ check("red is proportional too", abs(38.0 * OBS.RED_KP) < R.STEER_MAX * 0.6, Tru
 
 
 # ==========================================================================
+
+# ==========================================================================
+section("the sign target must be REACHABLE")
+# THE ROOT CAUSE of green never being passed. The frame is 320 px wide, but at
+# Y_GAIN=2.0 a cube near the bottom put the target at
+#     220 + 160*0.75*2.0 = 460
+# a position nothing in the image can ever reach. The error could never fall to
+# zero, so the law stopped being proportional and pinned at full lock BY
+# CONSTRUCTION - no value of KP could have fixed it. Measured: 45% of green
+# frames at full lock; with the target inside the frame, 10%.
+for cy in (0, 40, 80, 120, 160):
+    for kind, x in (("green", 100.0), ("red", 220.0)):
+        e = OBS.sign_error(kind, x, cy)
+        # both branches return  error = cx - target,  so target = cx - error
+        implied = x - e
+        check("%s target at cy=%d is inside the frame" % (kind, cy),
+              -1 <= implied <= R.PROC_W + 1, True)
+
+# and the law is still proportional at the measured errors
+check("a distant green cube does not saturate",
+      abs(OBS.sign_error("green", 100.0, 25) * OBS.GREEN_KP) < R.STEER_MAX, True)
+check("a badly-placed green cube still can",
+      abs(OBS.sign_error("green", 5.0, 145) * OBS.GREEN_KP) >= R.STEER_MAX * 0.7, True)
+check("green still steers LEFT (negative)", OBS.sign_error("green", 100.0, 80) < 0, True)
+check("red still steers RIGHT (positive)", OBS.sign_error("red", 220.0, 80) > 0, True)
+
+
+# ==========================================================================
 print(chr(10) + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

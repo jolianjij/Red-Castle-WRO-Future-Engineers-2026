@@ -125,7 +125,20 @@ RED_TARGET_X     = 120.0
 RED_MIN_AREA     = 300
 RED_MIN_ASPECT   = 1.0
 
-Y_GAIN           = 2.0     # how much the target slides outward as a sign nears
+Y_GAIN           = 0.5     # how much the target slides outward as a sign nears.
+                           # THIS WAS 2.0 AND IT BROKE THE WHOLE LAW. The frame
+                           # is 320 px wide, and at 2.0 a cube near the bottom
+                           # put the target at 220 + 160*0.75*2.0 = 460 - a
+                           # position NOTHING IN THE IMAGE CAN EVER REACH. The
+                           # error therefore never approached zero and the
+                           # controller demanded maximum steering BY
+                           # CONSTRUCTION, whatever KP was set to.
+                           # Measured on the run: 45% of green frames pinned at
+                           # full lock. At 0.5 the target peaks at 280, inside
+                           # the frame, and saturation falls to 10%.
+                           # The target is also clamped in sign_error(), so a
+                           # future value cannot recreate this.
+SIGN_TARGET_MARGIN = 20    # keep the target this far inside the frame edge
 
 # --- what counts as a sign (shared) ---
 SIGN_MIN_SEEN_S  = 0.25    # A SIGN MUST BE SEEN THIS LONG BEFORE THE CAR ACTS.
@@ -316,9 +329,16 @@ def sign_error(kind, cx, cy):
     """
     y = cy * Y_SCALE
     tx = SIGN[kind]["target_x"]
+    lo, hi = SIGN_TARGET_MARGIN, R.PROC_W - SIGN_TARGET_MARGIN
     if kind == "green":
-        return -((tx + y * Y_GAIN) - cx)
-    return cx - (tx - y * Y_GAIN)
+        # CLAMPED INTO THE FRAME. An unreachable target is not a strong demand,
+        # it is a broken one: the error can never fall to zero, so the law stops
+        # being proportional and pins at full lock forever. Measured at
+        # Y_GAIN=2.0 the target reached 460 in a 320 px image.
+        target = min(hi, tx + y * Y_GAIN)
+        return -(target - cx)
+    target = max(lo, tx - y * Y_GAIN)
+    return cx - target
 
 
 def limit_toward_wall(steer, left, right):
