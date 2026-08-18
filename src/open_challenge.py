@@ -46,6 +46,22 @@ LANE_DISTANCE_CM = 30.0    # hold this far from the OUTER wall on the straights
 # density = 0.1032 at 40 cm, slope 0.00501 per cm closer (measured on this car)
 LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 
+# --- corners: WALL DENSITY decides when to turn ---
+# The corner LINES are used for COUNTING LAPS ONLY. They do not steer the car.
+# Why: the lines are a colour measurement, and a colour that drifts takes the
+# steering with it. Measured on this track, blue was over its threshold on 43%
+# of frames - it was matching the mat, not the line - so anything steering off
+# it was being told to corner in the middle of a straight. The wall ahead is a
+# geometric measurement: it cannot be fooled by a colour range being wrong.
+TURN_ON_FRONT    = 0.30    # front wall fill that STARTS a corner turn. Bigger
+                           # = turns later (closer to the wall). This is now the
+                           # ONLY thing that triggers a turn.
+TURN_OFF_FRONT   = 0.20    # ...and the fill it must drop below to END it. Kept
+                           # well under TURN_ON_FRONT so a noisy reading cannot
+                           # flicker the turn on and off.
+TURN_MIN_GAP_S   = 1.5     # a corner cannot physically follow another sooner
+                           # than this, so ignore a re-trigger inside it
+
 # --- run control ---
 STOP_AFTER_QUADRANT = 11   # 12 corners = 3 laps. Stopping after 11 + the coast
                            # below leaves the car resting in the start section.
@@ -93,6 +109,11 @@ def decide(view, laps, outer, turner):
     Why the outer wall and not the middle: in this challenge the inner walls
     move every round, so the corridor width changes. Centring chases a moving
     reference; the outer wall is the one thing that stays put.
+
+    THE CORNER LINES DO NOT APPEAR HERE AT ALL. They count laps and nothing
+    else. Turning is decided by the wall ahead, which is a geometric fact rather
+    than a colour measurement, so a drifting colour range can no longer steer
+    the car.
     """
     # ---- 1. EMERGENCY ----
     escape = R.wall_emergency(view.left, view.right, outer, laps.direction)
@@ -100,12 +121,15 @@ def decide(view, laps, outer, turner):
         return Decision(escape, "emergency")
 
     # ---- 2. TURN ----
+    # Fired by the WALL AHEAD, never by a line. The line count and the steering
+    # are now completely independent, so a bad colour range can cost a lap
+    # count but can no longer make the car turn in the wrong place.
     turner.update(view.front)
     if turner.active:
         return Decision(turner.steer(), "turn")
-    if view.front > R.FRONT_TURN_BACKUP and laps.direction != 0:
-        turner.trigger(laps.direction)          # line was missed - geometry saves us
-        return Decision(turner.steer(), "turn-geom")
+    if view.front > TURN_ON_FRONT and laps.direction != 0:
+        turner.trigger(laps.direction)
+        return Decision(turner.steer(), "turn")
 
     # ---- 3. LANE ----
     return Decision(R.apply_bias(outer.steer(view.left, view.right, laps.direction)),
@@ -125,7 +149,8 @@ def main():
     if FORCE_DIRECTION:
         laps.set_direction(FORCE_DIRECTION, "FORCE_DIRECTION in this file")
     outer = R.OuterWallFollower(target=LANE_TARGET)
-    turner = R.TurnSequencer()
+    turner = R.TurnSequencer(exit_front=TURN_OFF_FRONT,
+                             min_gap_s=TURN_MIN_GAP_S)
     rec = R.FrameRecorder(enabled=SAVE_MOMENTS, max_saves=MAX_MOMENT_SAVES)
 
     os.makedirs("logs", exist_ok=True)
@@ -140,7 +165,9 @@ def main():
           if FORCE_DIRECTION else "  direction : auto from the corner lines")
     print(f"  lane      : {LANE_DISTANCE_CM:.0f} cm from the outer wall "
           f"(density {LANE_TARGET:.4f})")
-    print(f"  lines     : orange>{R.LINE_FRACTION_ORANGE:.3f} "
+    print(f"  turns     : on front wall > {TURN_ON_FRONT}, ends below "
+          f"{TURN_OFF_FRONT}  (lines do NOT steer)")
+    print(f"  lines     : COUNTING ONLY.  orange>{R.LINE_FRACTION_ORANGE:.3f} "
           f"blue>{R.LINE_FRACTION_BLUE:.3f} ratio>{R.LINE_DIR_MIN_RATIO:.2f}")
     print(f"  speed     : {CRUISE}%   stop after quadrant "
           f"{STOP_AFTER_QUADRANT} + {STOP_EXTRA_S:.1f}s")
@@ -170,7 +197,7 @@ def main():
                                      "blue %.4f  orange %.4f" % (view.blue, view.orange),
                                      "L %.3f  R %.3f" % (view.left, view.right)])
             if laps.quadrant > before:
-                turner.trigger(laps.direction)   # corner line crossed -> turn
+                # COUNTING ONLY. The turn is fired by the wall ahead, in decide().
                 rec.moment(view, "quadrant-%02d" % laps.quadrant, t,
                            lines=["QUADRANT %d of %d" % (laps.quadrant, R.STOP_AFTER_QUADRANT),
                                   "blue %.4f  orange %.4f" % (view.blue, view.orange),

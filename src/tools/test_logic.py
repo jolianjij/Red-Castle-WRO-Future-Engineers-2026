@@ -273,8 +273,24 @@ check("scripted turn running -> turn", d.mode, "turn")
 check("CW turn steers right", d.steer > 0, True)
 turner.active = False
 
-d = OPEN.decide(view(front=R.FRONT_TURN_BACKUP + 0.05), laps, outer, turner)
-check("missed line, wall ahead -> turn-geom", d.mode, "turn-geom")
+# THE OPEN CHALLENGE NO LONGER TURNS ON LINES AT ALL. The wall ahead is the
+# only trigger, because a colour range that drifts would otherwise take the
+# steering with it - measured: blue over its threshold on 43% of frames.
+turner = R.TurnSequencer(exit_front=OPEN.TURN_OFF_FRONT,
+                         min_gap_s=OPEN.TURN_MIN_GAP_S)
+d = OPEN.decide(view(front=OPEN.TURN_ON_FRONT + 0.05), laps, outer, turner)
+check("wall ahead alone starts a turn", d.mode, "turn")
+check("...in the locked direction", d.steer > 0, laps.direction > 0)
+turner2 = R.TurnSequencer(exit_front=OPEN.TURN_OFF_FRONT,
+                          min_gap_s=OPEN.TURN_MIN_GAP_S)
+d = OPEN.decide(view(front=OPEN.TURN_ON_FRONT - 0.05), laps, outer, turner2)
+check("a clear way ahead does NOT turn", d.mode, "lane")
+# a corner cannot follow another instantly - without the gap, a wall staying in
+# view re-arms the turn every frame and the hard cap can never bound it
+turner2.active = False
+turner2._last_end = _t.monotonic()
+turner2.trigger(1)
+check("re-trigger inside the minimum gap is refused", turner2.active, False)
 
 # ==========================================================================
 section("OBSTACLE decide() - the ladder")
@@ -501,12 +517,23 @@ check("open space: command passes through untouched",
       OBS.limit_toward_wall(-20.0, 0.02, 0.02), -20.0)
 check("steering LEFT with the LEFT wall close is faded",
       abs(OBS.limit_toward_wall(-20.0, (G + R.WALL_EMERGENCY) / 2, 0.02)) < 20.0, True)
-check("...to ZERO exactly where the escape takes over",
-      OBS.limit_toward_wall(-20.0, R.WALL_EMERGENCY, 0.02), -0.0)
+# IT MUST NOT FADE TO ZERO. A green sign is passed on its LEFT, and in CW the
+# outer wall IS on the left, so every green pass steers toward a wall by
+# geometry. Fading to nothing killed 226 of 388 green-steering frames on a real
+# run. The escape at WALL_EMERGENCY is the actual safety line.
+_at_wall = OBS.limit_toward_wall(-20.0, R.WALL_EMERGENCY, 0.02)
+check("at the escape threshold it keeps the FLOOR, not zero",
+      abs(_at_wall) > 0.0, True)
+check("...which is SIGN_WALL_FLOOR of the command",
+      round(abs(_at_wall), 1), round(20.0 * OBS.SIGN_WALL_FLOOR, 1))
+check("the floor is deliberately non-zero", OBS.SIGN_WALL_FLOOR > 0.0, True)
+check("a green pass can still steer with the wall close",
+      abs(OBS.limit_toward_wall(-20.0, 0.19, 0.02)) > 5.0, True)
 check("steering LEFT with the RIGHT wall close is NOT faded",
       OBS.limit_toward_wall(-20.0, 0.02, R.WALL_EMERGENCY), -20.0)
-check("steering RIGHT with the RIGHT wall close is faded",
-      OBS.limit_toward_wall(20.0, 0.02, R.WALL_EMERGENCY), 0.0)
+check("steering RIGHT with the RIGHT wall close is faded, symmetrically",
+      round(OBS.limit_toward_wall(20.0, 0.02, R.WALL_EMERGENCY), 1),
+      round(20.0 * OBS.SIGN_WALL_FLOOR, 1))
 check("never flips sign", OBS.limit_toward_wall(-20.0, 0.99, 0.02) <= 0.0, True)
 
 # and through the real ladder

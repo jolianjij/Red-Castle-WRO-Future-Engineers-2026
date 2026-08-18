@@ -122,9 +122,21 @@ Y_GAIN           = 2.0     # how much the target slides outward as a sign nears
 SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
                            # keeping for this long - it would drag the car back
                            # across the pass it is halfway through
-SIGN_WALL_GUARD  = 0.70    # fade the sign steer out as it aims at a close
-                           # wall; 0 exactly where the escape takes over.
-                           # Lower = more cautious. 1.0 = old behaviour.
+SIGN_WALL_GUARD  = 0.70    # where the fade STARTS, as a fraction of
+                           # WALL_EMERGENCY. 1.0 disables the fade entirely.
+SIGN_WALL_FLOOR  = 0.55    # ...and how much of the sign steer SURVIVES it.
+                           # THIS MUST NOT BE 0. Measured on a failed run:
+                           # a GREEN sign must be passed on its LEFT, and in CW
+                           # the outer wall IS on the left - so every green pass
+                           # steers toward a wall by geometry, not by mistake.
+                           # Fading to zero killed 226 of 388 green-steering
+                           # frames, and when green was closest (area>2000) the
+                           # left wall averaged 0.172 - right in the fade band.
+                           # The car could never complete a green pass.
+                           # The ESCAPE at WALL_EMERGENCY is the real safety
+                           # line and still outranks the sign completely; this
+                           # is only meant to stop a DISTANT sign causing a
+                           # full-lock charge at a wall.
 SIGN_STEER_HOLD_S= 0.9     # of that hold, keep steering as the sign commanded
                            # for this long, then run straight for the remainder
 
@@ -244,13 +256,25 @@ def limit_toward_wall(steer, left, right):
     escape fires and the two fight. Measured on a failed run: 37% of frames
     past the escape threshold, the sign law asking -20 deg while the left wall
     read 0.20 against 0.213.
+
+    It fades to SIGN_WALL_FLOOR, NOT to zero - see that setting for why. The
+    ESCAPE is the real safety line and outranks the sign entirely; this only
+    stops a DISTANT sign causing a full-lock charge at a wall.
     """
-    approaching = left if steer < 0 else right
+    approaching = left if steer < 0 else right   # -steer = left = the LEFT wall
     start = R.WALL_EMERGENCY * SIGN_WALL_GUARD
     if approaching <= start:
         return steer
     span = max(1e-6, R.WALL_EMERGENCY - start)
-    return steer * max(0.0, 1.0 - (approaching - start) / span)
+    frac = min(1.0, (approaching - start) / span)
+    # fade DOWN TO THE FLOOR, never to nothing. A GREEN sign is passed on its
+    # LEFT, and in CW the outer wall IS on the left - so a green pass steers
+    # toward a wall by geometry, not by mistake. Fading to zero meant the car
+    # could never finish one: measured, 226 of 388 green-steering frames were
+    # being faded, and when green was closest the left wall sat at 0.172, right
+    # in the middle of the fade band.
+    keep = 1.0 - (1.0 - SIGN_WALL_FLOOR) * frac
+    return steer * keep
 
 
 def clamp_steer(steer, servo_limit):

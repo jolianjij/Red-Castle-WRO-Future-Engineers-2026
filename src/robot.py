@@ -1046,14 +1046,26 @@ class TurnSequencer:
     the turn runs; the wall EMERGENCY still overrides it.
     """
 
-    def __init__(self):
+    def __init__(self, exit_front=None, min_gap_s=0.0):
         self.active = False
         self._until = 0.0
         self._min_until = 0.0
         self._dir = 0
+        # A challenge may set its own end-of-corner threshold. The Open
+        # Challenge does, because its turns are now fired by the wall ahead
+        # rather than by a line, so when the turn ENDS matters as much as when
+        # it starts - and the two numbers have to be chosen together.
+        self.exit_front = FRONT_EXIT if exit_front is None else exit_front
+        self.min_gap_s = min_gap_s
+        self._last_end = -1e9
 
     def trigger(self, direction):
         if direction == 0:
+            return
+        # a real corner cannot follow another this soon - without this, a wall
+        # that stays in view simply re-arms the turn every frame and the hard
+        # cap below can never actually bound it
+        if time.monotonic() - self._last_end < self.min_gap_s:
             return
         self.active = True
         self._dir = direction
@@ -1075,9 +1087,11 @@ class TurnSequencer:
         now = time.monotonic()
         if now >= self._until:                      # hard cap
             self.active = False
+            self._last_end = now
             return
-        if front is not None and now >= self._min_until and front < FRONT_EXIT:
+        if front is not None and now >= self._min_until and front < self.exit_front:
             self.active = False
+            self._last_end = now
 
     def steer(self):
         return STEER_MAX * TURN_LOCK_FRAC * (1.0 if self._dir > 0 else -1.0)
