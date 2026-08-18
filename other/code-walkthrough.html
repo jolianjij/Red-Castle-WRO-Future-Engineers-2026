@@ -773,6 +773,8 @@ arguments, so the opposite convention is a one-line change.</p>
             left = ml + (wl if self.use_wall else 0.0)
             right = mr + (wr if self.use_wall else 0.0)
             self.direction = 1 if left &gt; right else -1
+            if self.invert:
+                self.direction = -self.direction
             self._until = now + self.time_s
             print(f&quot;[park] magenta L={ml:.4f} R={mr:.4f} | &quot;
                   f&quot;wall L={wl:.4f} R={wr:.4f}&quot;)

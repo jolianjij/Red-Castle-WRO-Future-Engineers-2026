@@ -70,16 +70,20 @@ PARK_INVERT      = False   # ONE-LINE VENUE FIX. The measurement of which side
                            # layout. If the car reads the lot correctly but
                            # leaves the wrong way, set this True.
 PARK_USE_WALL    = False   # count the black wall as well as magenta?
-                           # DEFAULT OFF, and this is deliberate. The magenta
-                           # wall physically HIDES the black wall behind it, so
-                           # the blocked side shows LESS black, while the open
-                           # side looks across the track at the far outer wall
-                           # and shows MORE. The two signals are anti-correlated
-                           # and adding them cancels the measurement - in the
-                           # test case magenta said L=0.60 R=0.05 while wall
-                           # said L=0.40 R=0.95, and the sum was an exact tie.
-                           # Magenta alone is the honest signal. Turn this on
-                           # only if a venue proves otherwise.
+                           # OFF, but for a plainer reason than first recorded.
+                           # A synthetic test suggested the two signals were
+                           # ANTI-correlated (the magenta wall hides the black
+                           # one behind it). ON THE REAL TRACK THEY AGREE:
+                           # measured in the lot, magenta read L 0.716 R 0.449
+                           # and the wall read L 0.174 R 0.093 - both naming
+                           # the same side. The anti-correlation was an
+                           # artifact of the synthetic image, where the blank
+                           # background counted as wall.
+                           # It stays off because magenta alone already gives a
+                           # clear margin and is the DIRECT signal: the lot is
+                           # defined by magenta, whereas black is every wall on
+                           # the track. Turn it on only if magenta's margin is
+                           # marginal and the wall's is not.
 
 # --- lane keeping, when no sign is near ---
 LANE_DISTANCE_CM = 30.0    # hold this far from the OUTER wall between signs

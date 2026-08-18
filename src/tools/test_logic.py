@@ -379,18 +379,17 @@ check("park uses its own speed", d.speed_cap, OBS.PARK_SPEED)
 d2 = OBS.decide(2.0, walled, None, hold0(), R.CornerKick(), outer, 1, p)
 check("once out, the wall escape works again", d2.mode, "wall")
 
-# WHY PARK_USE_WALL DEFAULTS TO FALSE: the magenta wall hides the black wall
-# behind it, so the blocked side shows LESS black while the open side looks
-# across the track at the far outer wall and shows MORE. Adding the two cancels
-# the signal. This test pins that down so nobody "helpfully" turns it back on.
+# PARK_USE_WALL is off by default. Note what this does and does NOT claim:
+# on the REAL track the magenta and wall readings AGREE (measured in the lot,
+# magenta L 0.716/R 0.449, wall L 0.174/R 0.093 - same side). An earlier
+# synthetic test appeared to show them cancelling, but that was an artifact of
+# the blank test image, where the background counted as wall. So all we assert
+# here is the thing that actually matters: magenta ALONE reads the lot
+# correctly, and it is what the default uses.
 p_mag = R.ParkingExit(use_wall=False)
 run_park(p_mag, park_view(0.60, 0.05))
-p_both = R.ParkingExit(use_wall=True)
-run_park(p_both, park_view(0.60, 0.05))
 check("magenta alone reads the lot correctly", p_mag.direction, 1)
-check("adding the black wall destroys that signal",
-      p_both.direction != p_mag.direction or p_both.direction == 0, True)
-check("...which is why the default is magenta only", OBS.PARK_USE_WALL, False)
+check("the default is magenta only", OBS.PARK_USE_WALL, False)
 
 # ==========================================================================
 section("set_direction starts the lap timer")

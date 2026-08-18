@@ -511,8 +511,8 @@ then morphological open, k=5         <span class="c"># drops the printed dots</s
       <tr><td><span class="swatch" style="background:var(--c-blue)"></span>blue line</td><td class="n">96–135</td><td class="n">60–255</td><td class="n">70–200</td><td>—</td></tr>
       <tr><td><span class="swatch" style="background:var(--c-orange)"></span>orange line</td><td class="n">2–13</td><td class="n">72–170</td><td class="n">70–255</td><td>The mat itself is a warm cream at H 17–19, S 42–53. <code>H≤13</code> and <code>S≥72</code> are what exclude it.</td></tr>
       <tr><td><span class="swatch" style="background:var(--c-green)"></span>green sign</td><td class="n">60–95</td><td class="n">140–255</td><td class="n">30–170</td><td>Floor is 60, not 30 — the red sign's fringe reaches H=30.</td></tr>
-      <tr><td><span class="swatch" style="background:var(--c-red)"></span>red sign</td><td class="n">174–10</td><td class="n">170–255</td><td class="n">60–255</td><td>The wrap starts <em>above</em> magenta.</td></tr>
-      <tr><td><span class="swatch" style="background:var(--c-magenta)"></span>magenta lot</td><td class="n">163–178</td><td class="n">95–168</td><td class="n">90–255</td><td>S ceiling 168 keeps the red sign (S≈199) out.</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-red)"></span>red sign</td><td class="n">178–12</td><td class="n">170–255</td><td class="n">45–255</td><td>The wrap starts <em>above the parking wall</em>, which sits at H 171–177.</td></tr>
+      <tr><td><span class="swatch" style="background:var(--c-magenta)"></span>magenta lot</td><td class="n">158–177</td><td class="n">90–255</td><td class="n">40–255</td><td>Measured on the <em>parking wall up close</em>, not the block at distance.</td></tr>
     </tbody>
   </table>
   </div>
@@ -533,6 +533,33 @@ then morphological open, k=5         <span class="c"># drops the printed dots</s
       <strong>Orange was matching the mat</strong>, which is a warm cream, for 44 %
       of the band. Every one of these was found by checking each pair of colours
       for overlap, not by looking at each range on its own.
+    </p>
+  </div>
+
+  <div class="measured">
+    <span class="tag">Measured · the parking wall was split between two colours</span>
+    <p>
+      Running the parking exit on the real track exposed the worst of these. The
+      wall’s body reads <strong>H 171–177, S 165–229, V 47–85</strong>.
+      Red’s wrap began at 174, so the wall fell <em>inside red</em> — the largest
+      “red” object in frame was a 119×20 slab of parking wall. Only the
+      taller-than-wide test stopped it being treated as a traffic sign.
+    </p>
+    <p>
+      Magenta had been tuned on the block at a distance in good light (S 130,
+      V 179). The same wall up close and shadowed is S 207, V 60, failing both
+      bounds. It matched <strong>290 px</strong> — a thin strip along the lit top
+      edge of a wall filling most of the frame.
+    </p>
+    <span class="figure">boundary at 176   red still took a 148x50 slab of wall
+boundary at 177   red's biggest blob = 23x52, TALL  &lt;- the actual pillar
+
+before   magenta L 0.0254  R 0.0181   margin 1.40x  (a coin toss)
+after    magenta L 0.7164  R 0.4487   margin 1.60x  (a clear decision)</span>
+    <p>
+      One surface spanning lit to shadow was being split between two colours.
+      The boundary was chosen by trialling both values against the live frame,
+      not by reasoning about it.
     </p>
   </div>
 </section>
@@ -699,17 +726,21 @@ red   → drive the sign toward x=140  <span class="c"># left of frame  → we p
     motion blur, and worth spending.
   </p>
   <div class="measured">
-    <span class="tag">Measured · why the black wall is excluded</span>
+    <span class="tag">Corrected · why the black wall is excluded</span>
     <p>
-      Counting black wall pixels alongside magenta was the obvious thing to try.
-      It cancels the measurement. The magenta wall <em>occludes</em> the black wall
-      behind it, so the blocked side shows <strong>less</strong> black, while the
-      open side looks across the track at the far outer wall and shows more:
+      A synthetic test first suggested magenta and the black wall were
+      <em>anti-correlated</em> — the magenta wall occludes the black one behind
+      it. <strong>On the real track they agree.</strong> Measured in the lot:
     </p>
-    <span class="figure">magenta   L 0.60   R 0.05     → left is blocked
-wall      L 0.40   R 0.95     → says the opposite
-sum       L 1.00   R 1.00     → an exact tie</span>
-    <p>Magenta alone is the honest signal.</p>
+    <span class="figure">magenta   L 0.716   R 0.449    -&gt; left is blocked
+wall      L 0.174   R 0.093    -&gt; names the same side</span>
+    <p>
+      The anti-correlation was an artifact of the synthetic image, where blank
+      background counted as wall. The wall reading stays off for a plainer
+      reason: magenta alone already gives a clear margin, and it is the
+      <em>direct</em> signal — the lot is defined by magenta, whereas black is
+      every wall on the track.
+    </p>
   </div>
 </section>
 
@@ -848,7 +879,7 @@ python tools/dryrun.py        <span class="c"># live camera, motor never touched
       <tr><td>Start / stop button</td><td><span class="status done">working</span></td><td>Confirmed on the car</td></tr>
       <tr><td>Video</td><td><span class="status done">filmed</span></td><td>—</td></tr>
       <tr><td>Obstacle Challenge</td><td><span class="status part">not re-run</span></td><td>Code ready; untested since the restructure</td></tr>
-      <tr><td>Parking exit</td><td><span class="status part">tests only</span></td><td>Passes offline; no live run yet</td></tr>
+      <tr><td>Parking exit</td><td><span class="status done">runs on track</span></td><td>1.6× margin from the real lot; locks CW</td></tr>
       <tr><td>Corner kick timing</td><td><span class="status part">estimated</span></td><td><code>KICK_TIME_S = 0.9</code> is a guess, not a measurement</td></tr>
       <tr><td>Venue Ethernet</td><td><span class="status miss">blocked</span></td><td>Laptop has no working Ethernet adapter</td></tr>
       <tr><td>Pi <code>cmdline.txt</code></td><td><span class="status miss">0 bytes</span></td><td>Latent boot risk, unrelated to everything else</td></tr>
@@ -858,7 +889,7 @@ python tools/dryrun.py        <span class="c"># live camera, motor never touched
 
   <h3>The three things to do next</h3>
   <ol>
-    <li><strong>Run the Obstacle Challenge</strong> with the parking exit. Watch the first <code>[park]</code> line — it prints both magenta readings and the direction it chose, so a wrong call is visible immediately.</li>
+    <li><strong>Confirm the exit direction suits your track.</strong> The car reads the lot correctly and picks CW. Whether “blocked on the left means clockwise” matches your layout is a physical fact the code cannot check — if it leaves the wrong way, set <code>PARK_INVERT = True</code>.</li>
     <li><strong>Time the corner kick.</strong> 0.9 s at 30° is an estimate; nobody has measured how fast this car rotates.</li>
     <li><strong>Solve the laptop Ethernet</strong>, by BIOS or by a USB adapter. It is the single point of failure in the entire venue setup, and there is currently no spare.</li>
   </ol>

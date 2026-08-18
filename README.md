@@ -486,13 +486,17 @@ shows enough magenta the car declines to guess and leaves the direction to the
 corner lines, because a wrong direction locked at frame one would ruin the whole
 run.
 
-> **We do not add the black wall to this measurement**, although it was the
-> obvious thing to try. The magenta wall physically *occludes* the black wall
-> behind it, so the blocked side shows **less** black, while the open side looks
-> across the track at the far outer wall and shows **more**. The two signals are
-> anti-correlated: in testing, magenta read L=0.60/R=0.05 while the wall read
-> L=0.40/R=0.95 — and the sum was an exact tie, the measurement cancelling
-> itself. Magenta alone is the honest signal. (`PARK_USE_WALL` re-enables it.)
+> **We do not add the black wall to this measurement.** A synthetic test first
+> suggested the two signals were anti-correlated — the magenta wall occludes the
+> black wall behind it. **Measured on the real track they agree**: in the lot,
+> magenta read L 0.716 / R 0.449 while the wall read L 0.174 / R 0.093, both
+> naming the same side. The anti-correlation was an artifact of the test image,
+> where blank background counted as wall.
+>
+> It stays off for a simpler reason: magenta alone already gives a clear margin,
+> and it is the *direct* signal — the parking lot is defined by magenta, whereas
+> black is every wall on the track. `PARK_USE_WALL` enables it if a venue ever
+> makes magenta's margin marginal.
 
 ### 5.2 Open Challenge algorithm
 
