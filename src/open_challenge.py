@@ -91,8 +91,15 @@ orange_line_threshould = 1300
 # five times bigger than the line, so the count measured the mat.
 BLUE_SAT_MIN, BLUE_VAL_MIN, BLUE_VAL_MAX = 140, 70, 200
 BLUE_HUE_MIN, BLUE_HUE_MAX = 90, 135
-ORANGE_SAT_MIN, ORANGE_VAL_MIN, ORANGE_VAL_MAX = 60, 125, 240
+ORANGE_SAT_MIN, ORANGE_VAL_MIN, ORANGE_VAL_MAX = 70, 30, 240
 ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
+# PORTED: ORANGE'S BRIGHTNESS FLOOR. Theirs demanded V > 125. MEASURED on our
+# field, the orange line is a clear 1648 px 320x19 band at S~178 - but its
+# V median is 78 and its p95 only 106, because our whole frame tops out at
+# V=143 where theirs was brighter. Their floor made orange UNREACHABLE, so the
+# direction could never lock CW and every run fell to blue and went CCW.
+# Hue alone separates orange from the mat here anyway - orange H~13 against the
+# mat's H~70 - so the brightness floor was never doing the work.
 WALL_VAL_MAX = 70            # a pixel darker than this is wall
 
 # --------------------------------------------------
