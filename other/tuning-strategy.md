@@ -200,3 +200,43 @@ Three columns tell you most of it:
 - **Do not** turn Wi-Fi off until `venue_net.sh status` says the laptop is
   ANSWERING. Carrier alone is not proof, and getting this wrong locks you out
   of the robot entirely.
+
+---
+
+# Backups — before you change anything
+
+```bash
+./backup.sh save "worked at the venue"    # snapshot the Pi as it is NOW
+./backup.sh list                          # what you have
+./backup.sh restore <name>                # put one back on the Pi
+./backup.sh undo                          # undo the last push or restore
+```
+
+A snapshot is the five code files **plus every calibration file** — the numbers
+that took hours to measure and cannot be re-derived from anything else. Each one
+is stored in three places: here on the laptop, as a git tag, and on GitHub.
+
+**`./sync.sh push` snapshots the Pi automatically before overwriting it**, so a
+bad push is always one `./backup.sh undo` away.
+
+**Take a snapshot the moment a run goes well.** That is the whole point — you
+cannot get back to a configuration you never recorded, and "it was working an
+hour ago" is not a state you can restore.
+
+After any restore, prove it before driving:
+
+```bash
+ssh pi@raspberrypi 'cd wro2026 && source .venv/bin/activate && python tools/test_logic.py'
+```
+
+## The one backup this does not cover
+
+If the **SD card itself** dies or corrupts, none of the above helps — the
+operating system, the Python environment and the camera drivers are all on it.
+Image the card from another machine while things are working:
+
+- **Raspberry Pi Imager** → *Utilities* → read the card to a `.img` file, or
+- Windows: **Win32DiskImager** → *Read*
+
+Do this once, now, and keep the image somewhere other than this laptop. It is
+the difference between a twenty-minute swap and losing the competition.

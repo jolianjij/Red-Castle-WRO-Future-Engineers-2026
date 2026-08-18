@@ -20,6 +20,9 @@ DATA="colors.json camera_settings.json servo_center.txt wall_settings.json"
 
 case "${1:-diff}" in
   push)
+      # Snapshot the Pi BEFORE overwriting it, so a bad push is one command to
+      # undo. This is what makes `./backup.sh undo` able to work at all.
+      "$HERE/backup.sh" auto "before-push" 2>/dev/null || true
       for f in $FILES; do
         scp -q "$HERE/src/$f" "$HOST:$REMOTE/$f" && echo "  -> $f"
       done
