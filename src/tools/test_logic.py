@@ -775,6 +775,27 @@ check("steering AWAY from the close wall is never faded",
 
 
 # ==========================================================================
+
+# ==========================================================================
+section("sign steering must be proportional, not an on/off switch")
+# MEASURED over 412 green-steering frames with KP=0.3:
+#     median error -60 px -> -18 deg of a 20 deg maximum
+#     46% of frames pinned at FULL LOCK
+# The car slammed to full left the moment it saw green, whatever the distance,
+# swung wide, lost the cube out of frame and never completed the pass. There is
+# only ONE green cube on the whole field, so 412 frames of full-lock steering
+# was never a response to pillars - it was a response to seeing any green at all.
+MEDIAN_ERR = -60.0        # the measured median green error, in pixels
+med = abs(MEDIAN_ERR * OBS.GREEN_KP)
+check("a TYPICAL error does not saturate", med < R.STEER_MAX * 0.6, True)
+check("...but still commands a real correction", med > 3.0, True)
+# a badly placed cube must STILL reach full lock - that is what it is for
+check("a badly placed cube still gets full lock",
+      abs(-436.0 * OBS.GREEN_KP) >= R.STEER_MAX, True)
+check("red is proportional too", abs(38.0 * OBS.RED_KP) < R.STEER_MAX * 0.6, True)
+
+
+# ==========================================================================
 print(chr(10) + "=" * 62)
 if FAILED:
     print(f"{len(FAILED)} FAILED: {FAILED}")

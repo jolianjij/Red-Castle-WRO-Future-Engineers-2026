@@ -96,7 +96,16 @@ LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 # real run green was detected 738 frames with a MEDIAN AREA of 186 px while red
 # was detected 351 frames at a median of 718 - green arrives as smaller, more
 # broken-up blobs, so the same numbers do not suit both.
-#   *_KP        deg of steering per unit of error. Higher = reacts harder.
+#   *_KP        deg of steering per PIXEL of error. This is the one that turns
+#               the law from proportional control into an on/off switch if it
+#               is too big. MEASURED at 0.3 over 412 green-steering frames:
+#                   median error   -60 px  ->  -18 deg, of a 20 deg maximum
+#                   46% of frames were at FULL LOCK
+#               So the car slammed to full left the moment it saw green,
+#               whatever the distance, swung wide, lost the cube out of frame,
+#               and never completed the pass. At 0.12 the same median becomes
+#               -7.2 deg and only 21% saturate - full lock is then reserved for
+#               a cube that really is badly placed, which is what it is for.
 #   *_TARGET_X  the column the sign is pushed toward. Centre is 160, so
 #               GREEN > 160 (drive it right, we pass on its left) and
 #               RED   < 160 (drive it left,  we pass on its right).
@@ -106,12 +115,12 @@ LANE_TARGET      = 0.1032 - (LANE_DISTANCE_CM - 40.0) * 0.00501
 #   *_MIN_ASPECT height/width. A standing sign is taller than it is wide, and
 #               this is what rejects lines, markings and patches of floor.
 #               1.0 = "taller than wide". Raise toward 1.5 to be stricter.
-GREEN_KP         = 0.3
+GREEN_KP         = 0.12
 GREEN_TARGET_X   = 220.0
 GREEN_MIN_AREA   = 300
 GREEN_MIN_ASPECT = 1.0
 
-RED_KP           = 0.3
+RED_KP           = 0.12
 RED_TARGET_X     = 120.0
 RED_MIN_AREA     = 300
 RED_MIN_ASPECT   = 1.0
