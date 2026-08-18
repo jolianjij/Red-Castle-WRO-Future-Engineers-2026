@@ -28,6 +28,11 @@ case "${1:-diff}" in
       done
       scp -q "$HERE"/src/tools/*.py "$HOST:$REMOTE/tools/" && echo "  -> tools/"
       scp -q "$HERE/src/run.sh" "$HERE/src/autostart.sh" "$HOST:$REMOTE/" 2>/dev/null || true
+      # the documentation too - at a venue the LAPTOP is the thing most likely
+      # to fail, and that is exactly when you need the tuning order and the
+      # command reference.
+      ssh "$HOST" "mkdir -p $REMOTE/docs" 2>/dev/null || true
+      scp -q "$HERE"/other/start-here.html "$HERE"/other/*.md              "$HERE"/other/tunables.html "$HERE"/other/api-reference.html              "$HOST:$REMOTE/docs/" 2>/dev/null && echo "  -> docs/"
       ssh "$HOST" "cd $REMOTE && chmod +x run.sh autostart.sh tools/*.sh 2>/dev/null" || true
       echo "pushed. NOTE: this OVERWRITES anything you tuned on the Pi."
       ;;
