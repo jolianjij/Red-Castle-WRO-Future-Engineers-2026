@@ -536,14 +536,18 @@ check("steering RIGHT with the RIGHT wall close is faded, symmetrically",
       round(20.0 * OBS.SIGN_WALL_FLOOR, 1))
 check("never flips sign", OBS.limit_toward_wall(-20.0, 0.99, 0.02) <= 0.0, True)
 
-# and through the real ladder
+# THE ESCAPE is what stops the car hitting a wall, not the fade. This was once
+# asserted the other way round - that a green sign near a wall gets faded - and
+# that assertion encoded the very mistake the measurements later disproved:
+# fading below the escape threshold blocked correct passes and protected
+# nothing, because the escape outranks the sign anyway.
 d = OBS.decide(T, view(left=0.02, right=0.02), ("green", 100.0, 80.0, 900, None),
                hold0(), R.CornerKick(), outer, 1)
-free = d.steer
-d = OBS.decide(T, view(left=R.WALL_EMERGENCY * 0.95, right=0.02),
+check("in open space a green sign steers freely", d.mode, "sign-green")
+d = OBS.decide(T, view(left=R.WALL_EMERGENCY + 0.01, right=0.02),
                ("green", 100.0, 80.0, 900, None), hold0(), R.CornerKick(), outer, 1)
-check("a green sign no longer drives the car into the left wall",
-      abs(d.steer) < abs(free), True)
+check("once the wall is genuinely close the ESCAPE takes over", d.mode, "wall")
+check("...and steers AWAY from it", d.steer > 0, True)
 
 # ==========================================================================
 
@@ -744,6 +748,30 @@ check("...and does, once it persists", g4.accept(S2, 0.40), S2)
 check("no sign in, nothing out", g4.accept(None, 1.0), None)
 check("min areas now reject the measured noise band (88-565)",
       OBS.GREEN_MIN_AREA > 88 and OBS.RED_MIN_AREA > 88, True)
+
+
+# ==========================================================================
+
+# ==========================================================================
+section("the sign wall guard must not block the pass it exists for")
+# MEASURED over 412 green-steering frames on a real run:
+#     the escape fired on   0 of them
+#     the worst left reading was 0.212, with the escape at 0.213
+#     yet 58% were being faded at guard=0.70, rising to 74% when the sign was
+#     CLOSEST and the pass most needed to complete.
+# A green sign is passed on its LEFT; in CW the outer wall IS on the left, so a
+# green pass steers toward a wall BY GEOMETRY. The escape already outranks the
+# sign, so anything below its threshold is not yet dangerous.
+FADE_START = R.WALL_EMERGENCY * OBS.SIGN_WALL_GUARD
+check("the fade starts close to the escape, not far below it",
+      FADE_START > R.WALL_EMERGENCY * 0.9, True)
+check("a green pass at the measured worst wall (0.212) keeps most of its steer",
+      abs(OBS.limit_toward_wall(-20.0, 0.212, 0.02)) > 20.0 * 0.5, True)
+check("normal driving is untouched",
+      OBS.limit_toward_wall(-20.0, 0.15, 0.02), -20.0)
+check("it never fades to nothing", OBS.SIGN_WALL_FLOOR > 0.0, True)
+check("steering AWAY from the close wall is never faded",
+      OBS.limit_toward_wall(-20.0, 0.02, R.WALL_EMERGENCY), -20.0)
 
 
 # ==========================================================================

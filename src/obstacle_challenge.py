@@ -142,21 +142,30 @@ SIGN_MIN_SEEN_S  = 0.25    # A SIGN MUST BE SEEN THIS LONG BEFORE THE CAR ACTS.
 SIGN_HOLD_S      = 3.0     # after the last sign is seen, do NOT return to lane
                            # keeping for this long - it would drag the car back
                            # across the pass it is halfway through
-SIGN_WALL_GUARD  = 0.70    # where the fade STARTS, as a fraction of
-                           # WALL_EMERGENCY. 1.0 disables the fade entirely.
-SIGN_WALL_FLOOR  = 0.55    # ...and how much of the sign steer SURVIVES it.
-                           # THIS MUST NOT BE 0. Measured on a failed run:
-                           # a GREEN sign must be passed on its LEFT, and in CW
-                           # the outer wall IS on the left - so every green pass
-                           # steers toward a wall by geometry, not by mistake.
-                           # Fading to zero killed 226 of 388 green-steering
-                           # frames, and when green was closest (area>2000) the
-                           # left wall averaged 0.172 - right in the fade band.
-                           # The car could never complete a green pass.
-                           # The ESCAPE at WALL_EMERGENCY is the real safety
-                           # line and still outranks the sign completely; this
-                           # is only meant to stop a DISTANT sign causing a
-                           # full-lock charge at a wall.
+SIGN_WALL_GUARD  = 0.95    # where the sign steer starts fading, as a fraction
+                           # of WALL_EMERGENCY. 1.0 disables the fade entirely.
+                           #
+                           # THIS WAS 0.70 AND THAT WAS WRONG. The ESCAPE
+                           # already outranks the sign, so below the escape
+                           # threshold the wall is BY DEFINITION not yet
+                           # dangerous - and that is exactly the band this was
+                           # fading. Measured over 412 green-steering frames:
+                           #   the escape fired on   0 of them
+                           #   the worst left reading was 0.212 (escape 0.213)
+                           #   yet 58% were being faded, rising to 74% when the
+                           #   sign was CLOSEST and the pass most needed to finish
+                           # A green sign is passed on its LEFT, and in CW the
+                           # outer wall IS on the left, so a green pass steers
+                           # toward a wall BY GEOMETRY. Fading it there was
+                           # blocking the manoeuvre, not protecting anything.
+                           # At 0.95 the fade is a narrow taper in the last
+                           # sliver before the escape takes over, so the handoff
+                           # is smooth rather than a jump from full sign steer
+                           # to full escape. Set 1.0 to remove it completely.
+SIGN_WALL_FLOOR  = 0.55    # ...and how much of the sign steer SURVIVES the fade.
+                           # THIS MUST NOT BE 0. A green sign is passed on its
+                           # LEFT and in CW the outer wall IS on the left, so
+                           # fading to nothing means the pass can never finish.
 SIGN_STEER_HOLD_S= 0.9     # of that hold, keep steering as the sign commanded
                            # for this long, then run straight for the remainder
 
