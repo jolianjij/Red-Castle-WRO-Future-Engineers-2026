@@ -122,7 +122,19 @@ CROP_TOP = 160
 # mat is five times bigger than the line, so the count measured the floor.
 RED_SAT_MIN, RED_VAL_MIN, RED_VAL_MAX = 120, 60, 240
 RED_HUE_LO, RED_HUE_HI = 15, 175          # hue < 15 OR hue > 175
-GREEN_SAT_MIN, GREEN_VAL_MIN, GREEN_VAL_MAX = 120, 60, 240
+# PORTED: MEASURED on the green cube on our field, and this is why the car
+# never reacted to green. The cube is DARK here - its V runs p50=38, p95=56,
+# p99=61 - so their floor of 60 kept SIXTEEN of its 1107 pixels. One percent.
+# Green never reached PARALELIPIPED_MIN_AREA, so no green target was ever
+# built and the sign law never saw one. Red, at the same distance, measured
+# 1222 px and worked fine, which is what made it look like a green-specific
+# problem: it was.
+#     GREEN_VAL_MIN  60 -> 25   keeps 1088 of 1107 (98%)
+# The saturation floor goes UP at the same time, because our MAT sits at
+# H70-79 - inside the green hue band - so saturation is the only thing
+# separating cube from floor. MEASURED: mat p99=146, cube p01=157, a clean gap.
+#     GREEN_SAT_MIN 120 -> 150  cube 1088 px, mat leak ZERO (at 120: 61 px)
+GREEN_SAT_MIN, GREEN_VAL_MIN, GREEN_VAL_MAX = 150, 25, 240
 GREEN_HUE_MIN, GREEN_HUE_MAX = 45, 90
 PURPLE_SAT_MIN, PURPLE_VAL_MIN, PURPLE_VAL_MAX = 120, 60, 240
 PURPLE_HUE_MIN, PURPLE_HUE_MAX = 135, 175
@@ -212,6 +224,14 @@ RED_NEAR = 118           # their 120 at their y=0
 # AREAS also shrink with the crop. Ours squashes 320 rows into 120 where theirs
 # squashed 240 into 120, so a pillar keeps about 75% of its pixel area. Their
 # area gates rescaled by that factor.
+# PORTED: process_traffic_contours discards any blob that is not TALLER THAN
+# WIDE, to keep the horizontal lines out. MEASURED, a cube at mid distance is
+# 36 wide x 44 tall - it passes, but only by 1.22x. As a cube gets CLOSE its
+# bottom runs off the frame, so its height stops growing while its width keeps
+# going, and it can flip to wider-than-tall exactly when it matters most.
+# Raise this if the car loses a pillar at close range; 1.0 is their behaviour.
+SIGN_MAX_ASPECT = 1.0
+
 SIGN_CLOSE_AREA_CW = 750     # was 1000
 SIGN_CLOSE_AREA_CCW = 1125   # was 1500
 PARK_STOP_AREA = 2550        # was 3400
@@ -652,7 +672,7 @@ def process_traffic_contours(box, type_idx):
         area = cv2.contourArea(contour)
         if area > target[2]:
             boundingBox = cv2.boundingRect(contour)
-            if boundingBox[2] < boundingBox[3]:
+            if boundingBox[2] < SIGN_MAX_ASPECT * boundingBox[3]:
                 moments = cv2.moments(contour)
                 if moments['m00'] != 0:
                     x = int(moments['m10'] / moments['m00'])
