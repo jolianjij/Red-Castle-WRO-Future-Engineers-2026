@@ -1,0 +1,14 @@
+label: manual
+taken: 2026-08-19 03:24:50
+from : pi@raspberrypi:wro2026
+
+key values:
+  STEER_BIAS = -4.0
+  WALL_EMERGENCY = 0.213
+  OUTER_TARGET = 0.1032
+  OUTER_KP = 200.0
+  LINE_FRACTION_ORANGE = 0.040
+  LINE_FRACTION_BLUE   = 0.012
+
+colours:
+{"black":[0,179,0,255,0,62],"blue":[96,135,140,255,70,200],"orange":[2,13,72,170,70,255],"green":[60,95,140,255,30,170],"red":[178,12,170,255,45,255],"magenta":[158,177,90,255,40,255]}
