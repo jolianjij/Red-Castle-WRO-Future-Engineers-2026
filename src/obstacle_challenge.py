@@ -121,7 +121,12 @@ CROP_TOP = 160
 # it matched OUR MAT, which reads S~68 against the blue line's S~238 - and the
 # mat is five times bigger than the line, so the count measured the floor.
 RED_SAT_MIN, RED_VAL_MIN, RED_VAL_MAX = 120, 60, 240
-RED_HUE_LO, RED_HUE_HI = 15, 175          # hue < 15 OR hue > 175
+# PORTED: RED'S UPPER WRAP IS OFF. MEASURED in the start box, the magenta
+# parking wall runs to H179 (p50=174, p95=179, p99=179) - and red's `h > 175`
+# claimed 4558 px of that WALL as a sign. Our red cube measures H0-7 (p50=7),
+# nowhere near the wrap, so the upper branch was buying nothing and costing the
+# whole top of the parking wall. 179 disables it: h > 179 can never be true.
+RED_HUE_LO, RED_HUE_HI = 15, 179          # hue < 15 only
 # PORTED: MEASURED on the green cube on our field, and this is why the car
 # never reacted to green. The cube is DARK here - its V runs p50=38, p95=56,
 # p99=61 - so their floor of 60 kept SIXTEEN of its 1107 pixels. One percent.
@@ -136,8 +141,16 @@ RED_HUE_LO, RED_HUE_HI = 15, 175          # hue < 15 OR hue > 175
 #     GREEN_SAT_MIN 120 -> 150  cube 1088 px, mat leak ZERO (at 120: 61 px)
 GREEN_SAT_MIN, GREEN_VAL_MIN, GREEN_VAL_MAX = 150, 25, 240
 GREEN_HUE_MIN, GREEN_HUE_MAX = 45, 90
-PURPLE_SAT_MIN, PURPLE_VAL_MIN, PURPLE_VAL_MAX = 120, 60, 240
-PURPLE_HUE_MIN, PURPLE_HUE_MAX = 135, 175
+# PORTED: MEASURED on the parking wall from the start box. The wall is 20226
+# px and the mask was catching 11005 - barely half - in two separate ways:
+#   H <= 175 threw away 4558 px, because the wall runs to H179 (p95=179).
+#            Those are the same pixels red was claiming as a sign.
+#   V >  60  kept only 77% of it. The wall is DARK: V p01=45 p05=52 p50=67.
+#            V>40 keeps 99%.
+# Saturation stays at 120: the wall reads S p01=127 p05=143, so 120 already
+# clears it, and lowering it only invites the mat back in.
+PURPLE_SAT_MIN, PURPLE_VAL_MIN, PURPLE_VAL_MAX = 120, 40, 240
+PURPLE_HUE_MIN, PURPLE_HUE_MAX = 135, 179
 BLUE_SAT_MIN, BLUE_VAL_MIN, BLUE_VAL_MAX = 140, 20, 200   # PORTED: 60 -> 140
 BLUE_HUE_MIN, BLUE_HUE_MAX = 90, 135
 ORANGE_SAT_MIN, ORANGE_VAL_MIN, ORANGE_VAL_MAX = 70, 30, 240
@@ -231,6 +244,18 @@ RED_NEAR = 118           # their 120 at their y=0
 # going, and it can flip to wider-than-tall exactly when it matters most.
 # Raise this if the car loses a pillar at close range; 1.0 is their behaviour.
 SIGN_MAX_ASPECT = 1.0
+
+# --------------------------------------------------
+# THE PARKING EXIT DECIDES THE WHOLE LAP DIRECTION, off ONE comparison:
+#     more purple on the LEFT  -> way out is RIGHT -> CW  (+1)
+#     more purple on the RIGHT -> way out is LEFT  -> CCW (-1)
+# Their code took that from a SINGLE frame. MEASURED in the start box the two
+# sides differ by only about 1.25x, so it is a close call by geometry - the car
+# sits between two walls and sees a lot of both. A close call decided on one
+# frame is not worth the risk when it sets the direction for the entire run.
+PARK_EXIT_FRAMES = 8       # average the purple counts over this many frames
+PARK_EXIT_MIN_TOTAL = 2000 # below this the lot is not really in view
+PARK_EXIT_MIN_RATIO = 1.10 # below this the two sides are too close to call
 
 SIGN_CLOSE_AREA_CW = 750     # was 1000
 SIGN_CLOSE_AREA_CCW = 1125   # was 1500
@@ -1010,24 +1035,38 @@ def main():
     start = time.time()
     _t0 = start
 
-    cycle(picam2)
+    # PORTED: average the purple counts over several frames instead of
+    # deciding the whole run's direction from one. See PARK_EXIT_FRAMES.
+    pl = pr = 0.0
+    for _ in range(PARK_EXIT_FRAMES):
+        cycle(picam2)
+        pl += purple_left
+        pr += purple_right
+    pl /= PARK_EXIT_FRAMES
+    pr /= PARK_EXIT_FRAMES
+    ratio = max(pl, pr) / max(1.0, min(pl, pr))
+
     # PORTED: the parking exit is a MANOEUVRE - it passes limit explicitly so
     # the 20 degree rule does not blunt it. More purple on the LEFT means the
     # way out is to the right, which sets the lap direction clockwise.
-    print(">>> parking exit: purple left=%.0f right=%.0f -> %s"
-          % (purple_left, purple_right,
-             "CW (+1)" if purple_left > purple_right else "CCW (-1)"))
-    # PORTED: SAY IT WHEN THE DECISION IS NOT REALLY A DECISION. The exit
-    # direction is `purple_left > purple_right`, so with NO purple in view at
-    # all that is False and the car silently commits to CCW - it looks like a
-    # choice and is really a default. If this fires, the car cannot see the
-    # parking walls from where it is standing and the direction is a coin toss.
-    if purple_left + purple_right < 200:
-        print("!!! ALMOST NO PURPLE IN VIEW (%.0f px total). The direction was"
-              % (purple_left + purple_right))
-        print("    NOT chosen from the parking lot - it fell through to CCW.")
-        print("    Check the car can see the magenta walls from the start box.")
-    if purple_left > purple_right:
+    print(">>> parking exit: purple left=%.0f right=%.0f (ratio %.2f over %d "
+          "frames) -> %s"
+          % (pl, pr, ratio, PARK_EXIT_FRAMES,
+             "CW (+1), out to the RIGHT" if pl > pr else "CCW (-1), out to the LEFT"))
+    # PORTED: SAY IT WHEN THE DECISION IS NOT REALLY A DECISION. The comparison
+    # is `left > right`, so with NO purple at all that is False and the car
+    # silently commits to CCW - it looks like a choice and is really a default.
+    if pl + pr < PARK_EXIT_MIN_TOTAL:
+        print("!!! ALMOST NO PURPLE IN VIEW (%.0f px total, want %d)."
+              % (pl + pr, PARK_EXIT_MIN_TOTAL))
+        print("    The direction was NOT chosen from the parking lot - it fell")
+        print("    through to CCW. Check the car can see the magenta walls.")
+    elif ratio < PARK_EXIT_MIN_RATIO:
+        print("!!! THE TWO SIDES ARE TOO CLOSE TO CALL (ratio %.2f, want %.2f)."
+              % (ratio, PARK_EXIT_MIN_RATIO))
+        print("    This direction is close to a coin toss. Re-place the car so")
+        print("    one side clearly wins, or check with tools/park_calib.py.")
+    if pl > pr:
         direction=1
         motor(50)
         servo(45, limit=STEER_DEVIATION)
