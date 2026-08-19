@@ -286,43 +286,11 @@ RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 #                         instead of 4x. Raise it further to react later still.
 # WHEN TO STOP STEERING FOR A GREEN CUBE. Both conditions must hold: it has to
 # be off to the side AND close. Set GREEN_RELEASE_X = 320 to never release.
-# COUNT BLUE ONLY. Orange shares its hue band with the RED cubes - our red
-# measures H0-7 and the orange line band is H0-30 - so a red pillar can pad the
-# orange count even through the width filter, and a phantom crossing inflates
-# quadrant_count and ends the run early. Blue has no such twin on the field.
-LINE_COUNT_BLUE_ONLY = True
-
-# THE CORNER KICK, LATCHED. Theirs fired inside the cycle as servo() + a
-# blocking sleep, on a SINGLE falling edge - so if that one cycle did not line
-# up with the traffic-light condition, or the edge was missed, no kick happened
-# at all. And the blocking sleep stalled the vision loop while it ran, then the
-# cycle's own servo() call at the bottom immediately overwrote the angle.
-# It is now a LATCH: the edge arms a deadline, and every cycle until then
-# steers the kick through the normal path. Nothing blocks, nothing overwrites,
-# and a missed cycle no longer loses the whole kick.
-# It also triggers on BLUE in both directions, because orange is the unreliable
-# one. Going clockwise that means the kick fires at the corner's blue line
-# rather than its orange one - slightly later, and KICK_S is the knob.
-KICK_S = 0.35            # how long the kick holds
-KICK_ANGLE = 45          # degrees, clamped to the linkage by servo()
-
 # PARKING REMOVED. The end-of-run parking search is off; the car finishes the
 # way the open challenge does - keep driving briefly after the 12th quadrant,
 # then stop. Set True to bring the whole parking algorithm back.
 PARKING_ENABLED = False
 FINISH_RUN_S = 3.0
-
-# THE PARKING WALLS ARE OBSTACLES DURING THE LAPS. They are solid magenta
-# walls, and the wall detector only sees DARK pixels, so without this the car
-# treats them as open space and drives into them.
-# Theirs added them but filtered with v >= 70 - and MEASURED, the wall's own
-# brightness is V p01=45 p05=52 p50=67 p95=87, so that filter threw away more
-# than half of the very thing it was meant to avoid.
-PARK_WALL_IS_OBSTACLE = True
-PARK_WALL_WEIGHT = 0.8   # theirs
-
-GREEN_RELEASE_X = 220        # theirs, unchanged
-GREEN_RELEASE_AREA = 3000    # NEW - theirs released at any distance
 
 GREEN_MIN_AREA = 50
 RED_MIN_AREA = 400     # answers red at about 1.3x the calibration distance
@@ -369,8 +337,6 @@ pre_line = 0
 # Global variables
 STOP = False
 wall_aligment_state = 0
-_kick_until = 0.0        # the corner kick's deadline
-_kick_sign = 0           # +1 kicks right, -1 kicks left
 mission_end_t = 0.0
 mission_end_not_activated = True
 # direction swap mechanic disabled, keep structure
@@ -542,13 +508,9 @@ def print_config():
     print("  parking    min area=%d  wall target=%.2f  align total=%.2f  "
           "stop area=%d" % (PARKING_MIN_AREA, PARK_WALL_TARGET,
                             PARK_ALIGN_TOTAL, PARK_STOP_AREA))
-    print("  counting   %s   kick %.2fs at %d deg"
-          % ("BLUE only" if LINE_COUNT_BLUE_ONLY else "per-direction colour",
-             KICK_S, KICK_ANGLE))
-    print("  parking    %s   park walls as obstacles: %s"
-          % ("ENABLED" if PARKING_ENABLED else "REMOVED (finish %.1fs after "
-             "12 quadrants)" % FINISH_RUN_S,
-             "yes" if PARK_WALL_IS_OBSTACLE else "NO"))
+    print("  parking    %s"
+          % ("ENABLED" if PARKING_ENABLED else
+             "REMOVED (finish %.1fs after 12 quadrants)" % FINISH_RUN_S))
     print("  logging    logs/obstacle_<timestamp>.csv, every cycle")
     print("=" * 78)
 
@@ -802,15 +764,13 @@ def process_hsv(hsv_arr, red_data, green_data, purple_data):
     left_wall = float(np.count_nonzero(dark[:, :160]))
     right_wall = float(np.count_nonzero(dark[:, 160:]))
 
-    # PORTED: the magenta parking walls ARE obstacles - see PARK_WALL_IS_OBSTACLE.
-    # The wall detector only sees DARK pixels, so without this the car reads
-    # them as open space. Theirs filtered with v >= 70; MEASURED, the wall's own
-    # brightness is V p01=45 p05=52 p50=67, so that threw away more than half of
-    # the thing it was meant to avoid. The purple mask already has its own floor.
-    if PARK_WALL_IS_OBSTACLE and Zaid:
-        pw = purple_m
-        left_wall += PARK_WALL_WEIGHT * float(np.count_nonzero(pw[:, :160]))
-        right_wall += PARK_WALL_WEIGHT * float(np.count_nonzero(pw[:, 160:]))
+    # REVERTED at the team's request: their v >= 70 filter. MEASURED, the
+    # wall's own brightness is V p01=45 p05=52 p50=67, so this discards more
+    # than half of the wall it is meant to make the car avoid.
+    if quadrant_count < parking_wall_detected_as_a_wall_quadrant_threshould and Zaid:
+        pw = purple_m & (v >= 70)
+        left_wall += 0.8 * float(np.count_nonzero(pw[:, :160]))
+        right_wall += 0.8 * float(np.count_nonzero(pw[:, 160:]))
 
     left_wall /= (160 * 80)
     right_wall /= (160 * 80)
@@ -935,7 +895,7 @@ def cycle(picam2):
     global red_index, green_index, traffic_index_not_changed_on_cycle_12 ,red_start_timer
     global direction_swap_havent_started, direction_swap_cycle_threshould
     global STOP, wall_aligment_state, raw_frame, frame, hsv,Zaid,pre_line
-    global _kick_until, _kick_sign, mission_end_t, mission_end_not_activated
+    global mission_end_t, mission_end_not_activated
 
     R, G, B = 122, 122, 122
     cycle_count += 1
@@ -971,26 +931,20 @@ def cycle(picam2):
     if orange_line_state != 0 and direction == 0:
         direction = 1
 
-    # PORTED: COUNT BLUE ONLY, in both directions - see LINE_COUNT_BLUE_ONLY.
-    # Theirs counted the direction's "own" colour and used the other as a
-    # backstop through pre_line. With orange picking up red cubes, that backstop
-    # was adding phantom quadrants instead of protecting against missed ones.
-    if LINE_COUNT_BLUE_ONLY:
+    # REVERTED at the team's request: their per-direction counting, with the
+    # other colour as a backstop through pre_line.
+    if direction >= 0:
+        if orange_line_state == 2:
+            quadrant_count += 1
+        if blue_line_state ==2:
+            pre_line +=1
+        quadrant_count = max(quadrant_count,pre_line)
+    else:
         if blue_line_state == 2:
             quadrant_count += 1
-    else:
-        if direction >= 0:
-            if orange_line_state == 2:
-                quadrant_count += 1
-            if blue_line_state ==2:
-                pre_line +=1
-            quadrant_count = max(quadrant_count,pre_line)
-        else:
-            if blue_line_state == 2:
-                quadrant_count += 1
-            if orange_line_state == 2:
-                pre_line +=1
-            quadrant_count = max(quadrant_count,pre_line)
+        if orange_line_state == 2:
+            pre_line +=1
+        quadrant_count = max(quadrant_count,pre_line)
     #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     # PORTED: THE SAME LAW, WITH THE VERTICAL AXIS PUT BACK THE RIGHT WAY UP.
     # Their y=0 was the NEAREST ground; ours is the FURTHEST - see the SIGN
@@ -1005,21 +959,12 @@ def cycle(picam2):
     if direction >= 0:
         if target[3] in [1, 2]:  # Green
             Err = -(_gt_cw - target[0])
-            # PORTED: THIS IS WHY GREEN FAILED. Theirs released the steering
-            # entirely the moment the cube passed x=220, at ANY distance.
-            # MEASURED across the CW runs: 806 of 1158 green cycles - 70% -
-            # had the steering released, and it released at x as low as 221
-            # even with the cube CLOSE (area 3000-6000). One encounter held
-            # green for 4.38 s while its area grew 398 -> 6140 and commanded
-            # 0.0 degrees for all 94 cycles: the car drove straight at it.
-            # x=220 is only 60 px right of centre in a 320 px frame.
-            #
-            # The release itself is worth keeping - without it, a cube already
-            # past on the right pulls the car back toward it, because the aim
-            # at close range is GREEN_NEAR_CW. But it must only apply once the
-            # cube is genuinely CLOSE. Far cubes are exactly the ones that need
-            # the steering.
-            if target[0] > GREEN_RELEASE_X and target[2] > GREEN_RELEASE_AREA:
+            # REVERTED at the team's request: their unconditional release.
+            # NOTE what this does, measured on the CW logs: it zeroes the
+            # steering on about 70% of the cycles a green target is held, at
+            # ANY distance - down to x=221 with the cube close. The distance
+            # condition that fixed that lives in git if it is wanted back.
+            if target[0] > 220:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
@@ -1094,12 +1039,10 @@ def cycle(picam2):
                 dir = 30*left_wall
             elif right_wall > WALL_CLOSE:
                 dir =-30*right_wall
-        # PORTED: the corner kick, LATCHED and triggered on BLUE - see KICK_S.
-        if last_detected_traffic_light == 1 and blue_line_state == 2:
-            _kick_until = time.time() + KICK_S
-            _kick_sign = 1
-            print(">>> CORNER KICK right for %.2fs (last sign GREEN, CW)"
-                  % KICK_S)
+        # REVERTED at the team's request: the original blocking kick, on ORANGE.
+        if last_detected_traffic_light ==1 and orange_line_state==2:
+            servo(45, limit=STEER_DEVIATION)     # PORTED: the corner kick
+            time.sleep(0.2)
     else:
         if last_detected_traffic_light == 1:
             if left_wall > WALL_CLOSE:
@@ -1117,24 +1060,15 @@ def cycle(picam2):
                 dir = -30*right_wall
             elif left_wall > WALL_CLOSE:
                 dir = 30*left_wall
-        # PORTED: the corner kick, LATCHED - see KICK_S.
-        if last_detected_traffic_light == 0 and blue_line_state == 2:
-            _kick_until = time.time() + KICK_S
-            _kick_sign = -1
-            print(">>> CORNER KICK left for %.2fs (last sign RED, CCW)"
-                  % KICK_S)
+        # REVERTED at the team's request: the original blocking kick.
+        if last_detected_traffic_light ==0 and blue_line_state==2:
+            servo(-45, limit=STEER_DEVIATION)    # PORTED: the corner kick
+            time.sleep(0.2)
     # PORTED: a wall correction gets its own ceiling, so it is never limited
     # by a sign's - see WALL_STEER_MAX.
     if left_wall > WALL_CLOSE or right_wall > WALL_CLOSE:
         _dir_limit = WALL_STEER_MAX
 
-    # PORTED: HOLD THE CORNER KICK for its whole window. This runs AFTER the
-    # sign and wall terms on purpose - while the kick is live it owns the
-    # steering, which is the point of a kick.
-    if time.time() < _kick_until:
-        dir = KICK_ANGLE * _kick_sign
-        _dir_limit = STEER_DEVIATION
-        _dir_hard = True
 
     # --- Disabled swap mechanic ---
     # if quadrant_count == 8 and direction_swap_havent_started:
