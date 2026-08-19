@@ -997,6 +997,16 @@ def main():
     print(">>> parking exit: purple left=%.0f right=%.0f -> %s"
           % (purple_left, purple_right,
              "CW (+1)" if purple_left > purple_right else "CCW (-1)"))
+    # PORTED: SAY IT WHEN THE DECISION IS NOT REALLY A DECISION. The exit
+    # direction is `purple_left > purple_right`, so with NO purple in view at
+    # all that is False and the car silently commits to CCW - it looks like a
+    # choice and is really a default. If this fires, the car cannot see the
+    # parking walls from where it is standing and the direction is a coin toss.
+    if purple_left + purple_right < 200:
+        print("!!! ALMOST NO PURPLE IN VIEW (%.0f px total). The direction was"
+              % (purple_left + purple_right))
+        print("    NOT chosen from the parking lot - it fell through to CCW.")
+        print("    Check the car can see the magenta walls from the start box.")
     if purple_left > purple_right:
         direction=1
         motor(50)
