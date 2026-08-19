@@ -205,6 +205,23 @@ ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
 #   1.25x; buying more of it with a bound that lets shadow in is a bad trade.
 #   ORANGE_HUE_MAX stays at 30. The 13639 px it rejects are the MAT, not line.
 #
+# WHY CW_TARGET IS 0.215 AND NOT THE 0.241 THAT WAS MEASURED.
+# Both directions follow the OUTER wall: clockwise the car turns right, so the
+# inside of the loop is on its right and the LEFT wall is the outer one;
+# counter-clockwise is the mirror. A centred car must therefore read the SAME
+# density whichever way it points, and its own two halves must be nearly equal.
+#
+#     CCW placement:  left 0.2184   right 0.2138   gap 0.005   <- self-consistent
+#     CW  placement:  left 0.2415   right 0.1825   gap 0.059   <- NOT centred
+#
+# The CCW reading checks out against itself; the CW one does not. The car was
+# sitting nearer the left wall when CW was measured, so 0.241 encodes an
+# off-centre position - it asks the car to hold 13% closer to the outer wall
+# than the middle. Taking the trustworthy reading for both gives 0.215.
+# Re-measure with tools/wall_calib.py if you want it confirmed: a properly
+# centred CW placement should read left and right within about 0.01 of each
+# other, like the CCW one does.
+
 # NOTE these are STATIC readings at one distance. During a run the car drives
 # over the line and the count PEAKS higher than this. open_log.csv records
 # blue_px and orange_px every cycle, so after a run the real peak at each
@@ -281,7 +298,8 @@ FINISH_RUN_S = 3.0
 # the car moved between the two placements, and it is worth only 1.5 deg
 # of bias. If the car ever leans in ONE direction only, set both to the
 # mean of 0.239 instead of each to its own reading.
-CW_TARGET  = 0.241      # CW follows the LEFT wall   (theirs: 0.30) MEASURED
+CW_TARGET  = 0.215      # CW follows the LEFT wall   (theirs: 0.30)
+                        # NOT the raw CW measurement of 0.241 - see below.
 CCW_TARGET = 0.214      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
 NEUTRAL_TARGET = 0.5    # before the direction locks, theirs used 0.5 both sides
 WALL_GAIN = 75.0        # their fixed *75
@@ -351,6 +369,8 @@ _dir_smooth = 0.0        # PORTED: state for SERVO_SMOOTH
 # PORTED: log every cycle, so a bad run can be read afterwards instead of
 # guessed at. Their open file wrote nothing.
 import csv
+import os
+import shutil
 
 # PORTED: the log is opened by main(), NOT at import. It used to be opened at
 # module level, which meant that merely importing this file - which the tools
@@ -361,9 +381,19 @@ _prev_t = 0.0
 _t0 = 0.0
 
 
+LOG_PATH = None
+
+
 def _open_log():
-    global logfile, logwriter
-    logfile = open("open_log.csv", "w", newline="")
+    # PORTED: every run used to truncate open_log.csv, so the evidence from a
+    # BAD run was destroyed by the next run - which is precisely backwards,
+    # because a failure is the run worth keeping. Each run now writes its own
+    # timestamped file under logs/ and open_log.csv is a copy of the latest.
+    global logfile, logwriter, LOG_PATH
+    os.makedirs("logs", exist_ok=True)
+    LOG_PATH = os.path.join("logs", "open_%s.csv"
+                            % time.strftime("%Y%m%d-%H%M%S"))
+    logfile = open(LOG_PATH, "w", newline="")
     logwriter = csv.writer(logfile)
     logwriter.writerow(["cycle", "t_s", "dt_ms", "left_wall", "right_wall",
                         "blue_px", "blue_state", "orange_px", "orange_state",
@@ -796,7 +826,7 @@ def print_config():
           % (ORANGE_HUE_MIN, ORANGE_HUE_MAX, ORANGE_SAT_MIN,
              ORANGE_VAL_MIN, ORANGE_VAL_MAX))
     print("  finish     drive on %.1f s after the 12th quadrant" % FINISH_RUN_S)
-    print("  logging    open_log.csv, every cycle")
+    print("  logging    logs/open_<timestamp>.csv, every cycle")
     print("=" * 78)
 
 
@@ -860,6 +890,15 @@ def main():
     extra_imagery(hsv_mat)
     cv2.imwrite("input.png", raw_frame)
     cv2.imwrite("frame.png", frame)
+
+    # PORTED: keep the timestamped log, and copy it to the familiar name.
+    if logfile is not None:
+        logfile.close()
+        try:
+            shutil.copy(LOG_PATH, "open_log.csv")
+        except Exception:
+            pass
+        print("log saved: %s  (also copied to open_log.csv)" % LOG_PATH)
 
     # PORTED: stop driving the servo before letting go of the pins.
     if _pi is not None:
