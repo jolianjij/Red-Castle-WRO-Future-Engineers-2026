@@ -26,6 +26,7 @@ try:
 except AttributeError:
     pass
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view as _swv
 import time
 from picamera2 import Picamera2, Preview
 from libcamera import Transform            # PORTED: our camera is mounted upside down
@@ -219,8 +220,8 @@ FINISH_RUN_S = 3.0
 # the car moved between the two placements, and it is worth only 1.5 deg
 # of bias. If the car ever leans in ONE direction only, set both to the
 # mean of 0.239 instead of each to its own reading.
-CW_TARGET  = 0.249      # CW follows the LEFT wall   (theirs: 0.30)
-CCW_TARGET = 0.229      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
+CW_TARGET  = 0.252      # CW follows the LEFT wall   (theirs: 0.30) MEASURED
+CCW_TARGET = 0.214      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
 NEUTRAL_TARGET = 0.5    # before the direction locks, theirs used 0.5 both sides
 WALL_GAIN = 75.0        # their fixed *75
 
@@ -444,25 +445,50 @@ def process_frame(raw_frame_arr, frame_arr):
     frame_arr[:] = crop
 
 _WK_SQ = None
-_WK_VERT = None
+
+
+def _tall_runs(m, k):
+    # Keep only pixels belonging to a VERTICAL RUN of at least k dark pixels.
+    # This is the SHADOW TEST: a real wall is a tall solid run, a shadow is a
+    # broad shallow smear.
+    #
+    # Done by hand rather than with cv2.morphologyEx(MORPH_OPEN, vertical
+    # kernel), which is wrong here in two separate ways, both MEASURED:
+    #   1. Its erosion uses an INFINITE border value, so where the wall band
+    #      touches the top of the frame it is not eroded - but the dilation
+    #      that follows still grows it DOWNWARD, inventing wall out of mat.
+    #      That added ~270 px per frame at V 70-138, brighter than every
+    #      threshold in this file, and inflated one wall reading by 4.4%.
+    #   2. Even with the border forced to 0 the result is SHIFTED, because
+    #      OpenCV does not reflect the kernel for dilation and this kernel has
+    #      an even length. It kept the right NUMBER of pixels, 5517, but 324 of
+    #      them were in the wrong rows.
+    # This version can only ever remove pixels, and has no anchor to get wrong.
+    h_ = m.shape[0]
+    if h_ < k:
+        return np.zeros_like(m)
+    er = _swv(m, k, axis=0).all(axis=-1)      # er[j]: rows j..j+k-1 all dark
+    pad = np.zeros((h_ + k - 1, m.shape[1]), bool)
+    pad[k - 1:k - 1 + er.shape[0]] = er
+    return m & _swv(pad, k, axis=0).any(axis=-1)[:h_]
 
 
 def wall_mask(h, s, v):
     # PORTED: see the WALL DETECTION block at the top. Their test was a bare
     # v < WALL_VAL_MAX, which counts shadow on the mat as wall.
-    global _WK_SQ, _WK_VERT
+    global _WK_SQ
     if not WALL_SHADOW_REJECT:
         return v < WALL_VAL_MAX
     if _WK_SQ is None:
         _WK_SQ = np.ones((WALL_OPEN_K, WALL_OPEN_K), np.uint8)
-        _WK_VERT = np.ones((WALL_MIN_RUN, 1), np.uint8)
-    m = ((v < WALL_V_HARD) | ((v < WALL_V_SOFT) & (s < WALL_S_MAX)))
-    m = m.astype(np.uint8)
+    raw = ((v < WALL_V_HARD) | ((v < WALL_V_SOFT) & (s < WALL_S_MAX)))
+    m = raw
     if WALL_OPEN_K > 1:                 # speckle and printed dots
-        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, _WK_SQ)
+        o = cv2.morphologyEx(raw.astype(np.uint8), cv2.MORPH_OPEN, _WK_SQ) > 0
+        m = o & raw                     # & raw: never let the border add pixels
     if WALL_MIN_RUN > 1:                # THE SHADOW TEST: keep tall runs only
-        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, _WK_VERT)
-    return m > 0
+        m = _tall_runs(m, WALL_MIN_RUN)
+    return m
 
 
 def process_hsv(hsv_arr):
