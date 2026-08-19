@@ -609,4 +609,8 @@ def main():
     sys.exit(0)
 
 
-main()
+# PORTED: theirs called main() unconditionally, so merely IMPORTING this
+# file started the car. The guard changes nothing when it is run as a
+# script - it just lets the tools and the test suite read the tunables.
+if __name__ == "__main__":
+    main()
