@@ -325,8 +325,28 @@ LINE_BLANK_S = 1.2
 # 1107-1196, and on a real run the peaks reach 1900-4300. Their own thresholds
 # fired at about 77% of a full line, which on our crop is these numbers. Bare
 # mat reads 3-9 px blue and 0-87 px orange, so the margin below is tenfold.
-blue_line_threshould = 830
-orange_line_threshould = 930
+# PORTED: RED PILLARS WERE COUNTING AS ORANGE LINES. MEASURED in the start
+# box: the red mask was 1698 px and ALL 1698 of them also passed the orange
+# line test - our red cube is H0-7 and the orange line band is H0-30 with S>70,
+# so they are the same colour as far as this test is concerned. Total orange
+# read 4216 px against a threshold of 930 with NO ORANGE LINE PRESENT, purely
+# from pillars. That manufactures line crossings, which inflate quadrant_count
+# and park the car early.
+#
+# Their code just sums mask pixels, with no shape test at all. The separation
+# is obvious once measured: a real line blob is 320 px WIDE and spans the
+# frame; the pillar blobs were 16, 19, 22, 33 and 35 px wide. So only blobs at
+# least LINE_MIN_WIDTH across are counted as line.
+#
+# Thresholds drop 10% with it, because the filter also removes the speckle that
+# used to pad the count: a line MEASURED 1161 px total but 1040 in its blob.
+# During a real crossing the peak reaches 3000-4300, so there is margin either
+# way.
+LINE_SHAPE_FILTER = True
+LINE_MIN_WIDTH = 100
+
+blue_line_threshould = 750
+orange_line_threshould = 840
 
 blue_line_pixel_count = 0
 blue_line_next_allowed_t = 0.0
@@ -601,6 +621,20 @@ def _tall_runs(m, k):
     return m & _swv(pad, k, axis=0).any(axis=-1)[:h_]
 
 
+def _line_pixels(m):
+    # PORTED: count only blobs WIDE enough to be a line - see LINE_MIN_WIDTH.
+    # Their version summed every matching pixel, which let red pillars register
+    # as orange line crossings.
+    if not LINE_SHAPE_FILTER:
+        return int(np.count_nonzero(m))
+    n, _lab, st, _c = cv2.connectedComponentsWithStats(m.astype(np.uint8), 8)
+    tot = 0
+    for i in range(1, n):
+        if st[i, cv2.CC_STAT_WIDTH] >= LINE_MIN_WIDTH:
+            tot += int(st[i, cv2.CC_STAT_AREA])
+    return tot
+
+
 def wall_mask(h, s, v):
     global _WK_SQ
     if not WALL_SHADOW_REJECT:
@@ -637,12 +671,12 @@ def process_hsv(hsv_arr, red_data, green_data, purple_data):
     green_data[:] = np.where(green_m, 255, 0).astype(np.uint8)
     purple_data[:] = np.where(purple_m, 255, 0).astype(np.uint8)
 
-    blue_line_pixel_count = int(np.count_nonzero(
+    blue_line_pixel_count = _line_pixels(
         (s > BLUE_SAT_MIN) & (v > BLUE_VAL_MIN) & (v < BLUE_VAL_MAX) &
-        (h > BLUE_HUE_MIN) & (h < BLUE_HUE_MAX)))
-    orange_line_pixel_count = int(np.count_nonzero(
+        (h > BLUE_HUE_MIN) & (h < BLUE_HUE_MAX))
+    orange_line_pixel_count = _line_pixels(
         (s > ORANGE_SAT_MIN) & (v > ORANGE_VAL_MIN) & (v < ORANGE_VAL_MAX) &
-        (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX)))
+        (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX))
 
     purple_left = float(np.count_nonzero(purple_m[:, :160]))
     purple_right = float(np.count_nonzero(purple_m[:, 160:]))
