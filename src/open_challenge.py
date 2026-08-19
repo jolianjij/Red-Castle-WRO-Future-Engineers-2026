@@ -17,6 +17,14 @@ Run:  cd ~/wro2026 && source .venv/bin/activate && python open_challenge.py
 
 import cv2
 import sys
+
+# PORTED: over SSH stdout is a PIPE, and Python block-buffers pipes - so a
+# run that is killed, or watched live, shows NOTHING. Line buffering makes
+# the log appear cycle by cycle however the program is launched.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:
+    pass
 import numpy as np
 import time
 from picamera2 import Picamera2, Preview
@@ -78,7 +86,19 @@ CROP_TOP = 160
 
 # --------------------------------------------------
 # Map lines variables
-line_cycle_delay = 15
+#
+# PORTED: THEIR BLANKING WAS COUNTED IN CYCLES, AND WE CHANGED THE CYCLE RATE.
+# After a line is counted it is ignored for a while, so that ONE crossing
+# cannot be counted twice. Theirs waited 15 CYCLES - and their per-pixel Python
+# loops ran at about 2 Hz, so 15 cycles was 6 to 7 SECONDS.
+# Our numpy pipeline is MEASURED at 34 Hz, where the same 15 cycles is only
+# 0.44 s - fifteen times shorter. That is short enough for a single line to be
+# counted twice when its pixel count dips below the threshold mid-crossing,
+# which inflates quadrant_count and stops the run early at 12.
+# So the blanking is now in SECONDS and no longer cares how fast the loop runs.
+#     long enough  : a crossing lasts about 0.3-0.5 s at speed
+#     short enough : consecutive counted lines are about 2.5 s apart
+LINE_BLANK_S = 1.2
 
 # PORTED: line thresholds are PIXEL COUNTS out of 38400 and belong to the
 # camera that measured them. Re-measure with tools/line_check.py.
@@ -112,6 +132,45 @@ ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
 WALL_VAL_MAX = 70            # a pixel darker than this is wall
 
 # --------------------------------------------------
+# WALL FOLLOWING - MEASURED with tools/wall_calib.py, car parked CENTRED
+#
+# The law is theirs, unchanged:  dir = (wall - TARGET) * WALL_GAIN
+# TARGET is the wall density the car sees WHEN IT IS ALREADY CENTRED, so a
+# centred car is commanded to steer ZERO. That is the whole calibration: park
+# it in the middle, read the density, put that number here.
+#
+# Their targets belonged to their camera and their crop. On ours, parked dead
+# centre facing CW, left_wall MEASURES 0.249 - against their target of 0.300.
+# That difference is not harmless: it commands -3.8 deg of steering while the
+# car is perfectly centred, every single cycle, all run. A constant lean into
+# one wall is exactly what "holds the inner wall so tight" looks like.
+# CCW was worse still: their 0.400 against our MEASURED 0.229 commands
+# +12.8 deg of steering with the car sitting dead centre.
+#
+# Both directions follow the OUTER wall (going clockwise the inner wall
+# is on the right, so the left wall is the outer one; counter-clockwise
+# it is the mirror). So geometry says these two targets SHOULD be equal,
+# and they nearly are - 0.249 against 0.229. That 0.02 gap is how much
+# the car moved between the two placements, and it is worth only 1.5 deg
+# of bias. If the car ever leans in ONE direction only, set both to the
+# mean of 0.239 instead of each to its own reading.
+CW_TARGET  = 0.249      # CW follows the LEFT wall   (theirs: 0.30)
+CCW_TARGET = 0.229      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
+NEUTRAL_TARGET = 0.5    # before the direction locks, theirs used 0.5 both sides
+WALL_GAIN = 75.0        # their fixed *75
+
+# THE 20 DEGREE RULE. Normal driving never steers more than this; only special
+# manoeuvres (the obstacle challenge corner kick, the parking exit) may go
+# past it, and never past STEER_DEVIATION, which is the linkage real stop.
+# Their code had no such split - it clamped everything at its deviation - so
+# the port had the rule broken until now: wall following could command the
+# full 35 deg.
+#   MEASURED consequence of the gain: with WALL_GAIN=75 a density error of
+#   0.267 is needed to reach 20 deg, and the errors seen on the field are
+#   around 0.05, so ordinary following sits near 4 deg and the clamp only ever
+#   catches genuine corners.
+STEER_MAX = 20
+
 # P controller variables
 kp = 0.25
 # ==========================================================================
@@ -146,10 +205,10 @@ right_wall = 0.0
 # --------------------------------------------------
 
 blue_line_pixel_count = 0
-blue_line_next_allowed_cycle = 0
+blue_line_next_allowed_t = 0.0
 
 orange_line_pixel_count = 0
-orange_line_next_allowed_cycle = 0
+orange_line_next_allowed_t = 0.0
 
 blue_line_detected = False
 orange_line_detected = False
@@ -166,8 +225,11 @@ dir = 0.0
 import csv
 logfile = open("open_log.csv", "w", newline="")
 logwriter = csv.writer(logfile)
-logwriter.writerow(["cycle", "dir", "left_wall", "right_wall",
-                    "blue", "orange", "direction", "quadrant"])
+logwriter.writerow(["cycle", "t_s", "dt_ms", "left_wall", "right_wall",
+                    "blue_px", "blue_state", "orange_px", "orange_state",
+                    "direction", "quadrant", "dir_raw", "dir_cmd"])
+_prev_t = 0.0
+_t0 = 0.0
 
 
 # --------------------------------------------------
@@ -319,30 +381,34 @@ def process_hsv(hsv_arr):
 
 
 def update_lines():
-    global blue_line_pixel_count, blue_line_threshould, blue_line_next_allowed_cycle, blue_line_detected, blue_line_state
-    global orange_line_pixel_count, orange_line_threshould, orange_line_next_allowed_cycle, orange_line_detected, orange_line_state
-    global cycle_count, line_cycle_delay
+    # PORTED: identical state machine. The ONLY change is that the blanking
+    # deadline is a TIME instead of a cycle number - see LINE_BLANK_S.
+    global blue_line_pixel_count, blue_line_threshould, blue_line_next_allowed_t, blue_line_detected, blue_line_state
+    global orange_line_pixel_count, orange_line_threshould, orange_line_next_allowed_t, orange_line_detected, orange_line_state
+    global cycle_count, LINE_BLANK_S
+
+    now = time.time()
 
     if blue_line_pixel_count > blue_line_threshould:
         blue_line_state = 1
-        if cycle_count >= blue_line_next_allowed_cycle:
+        if now >= blue_line_next_allowed_t:
             blue_line_detected = True
     else:
         blue_line_state = 0
         if blue_line_detected:
             blue_line_state = 2
-            blue_line_next_allowed_cycle = cycle_count + line_cycle_delay
+            blue_line_next_allowed_t = now + LINE_BLANK_S
         blue_line_detected = False
 
     if orange_line_pixel_count > orange_line_threshould:
         orange_line_state = 1
-        if cycle_count >= orange_line_next_allowed_cycle:
+        if now >= orange_line_next_allowed_t:
             orange_line_detected = True
     else:
         orange_line_state = 0
         if orange_line_detected:
             orange_line_state = 2
-            orange_line_next_allowed_cycle = cycle_count + line_cycle_delay
+            orange_line_next_allowed_t = now + LINE_BLANK_S
         orange_line_detected = False
 
 
@@ -394,15 +460,22 @@ def cycle(picam2):
         color = (255, 122, 0)  # Orange
     LED_color(*color)
 
+    # PORTED: their law, with their magic numbers given names and MEASURED
+    # values. The arithmetic is untouched.
     if direction == 1:
-        dir = (left_wall - 0.3) * 75
+        dir = (left_wall - CW_TARGET) * WALL_GAIN
     elif direction == -1:
-        dir = (0.4 - right_wall) * 75
+        dir = (CCW_TARGET - right_wall) * WALL_GAIN
     else:
-        if left_wall > 0.5:
-            dir = (left_wall - 0.5) * 75
-        if right_wall > 0.5:
-            dir = (0.5 - right_wall) * 75
+        if left_wall > NEUTRAL_TARGET:
+            dir = (left_wall - NEUTRAL_TARGET) * WALL_GAIN
+        if right_wall > NEUTRAL_TARGET:
+            dir = (NEUTRAL_TARGET - right_wall) * WALL_GAIN
+
+    # PORTED: THE 20 DEGREE RULE. servo() clamps at STEER_DEVIATION=35, which
+    # is the mechanical stop and the wrong limit for ordinary driving.
+    dir_raw = dir
+    dir = max(-STEER_MAX, min(STEER_MAX, dir))
 
     if quadrant_count == 12 and mission_end_not_activated:
         mission_end_not_activated = False
@@ -410,17 +483,66 @@ def cycle(picam2):
 
     if quadrant_count == 12:
         STOP = True
-    print("c%-4d dir=%+6.1f  L=%.3f R=%.3f  blue=%4d orange=%4d  D=%+d q=%d"
-          % (cycle_count, dir, left_wall, right_wall,
-             blue_line_pixel_count, orange_line_pixel_count,
-             direction, quadrant_count))
-    logwriter.writerow([cycle_count, round(dir, 2), round(left_wall, 4),
-                        round(right_wall, 4), blue_line_pixel_count,
-                        orange_line_pixel_count, direction, quadrant_count])
+    # PORTED: FULL per-cycle log. Everything the controller looked at and
+    # everything it decided, on one line, so a bad run can be read afterwards
+    # instead of guessed at.
+    global _prev_t, _t0
+    now = time.time()
+    dt = (now - _prev_t) if _prev_t else 0.0
+    _prev_t = now
+    hz = (1.0 / dt) if dt > 0 else 0.0
+    clamped = "CLAMP" if abs(dir_raw) > STEER_MAX + 0.01 else "     "
+    dname = {1: "CW ", -1: "CCW", 0: "?? "}[direction]
+
+    print("c%-5d t=%6.2f dt=%5.1fms %4.1fHz | L=%.3f R=%.3f | "
+          "blu=%5d s%d  org=%5d s%d | %s q=%2d | raw=%+6.1f cmd=%+6.1f %s"
+          % (cycle_count, now - _t0, dt * 1000.0, hz,
+             left_wall, right_wall,
+             blue_line_pixel_count, blue_line_state,
+             orange_line_pixel_count, orange_line_state,
+             dname, quadrant_count, dir_raw, dir, clamped))
+
+    logwriter.writerow([cycle_count, round(now - _t0, 3), round(dt * 1000, 2),
+                        round(left_wall, 4), round(right_wall, 4),
+                        blue_line_pixel_count, blue_line_state,
+                        orange_line_pixel_count, orange_line_state,
+                        direction, quadrant_count,
+                        round(dir_raw, 2), round(dir, 2)])
     logfile.flush()
     servo(dir)
 
     # LED_rainbow(hue)
+
+
+def print_config():
+    # PORTED: dump every tunable at start, so a saved log says what produced it.
+    print("=" * 78)
+    print("  OPEN CHALLENGE - configuration for this run")
+    print("=" * 78)
+    print("  steering   trim=%+.1f  STEER_MAX=%d deg (normal)  mech stop=%d deg"
+          % (SERVO_TRIM, STEER_MAX, STEER_DEVIATION))
+    print("  servo      settle=%.3f s  hold=%s" % (SERVO_SETTLE_S, SERVO_HOLD))
+    print("  motor      speed=%d" % speed)
+    print("  camera     flip180=%s  exposure=%d us  gain=%.1f  gains=%s"
+          % (CAM_FLIP_180, CAM_EXPOSURE_US, CAM_GAIN, CAM_COLOUR_GAINS))
+    print("             saturation=%.2f contrast=%.2f crop_top=%d rotate180=%s"
+          % (CAM_SATURATION, CAM_CONTRAST, CROP_TOP, ROTATE_180))
+    print("  walls      CW_TARGET=%.3f (left)   CCW_TARGET=%.3f (right)"
+          % (CW_TARGET, CCW_TARGET))
+    print("             NEUTRAL=%.3f  GAIN=%.0f  wall if V<%d"
+          % (NEUTRAL_TARGET, WALL_GAIN, WALL_VAL_MAX))
+    print("             %d deg needs a density error of %.3f"
+          % (STEER_MAX, STEER_MAX / WALL_GAIN))
+    print("  lines      blue>%d px   orange>%d px   blanking=%.2f s"
+          % (blue_line_threshould, orange_line_threshould, LINE_BLANK_S))
+    print("             blue   H %d-%d  S>%d  V %d-%d"
+          % (BLUE_HUE_MIN, BLUE_HUE_MAX, BLUE_SAT_MIN,
+             BLUE_VAL_MIN, BLUE_VAL_MAX))
+    print("             orange H %d-%d  S>%d  V %d-%d"
+          % (ORANGE_HUE_MIN, ORANGE_HUE_MAX, ORANGE_SAT_MIN,
+             ORANGE_VAL_MIN, ORANGE_VAL_MAX))
+    print("  logging    open_log.csv, every cycle")
+    print("=" * 78)
 
 
 def main():
@@ -434,6 +556,7 @@ def main():
     # PORTED: wait for the button before anything moves. Their program started
     # the motor immediately; the rules want the car still until it is pressed,
     # and it is also the emergency stop below.
+    print_config()
     print("Open Challenge ready. PRESS THE BUTTON to start...")
     while not is_button_down():
         time.sleep(0.01)
@@ -441,7 +564,9 @@ def main():
         time.sleep(0.01)
     print("  GO")
 
+    global _t0
     start = time.time()
+    _t0 = start
     button_sum = 0
     cycle(picam2)
     # LED_color(0, 255, 0)  # Green for start
@@ -450,18 +575,15 @@ def main():
     motor(speed)
     stop_time = None
     while not STOP:
-        cycle_start_time = time.time()
         cycle(picam2)
-        cycle_duration = time.time() - cycle_start_time
-        print(f"Cycle {cycle_count}: {cycle_duration:.4f} seconds")
         if STOP and stop_time is None:
             stop_time =time.time()
         if stop_time is not None and time.time()- stop_time >= 10:
             break
         if is_button_down():
             button_sum += 1
+            print(">>> BUTTON PRESSED - emergency stop")
             break                # PORTED: the button is also the emergency stop
-        print(STOP)
     motor(0)
     servo(0)
 
