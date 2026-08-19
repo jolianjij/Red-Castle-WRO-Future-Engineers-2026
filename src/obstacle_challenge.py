@@ -228,6 +228,31 @@ PARK_ALIGN_TOTAL = 0.57  # was 0.8  - left+right sum that means "aligned"
 #     red   target x = RED_NEAR   - SIGN_Y_GAIN * (119 - y)
 #
 # Verified to reproduce their numbers exactly at every distance.
+# GREEN NEEDS TO SWING WIDER. The law already asks for it - MEASURED, a green
+# cube produced Err -658, which is 33 degrees at kp=0.05 - but STEER_MAX clamped
+# it to 20, so the car committed only two thirds of the turn the law wanted.
+# Their own code allowed 50 degrees here, so 20 was never their behaviour.
+# Signs now get their own ceiling, the way the corner kick and the parking
+# manoeuvres already do: the 20 degree rule is for ordinary wall following, and
+# passing an obstacle is exactly the case it is meant to make room for.
+# If green still does not clear it, raise GREEN_NEAR_CW / GREEN_NEAR_CCW next -
+# that widens the gap the car aims for, rather than how hard it turns.
+SIGN_STEER_MAX = 35      # the linkage's real stop; ordinary driving stays at 20
+
+# RED WAS BEING ANSWERED TOO EARLY. A sign becomes a target the moment its blob
+# clears PARALELIPIPED_MIN_AREA=75, and area falls off with the SQUARE of
+# distance - MEASURED, a cube at the calibration distance is about 1220 px, so
+# 75 px is roughly FOUR TIMES further away. Coming out of a corner a distant
+# red would appear and the car would immediately swerve for something it would
+# not reach for several seconds.
+# Red now needs a bigger, nearer blob before it counts. Green keeps the low
+# floor on purpose: it has to start early precisely because it needs room to
+# swing wide.
+#     RED_MIN_AREA 400 -> reacts at about 1.75x the calibration distance
+#                         instead of 4x. Raise it further to react later still.
+GREEN_MIN_AREA = 75
+RED_MIN_AREA = 400
+
 SIGN_Y_GAIN = 6.667      # their 5 per row, rescaled for our crop
 GREEN_NEAR_CW = 262      # their 260 at their y=0
 GREEN_NEAR_CCW = 222     # their 220 at their y=0
@@ -381,7 +406,9 @@ LOG_PATH = None
 _prev_t = 0.0
 _t0 = 0.0
 _dir_smooth = 0.0
-_dir_limit = None        # raised to STEER_DEVIATION for a manoeuvre
+_dir_limit = None        # raised to SIGN_STEER_MAX for a sign, or to
+                         # STEER_DEVIATION for a hard manoeuvre
+_dir_hard = False        # True only for a hard manoeuvre (skips smoothing)
 
 
 def _open_log():
@@ -427,8 +454,11 @@ def print_config():
           % (blue_line_threshould, orange_line_threshould, LINE_BLANK_S))
     print("  signs      kp=%.3f  y_gain=%.3f  green_near CW=%d CCW=%d  red=%d"
           % (kp, SIGN_Y_GAIN, GREEN_NEAR_CW, GREEN_NEAR_CCW, RED_NEAR))
-    print("             min area=%d  close area CW=%d CCW=%d"
-          % (PARALELIPIPED_MIN_AREA, SIGN_CLOSE_AREA_CW, SIGN_CLOSE_AREA_CCW))
+    print("             min area green=%d red=%d  close area CW=%d CCW=%d"
+          % (GREEN_MIN_AREA, RED_MIN_AREA,
+             SIGN_CLOSE_AREA_CW, SIGN_CLOSE_AREA_CCW))
+    print("             sign steer ceiling=%d deg (ordinary driving stays %d)"
+          % (SIGN_STEER_MAX, STEER_MAX))
     print("  parking    min area=%d  wall target=%.2f  align total=%.2f  "
           "stop area=%d" % (PARKING_MIN_AREA, PARK_WALL_TARGET,
                             PARK_ALIGN_TOTAL, PARK_STOP_AREA))
@@ -725,11 +755,13 @@ def update_lines():
         orange_line_detected = False
 
 
-def process_traffic_contours(box, type_idx):
+def process_traffic_contours(box, type_idx, min_area=0):
+    # PORTED: min_area is per COLOUR now - see RED_MIN_AREA / GREEN_MIN_AREA.
+    # Red has to be closer than green before the car answers it.
     global target
     for contour in box:
         area = cv2.contourArea(contour)
-        if area > target[2]:
+        if area > target[2] and area >= min_area:
             boundingBox = cv2.boundingRect(contour)
             if boundingBox[2] < SIGN_MAX_ASPECT * boundingBox[3]:
                 moments = cv2.moments(contour)
@@ -816,9 +848,11 @@ def cycle(picam2):
     R, G, B = 122, 122, 122
     cycle_count += 1
     dir = 0.0
-    global _dir_limit
-    _dir_limit = None            # PORTED: the 20 degree rule, unless a
-                                 # manoeuvre below raises it for this cycle
+    global _dir_limit, _dir_hard
+    _dir_limit = None            # PORTED: the 20 degree rule, unless a sign or
+                                 # a manoeuvre below raises it for this cycle
+    _dir_hard = False            # PORTED: True only for a deliberate hard
+                                 # manoeuvre, which skips the smoothing
 
     target = array('i', [160, 0, PARALELIPIPED_MIN_AREA, -1])
     parking = array('i', [160, 0, PARKING_MIN_AREA])
@@ -834,8 +868,8 @@ def cycle(picam2):
     green_box, _ = cv2.findContours(green_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     purple_box, _ = cv2.findContours(purple_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    process_traffic_contours(red_box, red_index)
-    process_traffic_contours(green_box, green_index)
+    process_traffic_contours(red_box, red_index, RED_MIN_AREA)
+    process_traffic_contours(green_box, green_index, GREEN_MIN_AREA)
     process_parking_contours(purple_box)
 
     update_lines()
@@ -913,6 +947,11 @@ def cycle(picam2):
         R, G, B = 255, 122, 0
 
     dir = Err * kp
+    # PORTED: a sign is being followed, so lift the ceiling from the 20 degree
+    # rule to the linkage's stop - see SIGN_STEER_MAX. This is a CLAMP change
+    # only; the steering is still smoothed, unlike the hard manoeuvres below.
+    if target[3] != -1:
+        _dir_limit = SIGN_STEER_MAX
     # check if we need to return to green
     # PORTED: their 0.6 is WALL_CLOSE here - see the WALL DENSITIES block. On
     # our scale 0.6 is nearly three times a centred reading, so these branches
@@ -928,7 +967,7 @@ def cycle(picam2):
                 dir =-30*right_wall
         if last_detected_traffic_light ==1 and orange_line_state==2:
             servo(45, limit=STEER_DEVIATION)     # PORTED: the corner kick
-            time.sleep(0.7)
+            time.sleep(0.2)
     else:
         if last_detected_traffic_light == 1:
             if left_wall > WALL_CLOSE:
@@ -946,7 +985,7 @@ def cycle(picam2):
                 dir = 30*left_wall
         if last_detected_traffic_light ==0 and blue_line_state==2:
             servo(-45, limit=STEER_DEVIATION)    # PORTED: the corner kick
-            time.sleep(0.7)
+            time.sleep(0.2)
     # --- Disabled swap mechanic ---
     # if quadrant_count == 8 and direction_swap_havent_started:
     #     direction *= -1
@@ -981,11 +1020,13 @@ def cycle(picam2):
                 if right_wall > WALL_NEAR:
                     dir = 45
                     _dir_limit = STEER_DEVIATION
+                    _dir_hard = True
             else:
                 dir = (PARK_WALL_TARGET - right_wall) * 50
                 if left_wall > WALL_NEAR:
                     dir = -45
                     _dir_limit = STEER_DEVIATION
+                    _dir_hard = True
 
             if parking[2] > PARK_STOP_AREA:
                 STOP = True
@@ -997,11 +1038,13 @@ def cycle(picam2):
     # to be sharp.
     global _dir_smooth, _prev_t
     dir_raw = dir
-    if _dir_limit is not None and _dir_limit > STEER_MAX:
-        dir_cmd = dir
-        _dir_smooth = dir
+    lim = STEER_MAX if _dir_limit is None else _dir_limit
+    dir_cmd = max(-lim, min(lim, dir))
+    if _dir_hard:
+        # a deliberate hard manoeuvre - smoothing would blunt exactly the move
+        # that has to be sharp
+        _dir_smooth = dir_cmd
     else:
-        dir_cmd = max(-STEER_MAX, min(STEER_MAX, dir))
         _dir_smooth = SERVO_SMOOTH * dir_cmd + (1.0 - SERVO_SMOOTH) * _dir_smooth
         dir_cmd = _dir_smooth
 
@@ -1022,8 +1065,9 @@ def cycle(picam2):
              direction, quadrant_count, tname,
              target[0], target[1], target[2],
              last_detected_traffic_light, Err, dir_raw, dir_cmd,
-             "  MANOEUVRE" if (_dir_limit is not None
-                               and _dir_limit > STEER_MAX) else ""))
+             "  MANOEUVRE" if _dir_hard else
+             ("  SIGN35" if (_dir_limit is not None
+                             and _dir_limit > STEER_MAX) else "")))
 
     if logwriter is not None:
         logwriter.writerow([cycle_count, round(now - _t0, 3),
@@ -1102,20 +1146,20 @@ def main():
         print("    one side clearly wins, or check with tools/park_calib.py.")
     if pl > pr:
         direction=1
-        motor(50)
+        motor(70)
         servo(45, limit=STEER_DEVIATION)
-        time.sleep(0.7)
+        time.sleep(1)
         Zaid=True
         servo(-35, limit=STEER_DEVIATION)
-        time.sleep(0.7)
+        time.sleep(1)
     else:
         direction=-1
-        motor(50)
+        motor(70)
         servo(-45, limit=STEER_DEVIATION)
-        time.sleep(0.6)
+        time.sleep(1)
         Zaid=True
         servo(35, limit=STEER_DEVIATION)
-        time.sleep(0.9)
+        time.sleep(1)
     LED_hsv(85, 255, 255)  # Green for startScale to 0-255 range
     servo(0)
     motor(50)
@@ -1125,26 +1169,6 @@ def main():
         if is_button_down():
             button_sum += 1
             break                # PORTED: the button is also the emergency stop
-
-    if button_sum < 30:
-        motor(0.5 * 255)  # Scale to 0-255 range
-        # PORTED: the final park-in manoeuvre, also allowed past 20 degrees
-        if direction >= 0:
-            servo(30, limit=STEER_DEVIATION)
-            time.sleep(0.45)
-            servo(-30, limit=STEER_DEVIATION)
-            time.sleep(1.3)
-            servo(0)
-            time.sleep(0.3)
-        else:
-            motor(0.5 * 255)
-            servo(-30, limit=STEER_DEVIATION)
-            time.sleep(0.45)
-            servo(30, limit=STEER_DEVIATION)
-            time.sleep(1.3)
-            servo(0)
-            time.sleep(0.3)
-
     motor(0)
     servo(0)
     LED_hsv(0, 255, 255)  # Back to blue
