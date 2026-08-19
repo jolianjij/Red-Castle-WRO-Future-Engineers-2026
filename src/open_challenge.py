@@ -220,7 +220,7 @@ FINISH_RUN_S = 3.0
 # the car moved between the two placements, and it is worth only 1.5 deg
 # of bias. If the car ever leans in ONE direction only, set both to the
 # mean of 0.239 instead of each to its own reading.
-CW_TARGET  = 0.252      # CW follows the LEFT wall   (theirs: 0.30) MEASURED
+CW_TARGET  = 0.241      # CW follows the LEFT wall   (theirs: 0.30) MEASURED
 CCW_TARGET = 0.214      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
 NEUTRAL_TARGET = 0.5    # before the direction locks, theirs used 0.5 both sides
 WALL_GAIN = 75.0        # their fixed *75
