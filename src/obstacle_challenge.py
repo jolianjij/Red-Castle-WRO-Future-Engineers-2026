@@ -198,7 +198,10 @@ WALL_MIN_RUN = 6
 # 40% too high here, and the branches guarded by them fire late or never.
 # These are their values rescaled by the measured ratio 0.215/0.30.
 WALL_CENTRED = 0.215     # MEASURED, car parked centred, both directions
-WALL_CLOSE = 0.43        # was 0.6  - "getting close to that wall"
+WALL_CLOSE = 0.35        # was 0.6 theirs, then 0.43 rescaled. Lowered again
+                         # because the car was still reaching the wall before
+                         # this fired: centred reads 0.215, so 0.35 is already
+                         # well past the middle of the lane.
 WALL_NEAR = 0.36         # was 0.5  - "very close, override"
 PARK_WALL_TARGET = 0.57  # was 0.8  - the density to hold while parking
 PARK_ALIGN_TOTAL = 0.57  # was 0.8  - left+right sum that means "aligned"
@@ -237,7 +240,38 @@ PARK_ALIGN_TOTAL = 0.57  # was 0.8  - left+right sum that means "aligned"
 # passing an obstacle is exactly the case it is meant to make room for.
 # If green still does not clear it, raise GREEN_NEAR_CW / GREEN_NEAR_CCW next -
 # that widens the gap the car aims for, rather than how hard it turns.
-SIGN_STEER_MAX = 35      # the linkage's real stop; ordinary driving stays at 20
+# STEERING CEILINGS, PER COLOUR. Green and red need opposite things and were
+# sharing one number, so raising it for green made red worse.
+#   GREEN needs the swing - the law asks for 33 deg and used to be cut to 20.
+#   RED must not lunge. Even with its aim clamped, a firm ceiling stops a
+#     distant red from ever producing a violent correction.
+#   A WALL is a safety correction and must not be blunted by whichever sign
+#     ceiling happens to be in force - a red sign leaving the limit at 15 while
+#     the car drifts into a wall is exactly the wrong trade.
+GREEN_STEER_MAX = 35
+RED_STEER_MAX = 15
+WALL_STEER_MAX = 35
+
+# HOW FAR OFF-FRAME A SIGN MAY BE AIMED AT.
+# The law aims further off-frame the FURTHER away the sign is, and the frame is
+# only 320 px wide. MEASURED, a red cube at y=25 gives a target of -509, so
+# Err=+622 and the car goes to full lock for something it will not reach for
+# seconds - which is the over-reaction at the start of a section, where a
+# distant red first comes into view. The steering CEILING is not what does it;
+# at Err=622 the car saturates whatever the ceiling is, which is why raising it
+# for green made red worse rather than leaving it alone.
+#
+# Clamping the aim fixes it at the source. Red is held near the frame, so a
+# distant red gives a firm but sane correction that eases as the car lines up.
+# Green is left effectively unclamped ON PURPOSE - aiming far off-frame is
+# exactly what gives it the wide swing it needs.
+#
+#   red  y=25  clamp 60 : 33 deg -> 11 deg
+#   red  y=60            : 22 deg -> 11 deg
+#   red  y=100           :  8 deg ->  8 deg   (already near, untouched)
+#   green unchanged      : 25 deg at y=25, easing to 2 deg alongside
+GREEN_TARGET_CLAMP = 400   # px beyond the frame edge; 400 = effectively free
+RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 
 # RED WAS BEING ANSWERED TOO EARLY. A sign becomes a target the moment its blob
 # clears PARALELIPIPED_MIN_AREA=75, and area falls off with the SQUARE of
@@ -251,7 +285,7 @@ SIGN_STEER_MAX = 35      # the linkage's real stop; ordinary driving stays at 20
 #     RED_MIN_AREA 400 -> reacts at about 1.75x the calibration distance
 #                         instead of 4x. Raise it further to react later still.
 GREEN_MIN_AREA = 75
-RED_MIN_AREA = 400
+RED_MIN_AREA = 700     # answers red at about 1.3x the calibration distance
 
 SIGN_Y_GAIN = 6.667      # their 5 per row, rescaled for our crop
 GREEN_NEAR_CW = 262      # their 260 at their y=0
@@ -406,7 +440,7 @@ LOG_PATH = None
 _prev_t = 0.0
 _t0 = 0.0
 _dir_smooth = 0.0
-_dir_limit = None        # raised to SIGN_STEER_MAX for a sign, or to
+_dir_limit = None        # raised to the sign/wall ceiling, or to
                          # STEER_DEVIATION for a hard manoeuvre
 _dir_hard = False        # True only for a hard manoeuvre (skips smoothing)
 
@@ -457,8 +491,10 @@ def print_config():
     print("             min area green=%d red=%d  close area CW=%d CCW=%d"
           % (GREEN_MIN_AREA, RED_MIN_AREA,
              SIGN_CLOSE_AREA_CW, SIGN_CLOSE_AREA_CCW))
-    print("             sign steer ceiling=%d deg (ordinary driving stays %d)"
-          % (SIGN_STEER_MAX, STEER_MAX))
+    print("             ceilings: green=%d red=%d wall=%d (ordinary %d)"
+          % (GREEN_STEER_MAX, RED_STEER_MAX, WALL_STEER_MAX, STEER_MAX))
+    print("             aim clamp: green=%d red=%d px beyond the frame"
+          % (GREEN_TARGET_CLAMP, RED_TARGET_CLAMP))
     print("  parking    min area=%d  wall target=%.2f  align total=%.2f  "
           "stop area=%d" % (PARKING_MIN_AREA, PARK_WALL_TARGET,
                             PARK_ALIGN_TOTAL, PARK_STOP_AREA))
@@ -897,15 +933,20 @@ def cycle(picam2):
     # FOLLOWING block at the top. `_d` is the distance term their `target[1]*5`
     # was, expressed in our coordinates.
     _d = SIGN_Y_GAIN * (119 - target[1])
+    # PORTED: clamp how far off-frame the aim may go - see the TARGET CLAMP
+    # block. Green stays effectively free; red is held near the frame.
+    _gt_cw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CW + _d)
+    _gt_ccw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CCW + _d)
+    _rt = max(-RED_TARGET_CLAMP, RED_NEAR - _d)
     if direction >= 0:
         if target[3] in [1, 2]:  # Green
-            Err = -((GREEN_NEAR_CW + _d) - target[0])
+            Err = -(_gt_cw - target[0])
             if target[0] > 220:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
         elif target[3] in [0, 3]:  # Red
-            Err = (target[0] - (RED_NEAR - _d))
+            Err = (target[0] - _rt)
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 0
                 red_start_timer =time.time()
@@ -913,12 +954,12 @@ def cycle(picam2):
             Err = 0
     if direction < 0:
         if target[3] in [1, 2]:  # Green
-            Err = -((GREEN_NEAR_CCW + _d) - target[0])
+            Err = -(_gt_ccw - target[0])
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 1
                 green_start_timer = time.time()
         elif target[3] in [0, 3]:  # Red
-            Err = (target[0] - (RED_NEAR - _d))
+            Err = (target[0] - _rt)
             if target[0] < 90:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CCW:
@@ -950,16 +991,26 @@ def cycle(picam2):
     # PORTED: a sign is being followed, so lift the ceiling from the 20 degree
     # rule to the linkage's stop - see SIGN_STEER_MAX. This is a CLAMP change
     # only; the steering is still smoothed, unlike the hard manoeuvres below.
-    if target[3] != -1:
-        _dir_limit = SIGN_STEER_MAX
+    if target[3] in (1, 2):          # green
+        _dir_limit = GREEN_STEER_MAX
+    elif target[3] in (0, 3):        # red
+        _dir_limit = RED_STEER_MAX
     # check if we need to return to green
     # PORTED: their 0.6 is WALL_CLOSE here - see the WALL DENSITIES block. On
     # our scale 0.6 is nearly three times a centred reading, so these branches
     # fired far too late or not at all.
+    # PORTED: WALL AVOIDANCE NOW WATCHES BOTH SIDES, ALWAYS.
+    # Theirs checked only ONE wall depending on the traffic light: going CW
+    # with a red sign active it watched the right wall and NEVER the left, so
+    # the car could drive straight into the left wall while it was busy
+    # answering a sign - and there is no general wall following in this program
+    # to catch it, dir is 0 between signs. That is the wall it was hitting.
     if direction >= 0:
         if last_detected_traffic_light == 0:
             if right_wall > WALL_CLOSE:
                 dir = -40*right_wall
+            elif left_wall > WALL_CLOSE:     # PORTED: was unguarded
+                dir = 30*left_wall
         else:
             if left_wall > WALL_CLOSE:
                 dir = 30*left_wall
@@ -972,6 +1023,8 @@ def cycle(picam2):
         if last_detected_traffic_light == 1:
             if left_wall > WALL_CLOSE:
                 dir = 40*left_wall
+            elif right_wall > WALL_CLOSE:    # PORTED: was unguarded
+                dir = -30*right_wall
         else:
             # PORTED: THEIR TYPO. This pair tested one wall and scaled the
             # steering by the OTHER one, so a car hard against the right wall
@@ -986,6 +1039,11 @@ def cycle(picam2):
         if last_detected_traffic_light ==0 and blue_line_state==2:
             servo(-45, limit=STEER_DEVIATION)    # PORTED: the corner kick
             time.sleep(0.2)
+    # PORTED: a wall correction gets its own ceiling, so it is never limited
+    # by a sign's - see WALL_STEER_MAX.
+    if left_wall > WALL_CLOSE or right_wall > WALL_CLOSE:
+        _dir_limit = WALL_STEER_MAX
+
     # --- Disabled swap mechanic ---
     # if quadrant_count == 8 and direction_swap_havent_started:
     #     direction *= -1
