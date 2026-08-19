@@ -95,7 +95,7 @@ SERVO_DEADBAND = 0.8     # deg - below this the pulse is not rewritten
 # Normal steering is clamped to STEER_MAX; the corner kick, the parking
 # alignment and the final manoeuvre pass limit=STEER_DEVIATION explicitly,
 # because those are the special cases the rule exists to make room for.
-STEER_MAX = 20
+STEER_MAX = 30
 
 
 speed=0
@@ -197,14 +197,14 @@ WALL_MIN_RUN = 6
 # centred car reads 0.215 a side - so every one of their numbers is roughly
 # 40% too high here, and the branches guarded by them fire late or never.
 # These are their values rescaled by the measured ratio 0.215/0.30.
-WALL_CENTRED = 0.215     # MEASURED, car parked centred, both directions
-WALL_CLOSE = 0.35        # was 0.6 theirs, then 0.43 rescaled. Lowered again
+WALL_CENTRED = 0.22     # MEASURED, car parked centred, both directions
+WALL_CLOSE = 0.3        # was 0.6 theirs, then 0.43 rescaled. Lowered again
                          # because the car was still reaching the wall before
                          # this fired: centred reads 0.215, so 0.35 is already
                          # well past the middle of the lane.
-WALL_NEAR = 0.36         # was 0.5  - "very close, override"
-PARK_WALL_TARGET = 0.57  # was 0.8  - the density to hold while parking
-PARK_ALIGN_TOTAL = 0.57  # was 0.8  - left+right sum that means "aligned"
+WALL_NEAR = 0.5         # was 0.5  - "very close, override"
+PARK_WALL_TARGET = 0.8  # was 0.8  - the density to hold while parking
+PARK_ALIGN_TOTAL = 0.8  # was 0.8  - left+right sum that means "aligned"
 
 # --------------------------------------------------
 # SIGN FOLLOWING - THE VERTICAL AXIS WAS INVERTED BY THE PORT.
@@ -250,7 +250,7 @@ PARK_ALIGN_TOTAL = 0.57  # was 0.8  - left+right sum that means "aligned"
 #     the car drifts into a wall is exactly the wrong trade.
 GREEN_STEER_MAX = 35
 RED_STEER_MAX = 15
-WALL_STEER_MAX = 35
+WALL_STEER_MAX = 30
 
 # HOW FAR OFF-FRAME A SIGN MAY BE AIMED AT.
 # The law aims further off-frame the FURTHER away the sign is, and the frame is
@@ -284,13 +284,18 @@ RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 # swing wide.
 #     RED_MIN_AREA 400 -> reacts at about 1.75x the calibration distance
 #                         instead of 4x. Raise it further to react later still.
-GREEN_MIN_AREA = 75
-RED_MIN_AREA = 700     # answers red at about 1.3x the calibration distance
+# WHEN TO STOP STEERING FOR A GREEN CUBE. Both conditions must hold: it has to
+# be off to the side AND close. Set GREEN_RELEASE_X = 320 to never release.
+GREEN_RELEASE_X = 220        # theirs, unchanged
+GREEN_RELEASE_AREA = 3000    # NEW - theirs released at any distance
 
-SIGN_Y_GAIN = 6.667      # their 5 per row, rescaled for our crop
-GREEN_NEAR_CW = 262      # their 260 at their y=0
-GREEN_NEAR_CCW = 222     # their 220 at their y=0
-RED_NEAR = 118           # their 120 at their y=0
+GREEN_MIN_AREA = 50
+RED_MIN_AREA = 400     # answers red at about 1.3x the calibration distance
+
+SIGN_Y_GAIN = 6.867      # their 5 per row, rescaled for our crop
+GREEN_NEAR_CW = 300      # their 260 at their y=0
+GREEN_NEAR_CCW = 262     # their 220 at their y=0
+RED_NEAR = 120           # their 120 at their y=0
 
 # --------------------------------------------------
 # AREAS also shrink with the crop. Ours squashes 320 rows into 120 where theirs
@@ -316,8 +321,8 @@ PARK_EXIT_FRAMES = 8       # average the purple counts over this many frames
 PARK_EXIT_MIN_TOTAL = 2000 # below this the lot is not really in view
 PARK_EXIT_MIN_RATIO = 1.10 # below this the two sides are too close to call
 
-SIGN_CLOSE_AREA_CW = 750     # was 1000
-SIGN_CLOSE_AREA_CCW = 1125   # was 1500
+SIGN_CLOSE_AREA_CW = 500     # was 1000
+SIGN_CLOSE_AREA_CCW = 1005   # was 1500
 PARK_STOP_AREA = 2550        # was 3400
 # ==========================================================================
 
@@ -941,7 +946,21 @@ def cycle(picam2):
     if direction >= 0:
         if target[3] in [1, 2]:  # Green
             Err = -(_gt_cw - target[0])
-            if target[0] > 220:
+            # PORTED: THIS IS WHY GREEN FAILED. Theirs released the steering
+            # entirely the moment the cube passed x=220, at ANY distance.
+            # MEASURED across the CW runs: 806 of 1158 green cycles - 70% -
+            # had the steering released, and it released at x as low as 221
+            # even with the cube CLOSE (area 3000-6000). One encounter held
+            # green for 4.38 s while its area grew 398 -> 6140 and commanded
+            # 0.0 degrees for all 94 cycles: the car drove straight at it.
+            # x=220 is only 60 px right of centre in a 320 px frame.
+            #
+            # The release itself is worth keeping - without it, a cube already
+            # past on the right pulls the car back toward it, because the aim
+            # at close range is GREEN_NEAR_CW. But it must only apply once the
+            # cube is genuinely CLOSE. Far cubes are exactly the ones that need
+            # the steering.
+            if target[0] > GREEN_RELEASE_X and target[2] > GREEN_RELEASE_AREA:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
@@ -1206,7 +1225,7 @@ def main():
         direction=1
         motor(70)
         servo(45, limit=STEER_DEVIATION)
-        time.sleep(1)
+        time.sleep(0.5)
         Zaid=True
         servo(-35, limit=STEER_DEVIATION)
         time.sleep(1)
@@ -1214,7 +1233,7 @@ def main():
         direction=-1
         motor(70)
         servo(-45, limit=STEER_DEVIATION)
-        time.sleep(1)
+        time.sleep(0.5)
         Zaid=True
         servo(35, limit=STEER_DEVIATION)
         time.sleep(1)
