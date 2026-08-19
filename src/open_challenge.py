@@ -301,7 +301,15 @@ FINISH_RUN_S = 3.0
 CW_TARGET  = 0.215      # CW follows the LEFT wall   (theirs: 0.30)
                         # NOT the raw CW measurement of 0.241 - see below.
 CCW_TARGET = 0.214      # CCW follows the RIGHT wall (theirs: 0.40) MEASURED
-NEUTRAL_TARGET = 0.5    # before the direction locks, theirs used 0.5 both sides
+NEUTRAL_TARGET = 0.25   # BEFORE THE DIRECTION LOCKS. Theirs was 0.5, and on
+                        # OUR camera the densities only reach about 0.25 - so
+                        # nothing ever exceeded it, dir stayed 0, and the car
+                        # drove DEAD STRAIGHT out of the start until it found a
+                        # line. Pointed even slightly inward, that is a crash
+                        # into the inner wall. CCW only survived it because a
+                        # line arrived at 2.7 s.
+                        # Centred reads 0.215, so 0.25 does nothing until the
+                        # car is genuinely close to one side.
 WALL_GAIN = 75.0        # their fixed *75
 
 # THE 20 DEGREE RULE. Normal driving never steers more than this; only special
