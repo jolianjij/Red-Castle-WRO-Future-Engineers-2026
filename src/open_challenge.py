@@ -81,6 +81,24 @@ SERVO_HOLD = True
 SERVO_SMOOTH = 0.35
 SERVO_DEADBAND = 0.8
 
+# PORTED: WHAT THE SHAKE ACTUALLY WAS.
+# RPi.GPIO generates PWM in SOFTWARE, from a Python thread. Every scheduling
+# hiccup moves the pulse edge, and on a 1.5 ms servo pulse 100 us of jitter is
+# about 9 degrees of commanded position - so the servo hunts no matter how
+# smooth the commands are. GPIO13 is a hardware PWM pin and pigpio times the
+# pulse by DMA instead.
+#
+# TESTED with tools/servo_jitter.py, holding ONE CONSTANT ANGLE three ways:
+#     RPi.GPIO, pulse held      -> audible buzzing
+#     RPi.GPIO, pulse released  -> audible buzzing
+#     pigpio, DMA-timed         -> SILENT
+# The command never changed inside a phase, so this was never the control loop.
+#
+# pigpio needs its daemon:  sudo systemctl enable --now pigpiod
+# If the daemon is not running this falls back to RPi.GPIO automatically and
+# says so at startup - it will drive, it will just buzz again.
+SERVO_BACKEND = "pigpio"        # "pigpio" or "rpigpio" for their original
+
 
 speed = 100
 
@@ -370,14 +388,26 @@ def LED_hsv(hue_val, sat, val):
     pass
 
 
-_last_duty = None
-_DEADBAND_DUTY = (12.5 - 2.5) / 180.0 * SERVO_DEADBAND   # deg -> duty units
+_last_angle = None
+_pi = None                   # the pigpio handle, or None for RPi.GPIO
+
+
+def _write_servo(angle):
+    # PORTED: the two backends, writing the SAME pulse for the same angle.
+    # Their duty ran 2.5% to 12.5% at 50 Hz, and 50 Hz means a 20 ms frame, so
+    # their duty was really a pulse of 500 us to 2500 us across 0-180 degrees.
+    # pigpio is given that pulse directly, so the centre and the throw are
+    # identical either way and SERVO_TRIM does not change meaning.
+    if _pi is not None:
+        _pi.set_servo_pulsewidth(SERVO_PIN, 500.0 + (angle / 180.0) * 2000.0)
+    else:
+        servo_pwm.ChangeDutyCycle(2.5 + (angle / 180.0) * 10.0)
 
 
 def servo(angle):
-    """Adjust and set the servo angle using RPi.GPIO."""
+    """Adjust and set the servo angle."""
 
-    global SERVO_PIN
+    global SERVO_PIN, _last_angle
 
     angle += 90
     deviation = STEER_DEVIATION      # PORTED: was 45; our linkage stops at 35
@@ -387,22 +417,19 @@ def servo(angle):
         angle = 90 + deviation
     angle += SERVO_TRIM          # PORTED: was `angle += 0`
 
-    min_duty = 2.5  # Duty cycle for 0 degrees
-    max_duty = 12.5 # Duty cycle for 180 degrees
-
-    duty_range = max_duty - min_duty
-    duty = min_duty + (angle / 180.0) * duty_range
-
-    # PORTED: DEADBAND. Rewriting the duty re-times the software PWM pulse and
-    # the servo twitches, so do not rewrite it for a change too small to matter.
-    global _last_duty
-    if _last_duty is None or abs(duty - _last_duty) >= _DEADBAND_DUTY:
-        servo_pwm.ChangeDutyCycle(duty)
-        _last_duty = duty
+    # PORTED: DEADBAND - do not rewrite the pulse for a change too small to
+    # matter. Small changes still accumulate, so this cannot cause a permanent
+    # offset: once the command has drifted SERVO_DEADBAND degrees it is written.
+    if _last_angle is None or abs(angle - _last_angle) >= SERVO_DEADBAND:
+        _write_servo(angle)
+        _last_angle = angle
     time.sleep(SERVO_SETTLE_S)          # PORTED: was 0.1 - see SERVO_SETTLE_S
     if not SERVO_HOLD:                  # PORTED: theirs always released here
-        servo_pwm.ChangeDutyCycle(0)
-        _last_duty = None
+        if _pi is not None:
+            _pi.set_servo_pulsewidth(SERVO_PIN, 0)
+        else:
+            servo_pwm.ChangeDutyCycle(0)
+        _last_angle = None
 
 
 def motor(speed):  # Speed is -1 to 1
@@ -433,9 +460,27 @@ def Setup_GPIO():
     # PORTED: GPIO.setup(10, OUTPUT) was the NeoPixel data pin - not on this car
     # PORTED: the button needs the internal pull-up, being wired to GND
     GPIO.setup(BUTTON_PIN, INPUT, pull_up_down=GPIO.PUD_UP)
-    global servo_pwm, motor1_pwm, motor2_pwm
-    servo_pwm = GPIO.PWM(SERVO_PIN, 50)
-    servo_pwm.start(0)
+    global servo_pwm, motor1_pwm, motor2_pwm, _pi
+    # PORTED: prefer pigpio for the servo - see SERVO_BACKEND. It is the whole
+    # reason the steering stopped buzzing. Falls back to their RPi.GPIO PWM,
+    # loudly, if the daemon is not up.
+    servo_pwm = None
+    _pi = None
+    if SERVO_BACKEND == "pigpio":
+        try:
+            import pigpio
+            _pi = pigpio.pi()
+            if not _pi.connected:
+                _pi = None
+        except ImportError:
+            _pi = None
+        if _pi is None:
+            print("!! pigpiod IS NOT RUNNING - falling back to RPi.GPIO software")
+            print("   PWM, which is what makes the steering buzz. Fix with:")
+            print("       sudo systemctl enable --now pigpiod")
+    if _pi is None:
+        servo_pwm = GPIO.PWM(SERVO_PIN, 50)
+        servo_pwm.start(0)
 
     motor1_pwm = GPIO.PWM(MOTOR_IN1, 1000)
     motor2_pwm = GPIO.PWM(MOTOR_IN2, 1000)
@@ -720,6 +765,9 @@ def print_config():
           % (SERVO_TRIM, STEER_MAX, STEER_DEVIATION))
     print("  servo      settle=%.3f s  hold=%s  smooth=%.2f  deadband=%.1f deg"
           % (SERVO_SETTLE_S, SERVO_HOLD, SERVO_SMOOTH, SERVO_DEADBAND))
+    print("             pulse driver: %s"
+          % ("pigpio, DMA-timed (steady)" if _pi is not None
+             else "RPi.GPIO SOFTWARE PWM - THIS BUZZES"))
     print("  motor      speed=%d" % speed)
     print("  camera     flip180=%s  exposure=%d us  gain=%.1f  gains=%s"
           % (CAM_FLIP_180, CAM_EXPOSURE_US, CAM_GAIN, CAM_COLOUR_GAINS))
@@ -813,6 +861,10 @@ def main():
     cv2.imwrite("input.png", raw_frame)
     cv2.imwrite("frame.png", frame)
 
+    # PORTED: stop driving the servo before letting go of the pins.
+    if _pi is not None:
+        _pi.set_servo_pulsewidth(SERVO_PIN, 0)
+        _pi.stop()
     GPIO.cleanup()               # PORTED: leave the pins in a sane state
     sys.exit(0)
 

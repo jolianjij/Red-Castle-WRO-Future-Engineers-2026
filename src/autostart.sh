@@ -26,8 +26,10 @@ write_unit() {
 [Unit]
 Description=WRO 2026 Future Engineers - challenge program
 # the camera needs udev to have settled, or picamera2 fails to open it
-After=multi-user.target systemd-udev-settle.service
-Wants=systemd-udev-settle.service
+# and pigpiod must be up BEFORE the program, or the servo silently falls
+# back to RPi.GPIO software PWM - which is what makes the steering buzz.
+After=multi-user.target systemd-udev-settle.service pigpiod.service
+Wants=systemd-udev-settle.service pigpiod.service
 
 [Service]
 Type=simple
