@@ -122,12 +122,37 @@ $already = $false
 if (Test-Path $hosts) {
     $already = (Select-String -Path $hosts -Pattern "^\s*$([regex]::Escape($PI_IP))\s+$PI_NAME\b" -Quiet)
 }
-if ($already) {
-    Say-Good "hosts already maps $PI_IP -> $PI_NAME"
+if ($RemoveHostsEntry) {
+    $admin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $admin) {
+        Say-Bad "-RemoveHostsEntry needs Administrator."
+    } elseif (-not $already) {
+        Say-Good "no entry to remove"
+    } else {
+        $kept = Get-Content $hosts | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($PI_IP))\s+$PI_NAME" }
+        Set-Content -Path $hosts -Value $kept -Encoding utf8
+        Say-Good "removed - the bare name now resolves through DNS again (use this at home)"
+    }
+} elseif ($already) {
+    Say-Good "hosts maps $PI_IP -> $PI_NAME  (CABLE only - remove it at home with -RemoveHostsEntry)"
 } elseif ($AddHostsEntry) {
     $admin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) {
-        Say-Bad "-AddHostsEntry needs Administrator. Re-run PowerShell as Admin."
+        # Writing hosts needs Administrator. Rather than fail with "Access to
+        # the path is denied", ask Windows to re-launch this script elevated -
+        # a UAC prompt instead of a dead end.
+        Say-Warn "writing hosts needs Administrator - asking for elevation..."
+        try {
+            $me = $MyInvocation.MyCommand.Path
+            if (-not $me) { $me = $PSCommandPath }
+            Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", "`"$me`"", "-AddHostsEntry") | Out-Null
+            Say-Good "elevated run finished - check its window for the result"
+        } catch {
+            Say-Bad "elevation was refused. Right-click PowerShell -> Run as"
+            Write-Host "          administrator, then run this again with -AddHostsEntry" -ForegroundColor Yellow
+        }
     } else {
         try {
             Add-Content -Path $hosts -Value ("`r`n$PI_IP`t$PI_NAME") -Encoding utf8 -ErrorAction Stop

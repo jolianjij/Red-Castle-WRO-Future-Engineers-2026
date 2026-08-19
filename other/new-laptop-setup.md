@@ -51,7 +51,8 @@ Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 
 ### 3. Install a VNC viewer, if you want the desktop
 
-RealVNC Viewer. Download it now. You connect to `raspberrypi.local:5900`.
+RealVNC Viewer. Download it now. You connect to `raspberrypi:5900` once the
+hosts entry below is in place (or `192.168.50.1:5900`).
 
 ### 4. Clone the repository
 
@@ -65,12 +66,19 @@ Do this now — at the venue you cannot.
 
 ### 5. Make the bare hostname `raspberrypi` work
 
-`raspberrypi.local` resolves over the cable on its own, because avahi (mDNS)
-runs on the Pi and Windows 10/11 resolve `.local` natively.
+**MEASURED on this laptop, and it is the opposite of what you would expect:**
 
-The **bare** name `raspberrypi` does not — over a direct cable there is no DNS
-server and no search domain to append `.local` for you. Because the Pi's address
-on this cable is fixed at `192.168.50.1`, one hosts-file line fixes it
+```
+raspberrypi        -> WORKS    (Windows ICS DNS, while on the hotspot)
+raspberrypi.local  -> FAILS    (Git Bash does not do mDNS here)
+```
+
+So do not rely on `.local`. Windows' own resolver handles it in PowerShell, but
+the Git Bash `ssh` that every tool in this repo uses does not, on this machine.
+
+Over a direct cable there is no DNS server at all and no search domain to append
+`.local` for you, so neither name resolves on its own. Because the Pi's address
+on that cable is fixed at `192.168.50.1`, one hosts-file line fixes it
 permanently:
 
 Open PowerShell **as Administrator**:
@@ -81,10 +89,16 @@ Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "`n192.168.50.1`t
 
 Then `ssh pi@raspberrypi` works, with no `.local` and no address typed.
 
-> This is safe to hard-code **only** because the Pi's wired address is static.
-> It does not affect Wi-Fi: when the Pi is on Wi-Fi it has a different address,
-> and this entry would point at the wrong one. If you use both, prefer
-> `raspberrypi.local`, which always resolves to whichever interface is live.
+> **This entry is for the CABLE, and it breaks Wi-Fi access.** It is safe to
+> hard-code only because the Pi's wired address is static. On the hotspot the Pi
+> has a different address (192.168.137.x), and this entry would send you to
+> 192.168.50.1, which is not reachable without the cable.
+>
+> So: **add it at the venue, remove it at home.** The script does both:
+> `-AddHostsEntry` and `-RemoveHostsEntry`.
+>
+> At home on the hotspot you do not need it - the bare name already works there
+> through Windows' own DNS.
 
 ---
 
@@ -157,7 +171,9 @@ keyboard on the Pi plus `nmcli radio wifi on` recovers it.
 |---|---|---|
 | No `192.168.50.x` address | adapter set to a static IP | set it back to automatic |
 | No address, adapter shows `169.254.x.x` | no DHCP reply — Pi not booted, or cable in the wrong port | wait for the Pi to finish booting, check the cable |
-| `raspberrypi.local` fails | mDNS blocked or unsupported | use `192.168.50.1`, or add the hosts line above |
+| `raspberrypi.local` fails | Git Bash does not do mDNS - MEASURED here | use the hosts entry; do not rely on `.local` |
+| bare `raspberrypi` fails on the cable | no DNS server on a direct link | add the hosts entry (`-AddHostsEntry`) |
+| bare `raspberrypi` fails at home | hosts entry still set from the venue | remove it (`-RemoveHostsEntry`) |
 | `ssh: connection refused` | Pi still booting | wait, then retry |
 | Works, but you suspect it is going over Wi-Fi | both interfaces are up and mDNS picked the Wi-Fi one | test with `ssh pi@192.168.50.1` explicitly — that address only exists on the cable |
 | Windows firewall prompt | new network classified Public | nothing to allow; SSH and VNC are outbound |
