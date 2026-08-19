@@ -120,9 +120,31 @@ CROP_TOP = 160
 #     short enough : consecutive counted lines are about 2.5 s apart
 LINE_BLANK_S = 1.2
 
-# PORTED: line thresholds are PIXEL COUNTS out of 38400 and belong to the
-# camera that measured them. Re-measure with tools/line_check.py.
-blue_line_threshould = 1100
+# PORTED: line thresholds are PIXEL COUNTS and belong to the camera AND THE
+# CROP that measured them. Re-measure with tools/line_audit.py.
+#
+# BLUE was SILENT on a line filling the view. MEASURED: 1077 px against their
+# threshold of 1100, and 1059-1104 across 12 frames - the threshold sat INSIDE
+# the frame-to-frame spread, so the same crossing flickered on and off and
+# would have been counted more than once.
+#
+# The cause is our CROP, not the colour. CROP_TOP had to move from their 240 to
+# 160 to get the walls in frame at all, which squashes 320 rows into 120 instead
+# of 240 into 120. A line is mostly HORIZONTAL, so it loses pixels in direct
+# proportion: the same frame gives 1421 px through their crop and 1077 through
+# ours - 76%, against the 75% the geometry predicts.
+#
+# Their threshold fired at 1100/1421 = 77% of a full line. Keeping that same
+# design ratio on our crop gives 1077 * 0.774 = 834. Bare mat reads 3-9 px, so
+# there is no false-positive risk anywhere near this number.
+#
+# NOT changed, deliberately: BLUE_SAT_MIN. 9556 px pass every other bound and
+# fail only S>140 - that is the MAT, whose hue sits inside the blue range.
+# Saturation is the only thing keeping it out. Lowering it re-admits the mat.
+# The hue floor of 90 does cost 580 real line pixels (the blurred edges), and
+# lowering it to 88 would recover some - but green pillars measure H81-86, and
+# obstacle_challenge shares this range, so it is not worth the collision.
+blue_line_threshould = 830
 orange_line_threshould = 1300
 
 # PORTED: their colour tests, with OUR measured saturation floors.
