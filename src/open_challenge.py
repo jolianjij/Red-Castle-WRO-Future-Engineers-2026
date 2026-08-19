@@ -145,7 +145,7 @@ LINE_BLANK_S = 1.2
 # lowering it to 88 would recover some - but green pillars measure H81-86, and
 # obstacle_challenge shares this range, so it is not worth the collision.
 blue_line_threshould = 830
-orange_line_threshould = 1300
+orange_line_threshould = 930
 
 # PORTED: their colour tests, with OUR measured saturation floors.
 # Theirs used sat > 60 for blue. On our camera the MAT reads S~68 and the blue
@@ -171,6 +171,27 @@ ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
 # direction could never lock CW and every run fell to blue and went CCW.
 # Hue alone separates orange from the mat here anyway - orange H~13 against the
 # mat's H~70 - so the brightness floor was never doing the work.
+# PORTED: ORANGE WAS SILENT TOO, and worse than blue - it never reached its
+# threshold at all. MEASURED on a line filling the view: 1161-1246 across 12
+# frames against a threshold of 1300. Never fires.
+# Same cause, same fix: their 1300 came from their crop, which gives 1389 px on
+# the very same frame our crop reads 1161 from - we keep 84%. Applying the same
+# 77%-of-a-full-line rule blue got: 1199 * 0.774 = 928, so 930.
+# Bare mat reads 0-87 px orange, so the margin below is about 13x.
+#
+# NOT changed, deliberately:
+#   ORANGE_VAL_MIN stays at 30 although 444 px pass every other bound and fail
+#   only it. Those are the line's shadowed edges and recovering them would
+#   widen the margin - but shadow is grey, its hue is unstable at low
+#   saturation, and S>70 is weak protection against it. The margin is already
+#   1.25x; buying more of it with a bound that lets shadow in is a bad trade.
+#   ORANGE_HUE_MAX stays at 30. The 13639 px it rejects are the MAT, not line.
+#
+# NOTE these are STATIC readings at one distance. During a run the car drives
+# over the line and the count PEAKS higher than this. open_log.csv records
+# blue_px and orange_px every cycle, so after a run the real peak at each
+# crossing can be read off directly - that is better evidence than any static
+# measurement, including this one.
 WALL_VAL_MAX = 70            # LEGACY single test, used only if shadow
                              # rejection below is turned OFF
 
