@@ -61,6 +61,25 @@ STEER_DEVIATION = 35    # PORTED: their deviation was 45. OUR ACKERMANN LINKAGE
 SERVO_SETTLE_S = 0.02
 SERVO_HOLD = True
 
+# PORTED: SHAKE. Two separate causes, two separate knobs.
+#
+#   SERVO_SMOOTH    The controller is a pure P term running at 34 Hz on a
+#                   density signal that moves as the car does. Every cycle it
+#                   hands the servo a slightly different angle, so the servo
+#                   is never still. This is an exponential average on the
+#                   COMMAND: 1.0 is their original raw behaviour, lower is
+#                   smoother. 0.35 gives a time constant of about 85 ms -
+#                   far quicker than the car turns, so it costs no response.
+#
+#   SERVO_DEADBAND  RPi.GPIO drives this pin with SOFTWARE PWM, and every
+#                   ChangeDutyCycle call re-times the pulse train, which the
+#                   servo feels as a twitch. Below this many degrees of change
+#                   the duty is simply not rewritten, so a car already going
+#                   straight stops being nudged 34 times a second.
+#                   Set to 0.0 to write every cycle like theirs did.
+SERVO_SMOOTH = 0.35
+SERVO_DEADBAND = 0.8
+
 
 speed = 100
 
@@ -129,7 +148,53 @@ ORANGE_HUE_MIN, ORANGE_HUE_MAX = 0, 30
 # direction could never lock CW and every run fell to blue and went CCW.
 # Hue alone separates orange from the mat here anyway - orange H~13 against the
 # mat's H~70 - so the brightness floor was never doing the work.
-WALL_VAL_MAX = 70            # a pixel darker than this is wall
+WALL_VAL_MAX = 70            # LEGACY single test, used only if shadow
+                             # rejection below is turned OFF
+
+# --------------------------------------------------
+# WALL DETECTION - the shadow fix, brought back from robot.py
+#
+# The port had a bare  v < 70 . That counts ANY dark pixel as wall, and a
+# shadow lying on the mat is exactly that: dark. Shadow inflates whichever
+# half it falls in, and the controller steers away from a wall that is not
+# there.
+#
+# robot.py already solved this and the solution has two independent halves:
+#
+# 1. A TWO-CASE brightness/saturation test instead of one threshold.
+#    HSV saturation is unreliable when V is tiny - a black wall can report
+#    S>200 from pure sensor noise - so testing saturation alone REJECTS REAL
+#    WALLS, while testing brightness alone ACCEPTS THE COLOURED LINES. Hence:
+#         very dark             -> wall, whatever the saturation says
+#         dark AND desaturated  -> wall
+#         dark but saturated    -> a blue or orange line, NOT wall
+#
+# 2. A GEOMETRIC test, which is what actually kills shadow. From
+#    tools/shadow_check.py: a real wall is a TALL SOLID VERTICAL RUN of dark
+#    pixels; a shadow is a broad SHALLOW smear. Opening the mask with a
+#    vertical kernel deletes every dark region that does not contain a run of
+#    WALL_MIN_RUN pixels top-to-bottom - which is the shadow, and not the wall.
+#
+# TURNING THIS ON CHANGES THE MEASURED DENSITIES, so CW_TARGET and CCW_TARGET
+# must be re-measured with tools/wall_calib.py. The tool prints the old and new
+# densities side by side so you can see how much shadow was being counted.
+# Set WALL_SHADOW_REJECT = False to go straight back to the bare v < 70.
+WALL_SHADOW_REJECT = True
+WALL_V_HARD = 32        # below this it is wall regardless of saturation
+WALL_V_SOFT = 62        # up to this it is wall ONLY if desaturated
+WALL_S_MAX = 90         # coloured lines exceed this and are rejected
+WALL_OPEN_K = 3         # square open - drops speckle and printed dots
+WALL_MIN_RUN = 6        # a wall needs this many consecutive dark rows.
+                        # RAISE IT if shadow still gets through; LOWER IT if
+                        # distant walls start disappearing from the reading.
+
+# --------------------------------------------------
+# FINISHING THE RUN
+# Their code set STOP the instant the 12th quadrant was counted, so the car
+# braked ON the line. (Their mission_end_cycle = cycle_count + 100 was never
+# read by anything - dead code.) Drive on for this long after the 12th count,
+# then stop.
+FINISH_RUN_S = 3.0
 
 # --------------------------------------------------
 # WALL FOLLOWING - MEASURED with tools/wall_calib.py, car parked CENTRED
@@ -180,7 +245,7 @@ INPUT = GPIO.IN
 # --------------------------------------------------
 
 STOP = False
-mission_end_cycle = int(1e9)
+mission_end_t = 0.0            # PORTED: a TIME now, not a cycle number
 mission_end_not_activated = True
 
 cycle_count = 0
@@ -218,18 +283,30 @@ orange_line_state = 0
 
 Err = 0
 dir = 0.0
+_dir_smooth = 0.0        # PORTED: state for SERVO_SMOOTH
 
 
 # PORTED: log every cycle, so a bad run can be read afterwards instead of
 # guessed at. Their open file wrote nothing.
 import csv
-logfile = open("open_log.csv", "w", newline="")
-logwriter = csv.writer(logfile)
-logwriter.writerow(["cycle", "t_s", "dt_ms", "left_wall", "right_wall",
-                    "blue_px", "blue_state", "orange_px", "orange_state",
-                    "direction", "quadrant", "dir_raw", "dir_cmd"])
+
+# PORTED: the log is opened by main(), NOT at import. It used to be opened at
+# module level, which meant that merely importing this file - which the tools
+# and the test suite now do - TRUNCATED the previous run's log.
+logfile = None
+logwriter = None
 _prev_t = 0.0
 _t0 = 0.0
+
+
+def _open_log():
+    global logfile, logwriter
+    logfile = open("open_log.csv", "w", newline="")
+    logwriter = csv.writer(logfile)
+    logwriter.writerow(["cycle", "t_s", "dt_ms", "left_wall", "right_wall",
+                        "blue_px", "blue_state", "orange_px", "orange_state",
+                        "direction", "quadrant",
+                        "dir_raw", "dir_clamped", "dir_servo"])
 
 
 # --------------------------------------------------
@@ -247,6 +324,10 @@ def LED_color(r, g, b):
 def LED_hsv(hue_val, sat, val):
     # PORTED: no NeoPixel on this car. Kept so every call site is unchanged.
     pass
+
+
+_last_duty = None
+_DEADBAND_DUTY = (12.5 - 2.5) / 180.0 * SERVO_DEADBAND   # deg -> duty units
 
 
 def servo(angle):
@@ -268,10 +349,16 @@ def servo(angle):
     duty_range = max_duty - min_duty
     duty = min_duty + (angle / 180.0) * duty_range
 
-    servo_pwm.ChangeDutyCycle(duty)
+    # PORTED: DEADBAND. Rewriting the duty re-times the software PWM pulse and
+    # the servo twitches, so do not rewrite it for a change too small to matter.
+    global _last_duty
+    if _last_duty is None or abs(duty - _last_duty) >= _DEADBAND_DUTY:
+        servo_pwm.ChangeDutyCycle(duty)
+        _last_duty = duty
     time.sleep(SERVO_SETTLE_S)          # PORTED: was 0.1 - see SERVO_SETTLE_S
     if not SERVO_HOLD:                  # PORTED: theirs always released here
         servo_pwm.ChangeDutyCycle(0)
+        _last_duty = None
 
 
 def motor(speed):  # Speed is -1 to 1
@@ -356,6 +443,28 @@ def process_frame(raw_frame_arr, frame_arr):
         crop = crop[::-1, ::-1]
     frame_arr[:] = crop
 
+_WK_SQ = None
+_WK_VERT = None
+
+
+def wall_mask(h, s, v):
+    # PORTED: see the WALL DETECTION block at the top. Their test was a bare
+    # v < WALL_VAL_MAX, which counts shadow on the mat as wall.
+    global _WK_SQ, _WK_VERT
+    if not WALL_SHADOW_REJECT:
+        return v < WALL_VAL_MAX
+    if _WK_SQ is None:
+        _WK_SQ = np.ones((WALL_OPEN_K, WALL_OPEN_K), np.uint8)
+        _WK_VERT = np.ones((WALL_MIN_RUN, 1), np.uint8)
+    m = ((v < WALL_V_HARD) | ((v < WALL_V_SOFT) & (s < WALL_S_MAX)))
+    m = m.astype(np.uint8)
+    if WALL_OPEN_K > 1:                 # speckle and printed dots
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, _WK_SQ)
+    if WALL_MIN_RUN > 1:                # THE SHADOW TEST: keep tall runs only
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, _WK_VERT)
+    return m > 0
+
+
 def process_hsv(hsv_arr):
     # PORTED: identical result to their per-pixel loop, done with numpy.
     global blue_line_pixel_count, orange_line_pixel_count, left_wall, right_wall
@@ -372,7 +481,7 @@ def process_hsv(hsv_arr):
         (s > ORANGE_SAT_MIN) & (v > ORANGE_VAL_MIN) & (v < ORANGE_VAL_MAX) &
         (h >= ORANGE_HUE_MIN) & (h <= ORANGE_HUE_MAX)))
 
-    dark = v < WALL_VAL_MAX
+    dark = wall_mask(h, s, v)
     left_wall = float(np.count_nonzero(dark[:, :160]))
     right_wall = float(np.count_nonzero(dark[:, 160:]))
 
@@ -413,14 +522,19 @@ def update_lines():
 
 
 def extra_imagery(hsv_arr):
-    # PORTED: same output, numpy instead of a per-pixel loop
-    walls = np.where(hsv_arr[:, :, 2] < WALL_VAL_MAX, 255, 0).astype(np.uint8)
+    # PORTED: same output, numpy instead of a per-pixel loop, and through the
+    # SAME wall_mask the controller used - so walls.png shows what it actually
+    # steered on, shadow rejection included.
+    h = hsv_arr[:, :, 0].astype(np.int16)
+    s = hsv_arr[:, :, 1].astype(np.int16)
+    v = hsv_arr[:, :, 2].astype(np.int16)
+    walls = np.where(wall_mask(h, s, v), 255, 0).astype(np.uint8)
     cv2.imwrite("walls.png", walls)
 
 
 def cycle(picam2):
     global cycle_count, dir, blue_line_state, orange_line_state, direction, quadrant_count
-    global mission_end_not_activated, mission_end_cycle, STOP, hue, left_wall, right_wall
+    global mission_end_not_activated, mission_end_t, STOP, hue, left_wall, right_wall
     global blue_line_pixel_count, orange_line_pixel_count, raw_frame, frame, hsv
 
     cycle_count += 1
@@ -477,11 +591,21 @@ def cycle(picam2):
     dir_raw = dir
     dir = max(-STEER_MAX, min(STEER_MAX, dir))
 
+    # PORTED: SHAKE. Exponential average on the command - see SERVO_SMOOTH.
+    global _dir_smooth
+    _dir_smooth = SERVO_SMOOTH * dir + (1.0 - SERVO_SMOOTH) * _dir_smooth
+    dir_servo = _dir_smooth
+
+    # PORTED: keep driving for FINISH_RUN_S after the 12th quadrant instead of
+    # braking on the line. Theirs set STOP immediately and its own
+    # mission_end_cycle was never read by anything.
     if quadrant_count == 12 and mission_end_not_activated:
         mission_end_not_activated = False
-        mission_end_cycle = cycle_count + 100
+        mission_end_t = time.time() + FINISH_RUN_S
+        print(">>> 12 QUADRANTS at cycle %d - driving on for %.1f s"
+              % (cycle_count, FINISH_RUN_S))
 
-    if quadrant_count == 12:
+    if (not mission_end_not_activated) and time.time() >= mission_end_t:
         STOP = True
     # PORTED: FULL per-cycle log. Everything the controller looked at and
     # everything it decided, on one line, so a bad run can be read afterwards
@@ -495,21 +619,25 @@ def cycle(picam2):
     dname = {1: "CW ", -1: "CCW", 0: "?? "}[direction]
 
     print("c%-5d t=%6.2f dt=%5.1fms %4.1fHz | L=%.3f R=%.3f | "
-          "blu=%5d s%d  org=%5d s%d | %s q=%2d | raw=%+6.1f cmd=%+6.1f %s"
+          "blu=%5d s%d  org=%5d s%d | %s q=%2d | raw=%+6.1f clamp=%+6.1f "
+          "srv=%+6.1f %s"
           % (cycle_count, now - _t0, dt * 1000.0, hz,
              left_wall, right_wall,
              blue_line_pixel_count, blue_line_state,
              orange_line_pixel_count, orange_line_state,
-             dname, quadrant_count, dir_raw, dir, clamped))
+             dname, quadrant_count, dir_raw, dir, dir_servo, clamped))
 
-    logwriter.writerow([cycle_count, round(now - _t0, 3), round(dt * 1000, 2),
-                        round(left_wall, 4), round(right_wall, 4),
-                        blue_line_pixel_count, blue_line_state,
-                        orange_line_pixel_count, orange_line_state,
-                        direction, quadrant_count,
-                        round(dir_raw, 2), round(dir, 2)])
-    logfile.flush()
-    servo(dir)
+    if logwriter is not None:
+        logwriter.writerow([cycle_count, round(now - _t0, 3),
+                            round(dt * 1000, 2),
+                            round(left_wall, 4), round(right_wall, 4),
+                            blue_line_pixel_count, blue_line_state,
+                            orange_line_pixel_count, orange_line_state,
+                            direction, quadrant_count,
+                            round(dir_raw, 2), round(dir, 2),
+                            round(dir_servo, 2)])
+        logfile.flush()
+    servo(dir_servo)
 
     # LED_rainbow(hue)
 
@@ -521,7 +649,8 @@ def print_config():
     print("=" * 78)
     print("  steering   trim=%+.1f  STEER_MAX=%d deg (normal)  mech stop=%d deg"
           % (SERVO_TRIM, STEER_MAX, STEER_DEVIATION))
-    print("  servo      settle=%.3f s  hold=%s" % (SERVO_SETTLE_S, SERVO_HOLD))
+    print("  servo      settle=%.3f s  hold=%s  smooth=%.2f  deadband=%.1f deg"
+          % (SERVO_SETTLE_S, SERVO_HOLD, SERVO_SMOOTH, SERVO_DEADBAND))
     print("  motor      speed=%d" % speed)
     print("  camera     flip180=%s  exposure=%d us  gain=%.1f  gains=%s"
           % (CAM_FLIP_180, CAM_EXPOSURE_US, CAM_GAIN, CAM_COLOUR_GAINS))
@@ -529,8 +658,16 @@ def print_config():
           % (CAM_SATURATION, CAM_CONTRAST, CROP_TOP, ROTATE_180))
     print("  walls      CW_TARGET=%.3f (left)   CCW_TARGET=%.3f (right)"
           % (CW_TARGET, CCW_TARGET))
-    print("             NEUTRAL=%.3f  GAIN=%.0f  wall if V<%d"
-          % (NEUTRAL_TARGET, WALL_GAIN, WALL_VAL_MAX))
+    print("             NEUTRAL=%.3f  GAIN=%.0f" % (NEUTRAL_TARGET, WALL_GAIN))
+    if WALL_SHADOW_REJECT:
+        print("             mask: V<%d, or V<%d and S<%d; open %d; "
+              "vertical run >=%d"
+              % (WALL_V_HARD, WALL_V_SOFT, WALL_S_MAX, WALL_OPEN_K,
+                 WALL_MIN_RUN))
+        print("             SHADOW REJECTION ON")
+    else:
+        print("             mask: V<%d (legacy, SHADOW REJECTION OFF)"
+              % WALL_VAL_MAX)
     print("             %d deg needs a density error of %.3f"
           % (STEER_MAX, STEER_MAX / WALL_GAIN))
     print("  lines      blue>%d px   orange>%d px   blanking=%.2f s"
@@ -541,6 +678,7 @@ def print_config():
     print("             orange H %d-%d  S>%d  V %d-%d"
           % (ORANGE_HUE_MIN, ORANGE_HUE_MAX, ORANGE_SAT_MIN,
              ORANGE_VAL_MIN, ORANGE_VAL_MAX))
+    print("  finish     drive on %.1f s after the 12th quadrant" % FINISH_RUN_S)
     print("  logging    open_log.csv, every cycle")
     print("=" * 78)
 
@@ -565,6 +703,7 @@ def main():
     print("  GO")
 
     global _t0
+    _open_log()
     start = time.time()
     _t0 = start
     button_sum = 0
