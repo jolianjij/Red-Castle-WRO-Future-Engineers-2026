@@ -35,8 +35,7 @@ from numpy.lib.stride_tricks import sliding_window_view as _swv
 # PORTED: `import board` / `import neopixel` removed - no LED on this car.
 
 #two new var
-green_start_timer = None
-red_start_timer = None
+# replaced by the single sign_seen_t - see SIGN_DECAY_S
 #parking out
 purple_left=0.0
 purple_right=0.0
@@ -324,6 +323,49 @@ PARK_EXIT_FRAMES = 8       # average the purple counts over this many frames
 PARK_EXIT_MIN_TOTAL = 2000 # below this the lot is not really in view
 PARK_EXIT_MIN_RATIO = 1.10 # below this the two sides are too close to call
 
+# ------------------------------------------------------------------
+# WHICH SIGN THE CAR IS DEALING WITH, AND HOW IT LETS GO OF IT
+#
+# `last_detected_traffic_light` is NOT "the last sign I saw". It is the sign
+# the car is currently STEERING FOR. It is set the moment a pillar grows past
+# SIGN_CLOSE_AREA - i.e. while still APPROACHING it, not after passing - and
+# everything downstream reads it: which wall the override watches, and whether
+# the corner kick fires.
+#
+# Each direction has a DEFAULT, and the other colour is a temporary override
+# that decays back to it:
+#       clockwise          default GREEN (1),  red overrides
+#       counter-clockwise  default RED   (0),  green overrides
+#
+# That default is why the original code had only ONE decay per direction. It
+# was not an oversight. Running both decays literally OSCILLATES: the moment
+# red decays to green, green's own timer is already older than the timeout, so
+# it flips straight back in the same cycle.
+#
+# So the decay is now ONE rule that works identically in both directions -
+# "hold the override until the pillar has been out of sight for SIGN_DECAY_S,
+# then fall back to this direction's default". Same behaviour as before, no
+# dead assignments, and no oscillation.
+SIGN_DECAY_S = 2.5
+
+# ------------------------------------------------------------------
+# THE PILLAR ORDER LIST
+# `pillars` records the obstacles in the order the car COMMITTED to them:
+#       [('R', 1, 3.20), ('G', 3, 12.44), ('G', 5, 21.07)]
+#        colour, quadrant, seconds since the run started
+#
+# It is EDGE triggered. cycle() runs at about 22 Hz, so appending whenever a
+# pillar is visible would record roughly fifty entries per pillar. An entry is
+# written the moment a pillar becomes CLOSE, and not again until either the
+# target has been gone for PILLAR_REARM_S or a DIFFERENT colour becomes close.
+#
+# The colour recorded is the pillar's REAL colour, taken from red_index /
+# green_index - not from the `in [1,2]` test used for steering. Those two are
+# not the same thing: when parking swaps red_index to 2, a physically RED
+# pillar is deliberately STEERED as if it were green. The steering test asks
+# "handle as green?"; this list must answer "what colour was it?".
+PILLAR_REARM_S = 0.5
+
 SIGN_CLOSE_AREA_CW = 500     # was 1000
 SIGN_CLOSE_AREA_CCW = 1005   # was 1500
 PARK_STOP_AREA = 2550        # was 3400
@@ -344,6 +386,14 @@ quadrant_count = 0
 
 red_index = 0
 green_index = 1
+
+# the pillar order list and its edge-detector state - see PILLAR_REARM_S
+pillars = []
+_pillar_armed = False        # True while still on the pillar we last recorded
+_pillar_last_colour = None   # so a different colour can interrupt
+_pillar_lost_t = 0.0         # when the target went away, 0 = it has not
+
+sign_seen_t = None           # when the CURRENT override was last close
 
 R, G, B = 0, 0, 0
 
@@ -815,6 +865,49 @@ def process_traffic_contours(box, type_idx, min_area=0):
                     target = array('i', [x, y, int(area), type_idx])
 
 
+def pillar_colour():
+    """The REAL colour of the current target: 'R', 'G', or None.
+
+    Read from red_index / green_index rather than from the steering test,
+    because after the parking swap those disagree on purpose - see the
+    PILLAR ORDER LIST block at the top.
+    """
+    if target[3] == red_index:
+        return "R"
+    if target[3] == green_index:
+        return "G"
+    return None
+
+
+def register_pillar(now):
+    """Append to `pillars` the moment the car commits to a NEW pillar.
+
+    Edge triggered, so one pillar produces one entry no matter how many cycles
+    it is visible for. Re-arms when the target has been gone for
+    PILLAR_REARM_S, or immediately if a different colour becomes close.
+    """
+    global pillars, _pillar_armed, _pillar_last_colour, _pillar_lost_t
+
+    close_area = SIGN_CLOSE_AREA_CW if direction >= 0 else SIGN_CLOSE_AREA_CCW
+    colour = pillar_colour()
+
+    if colour is not None and target[2] > close_area:
+        if (not _pillar_armed) or colour != _pillar_last_colour:
+            pillars.append((colour, quadrant_count, round(now - _t0, 2)))
+            _pillar_armed = True
+            _pillar_last_colour = colour
+            print(">>> PILLAR %d: %s  quadrant %d  t=%.2fs  (order so far: %s)"
+                  % (len(pillars), colour, quadrant_count, now - _t0,
+                     "".join(c for c, _, _ in pillars)))
+        _pillar_lost_t = 0.0          # still on it
+    else:
+        # nothing close - start, or continue, the re-arm countdown
+        if _pillar_lost_t == 0.0:
+            _pillar_lost_t = now
+        elif now - _pillar_lost_t >= PILLAR_REARM_S:
+            _pillar_armed = False
+
+
 def process_parking_contours(box):
     global parking
     for contour in box:
@@ -884,8 +977,9 @@ def extra_imagery(hsv_arr):
 
 def cycle(picam2):
     global R, G, B, cycle_count, dir, target, parking, red_box, green_box, purple_box
-    global Err, last_detected_traffic_light, quadrant_count, direction ,green_start_timer
-    global red_index, green_index, traffic_index_not_changed_on_cycle_12 ,red_start_timer
+    global Err, last_detected_traffic_light, quadrant_count, direction
+    global red_index, green_index, traffic_index_not_changed_on_cycle_12
+    global sign_seen_t
     global STOP, wall_aligment_state, raw_frame, frame, Zaid, pre_line
     global mission_end_t, mission_end_not_activated
 
@@ -956,15 +1050,16 @@ def cycle(picam2):
             # steering on about 70% of the cycles a green target is held, at
             # ANY distance - down to x=221 with the cube close. The distance
             # condition that fixed that lives in git if it is wanted back.
-            if target[0] > 220:
+            if target[0] > 300:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
+                sign_seen_t = time.time()
         elif target[3] in [0, 3]:  # Red
             Err = (target[0] - _rt)
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 0
-                red_start_timer =time.time()
+                sign_seen_t = time.time()
         else:
             Err = 0
     if direction < 0:
@@ -972,26 +1067,32 @@ def cycle(picam2):
             Err = -(_gt_ccw - target[0])
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 1
-                green_start_timer = time.time()
+                sign_seen_t = time.time()
         elif target[3] in [0, 3]:  # Red
             Err = (target[0] - _rt)
             if target[0] < 90:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 0
+                sign_seen_t = time.time()
 
         else:
             Err = 0
-    if last_detected_traffic_light == 0 and red_start_timer is not None and direction == 1:
-        if time.time() - red_start_timer >= 2.5:   # 5 seconds passed
-            last_detected_traffic_light = 1
-            print(time.time() - red_start_timer)
-            red_start_timer = None
-    if last_detected_traffic_light ==1 and green_start_timer is not None and direction ==-1:
-        if time.time() - green_start_timer >= 2.5:   # 5 seconds passed
-            last_detected_traffic_light = 0
-            green_start_timer = None
-            print("Traffic light back to Red (default)")
+    # ONE decay rule, identical in both directions - see SIGN_DECAY_S.
+    # Hold the override until its pillar has been out of sight for SIGN_DECAY_S,
+    # then fall back to this direction's default.
+    default_tl = 1 if direction >= 0 else 0        # CW -> GREEN, CCW -> RED
+    if (last_detected_traffic_light != default_tl
+            and sign_seen_t is not None
+            and time.time() - sign_seen_t >= SIGN_DECAY_S):
+        print(">>> sign decayed after %.1fs back to %s (the %s default)"
+              % (SIGN_DECAY_S, "GREEN" if default_tl == 1 else "RED",
+                 "CW" if direction >= 0 else "CCW"))
+        last_detected_traffic_light = default_tl
+        sign_seen_t = None
+
+    # record the pillar order - see the PILLAR ORDER LIST block at the top
+    register_pillar(time.time())
 
     if target[3] % 2 == 1:
         R, G, B = 0, 255, 0
@@ -1256,6 +1357,9 @@ def main():
     full_time = (end - start) * 1000.0
 
     print("\n")
+    print("pillars seen : %s" % (
+        "  ".join("%s(q%d,%.1fs)" % (c, q, t) for c, q, t in pillars)
+        if pillars else "none"))
     print(f"time         : {full_time / 1000.0:.3f} s")
     print(f"cycle amount : {cycle_count} cycles")
     print(f"speed        : {full_time / cycle_count if cycle_count else 0:.3f} ms / cycle")
