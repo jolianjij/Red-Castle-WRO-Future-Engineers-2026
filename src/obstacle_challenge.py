@@ -288,6 +288,25 @@ RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 # what chooses the lap direction, and it stays.
 FINISH_RUN_S = 3.0
 
+# ------------------------------------------------------------------
+# THE CORNER KICK - LATCHED, AND IT NO LONGER STOPS THE CYCLE.
+#
+# It used to be  servo(45); time.sleep(0.2)  in the middle of cycle(). Three
+# things were wrong with that:
+#   1. the sleep BLOCKED the vision loop for about 4 or 5 cycles, at a corner,
+#      which is exactly where blind time hurts most;
+#   2. the angle was overwritten anyway by the cycle's own servo() call at the
+#      bottom, immediately after the sleep - so the kick was always exactly the
+#      length of the sleep and nothing else;
+#   3. it fired on a SINGLE cycle's falling edge, so if that one cycle did not
+#      also satisfy the traffic-light condition the whole kick was lost.
+#
+# Now the edge arms a DEADLINE and every cycle until then steers the kick
+# through the normal path. Nothing blocks, nothing is overwritten, and the
+# vision loop keeps running the whole way through the corner.
+KICK_TIME = 0.2          # seconds the kick is held
+KICK_ANGLE = 45          # degrees; servo() clamps it to the linkage
+
 GREEN_MIN_AREA = 50
 RED_MIN_AREA = 400     # answers red at about 1.3x the calibration distance
 
@@ -382,6 +401,10 @@ quadrant_count = 0
 red_index = 0
 green_index = 1
 
+# the corner kick's latch - see KICK_TIME
+_kick_until = 0.0        # deadline; the kick is live while now < this
+_kick_sign = 0           # +1 kicks right, -1 kicks left
+
 # the pillar order list and its edge-detector state - see PILLAR_REARM_S
 pillars = []
 _pillar_armed = False        # True while still on the pillar we last recorded
@@ -448,6 +471,21 @@ LINE_BLANK_S = 1.2
 # way.
 LINE_SHAPE_FILTER = True
 LINE_MIN_WIDTH = 100
+
+# WIDTH ALONE IS NOT ENOUGH, because a pillar gets WIDER as the car approaches.
+# MEASURED at the calibration distance a cube is 36 x 44; three times closer it
+# is about 108 wide and would pass a 100 px width test. What does NOT change
+# with distance is the SHAPE:
+#       orange line   320 x 18   ratio 17.8
+#       blue line     303 x 38   ratio  8.0
+#       red cube       36 x 44   ratio  0.8      <- and 0.8 at ANY distance
+# So a blob must also be at least this many times wider than it is tall. That
+# separates lines from pillars however close the pillar gets.
+# 3.0, not 2.0: at 2.0 two cubes merging into one blob (about 110 x 44,
+# ratio 2.5) would be counted as a line. At 3.0 that is rejected while both
+# real lines keep margin - blue 8.0 is 2.7x the limit, orange 17.8 is 5.9x -
+# and a line crossed at an angle, which is taller in the box, still passes.
+LINE_MIN_ASPECT = 3.0
 
 blue_line_threshould = 750
 orange_line_threshould = 840
@@ -542,6 +580,11 @@ def print_config():
           % (GREEN_TARGET_CLAMP, RED_TARGET_CLAMP))
     print("  parking    REMOVED - stops %.1fs after the 12th quadrant"
           % FINISH_RUN_S)
+    print("  kick       %.2fs at %d deg, non-blocking"
+          % (KICK_TIME, KICK_ANGLE))
+    print("  lines      shape filter %s: width>=%d and w>=%.1f*h"
+          % ("ON" if LINE_SHAPE_FILTER else "OFF",
+             LINE_MIN_WIDTH, LINE_MIN_ASPECT))
     print("  logging    logs/obstacle_<timestamp>.csv, every cycle")
     print("=" * 78)
 
@@ -740,7 +783,12 @@ def _line_pixels(m):
     n, _lab, st, _c = cv2.connectedComponentsWithStats(m.astype(np.uint8), 8)
     tot = 0
     for i in range(1, n):
-        if st[i, cv2.CC_STAT_WIDTH] >= LINE_MIN_WIDTH:
+        w = int(st[i, cv2.CC_STAT_WIDTH])
+        hgt = int(st[i, cv2.CC_STAT_HEIGHT])
+        # wide enough to be a line, AND line-SHAPED - see LINE_MIN_ASPECT.
+        # The aspect test is what keeps a close red pillar out of the orange
+        # count; the width test alone lets one through once it is near.
+        if w >= LINE_MIN_WIDTH and w >= LINE_MIN_ASPECT * max(1, hgt):
             tot += int(st[i, cv2.CC_STAT_AREA])
     return tot
 
@@ -983,7 +1031,7 @@ def cycle(picam2):
     R, G, B = 122, 122, 122
     cycle_count += 1
     dir = 0.0
-    global _dir_limit, _dir_hard
+    global _dir_limit, _dir_hard, _kick_until, _kick_sign
     _dir_limit = None            # PORTED: the 20 degree rule, unless a sign or
                                  # a manoeuvre below raises it for this cycle
     _dir_hard = False            # PORTED: True only for a deliberate hard
@@ -1133,10 +1181,13 @@ def cycle(picam2):
                 dir = 30*left_wall
             elif right_wall > WALL_CLOSE:
                 dir =-30*right_wall
-        # REVERTED at the team's request: the original blocking kick, on ORANGE.
-        if last_detected_traffic_light ==1 and orange_line_state==2:
-            servo(45, limit=STEER_DEVIATION)     # PORTED: the corner kick
-            time.sleep(0.2)
+        # THE CORNER KICK, latched - see KICK_TIME. Arms a deadline instead of
+        # sleeping, so the vision loop keeps running through the corner.
+        if last_detected_traffic_light == 1 and orange_line_state == 2:
+            _kick_until = time.time() + KICK_TIME
+            _kick_sign = 1
+            print(">>> CORNER KICK right %.2fs (last sign GREEN, CW)"
+                  % KICK_TIME)
     else:
         if last_detected_traffic_light == 1:
             if left_wall > WALL_CLOSE:
@@ -1154,14 +1205,24 @@ def cycle(picam2):
                 dir = -30*right_wall
             elif left_wall > WALL_CLOSE:
                 dir = 30*left_wall
-        # REVERTED at the team's request: the original blocking kick.
-        if last_detected_traffic_light ==0 and blue_line_state==2:
-            servo(-45, limit=STEER_DEVIATION)    # PORTED: the corner kick
-            time.sleep(0.2)
+        # THE CORNER KICK, latched - see KICK_TIME.
+        if last_detected_traffic_light == 0 and blue_line_state == 2:
+            _kick_until = time.time() + KICK_TIME
+            _kick_sign = -1
+            print(">>> CORNER KICK left %.2fs (last sign RED, CCW)"
+                  % KICK_TIME)
     # PORTED: a wall correction gets its own ceiling, so it is never limited
     # by a sign's - see WALL_STEER_MAX.
     if left_wall > WALL_CLOSE or right_wall > WALL_CLOSE:
         _dir_limit = WALL_STEER_MAX
+
+    # HOLD THE CORNER KICK for its whole window - see KICK_TIME. This runs
+    # AFTER the sign and wall terms on purpose: while the kick is live it OWNS
+    # the steering, which is the entire point of a kick.
+    if time.time() < _kick_until:
+        dir = KICK_ANGLE * _kick_sign
+        _dir_limit = STEER_DEVIATION
+        _dir_hard = True
 
 
     # ---------------- FINISHING THE RUN ----------------
@@ -1237,7 +1298,7 @@ def cycle(picam2):
 
 def main():
     global STOP, cycle_count, raw_frame, frame, red_mask, green_mask, purple_mask, Zaid
-    global servo_pwm, motor_pwm, picam2, direction
+    global servo_pwm, picam2, direction
 
     global _t0
     Setup_GPIO()

@@ -176,6 +176,62 @@ every number in this document.
 
 ---
 
+## Setting NEW HSV at the venue — the actual procedure
+
+The other tools *check* bounds you already have. `hsv_pick.py` *proposes* new
+ones from whatever the object measures under the venue's light.
+
+**For each colour that needs redoing:**
+
+```bash
+python tools/hsv_pick.py green
+python tools/hsv_pick.py orange
+python tools/hsv_pick.py red --wrap      # red's hue wraps past 0
+```
+
+Park so the object **fills as much of the view as you can**, with nothing else
+coloured in frame. The tool finds the most saturated large blob, measures its
+H/S/V over several frames, and prints lines you can paste straight in.
+
+It then re-counts with those bounds and reports two numbers:
+
+```
+of the object     : 1088 of 1107 px kept   (98%)
+of everything else: 0 px let in
+```
+
+**The second number is the one that matters.** Bounds that catch the object are
+easy; bounds that catch the object *and not the mat* are the job.
+
+**Then check the other direction** — this is the step people skip:
+
+```bash
+# move the object OUT of view, then:
+python tools/color_count.py <the six numbers it gave you>
+```
+
+A threshold is only safe when you know **both** readings. Blue reads 1036 on the
+line and 3–9 on bare mat; that *ratio* is what makes 830 safe, not the 1036.
+
+### The order to do them in at the venue
+
+1. **Nothing at first.** Run `wall_calib.py cw` — if the wall densities are
+   close to 0.215 a side, the light has not moved much and you may need nothing.
+2. **Whichever colour is missed**, in this order of likelihood: green (darkest),
+   orange, blue, purple. Red has never needed it.
+3. **Re-check the mat** with `color_count.py 45 90 0 255 0 255` — if the venue
+   floor is shinier its saturation rises, and green's 150 gap narrows.
+4. **Re-measure the line thresholds** with `line_audit.py` after any blue or
+   orange change — the HSV bounds and the pixel thresholds are not independent.
+
+### What NOT to do
+
+Do not change exposure. Every number in this document is measured at
+`ExposureTime 12000, AnalogueGain 8.0` with AWB locked. Changing it invalidates
+all of them at once, and you will not have time to redo everything.
+
+---
+
 ## Adding a new colour (surprise challenge)
 
 Use `tools/color_count.py`. It gives a pixel count for any HSV range through the
