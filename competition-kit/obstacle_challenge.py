@@ -35,8 +35,7 @@ from numpy.lib.stride_tricks import sliding_window_view as _swv
 # PORTED: `import board` / `import neopixel` removed - no LED on this car.
 
 #two new var
-green_start_timer = None
-red_start_timer = None
+# replaced by the single sign_seen_t - see SIGN_DECAY_S
 #parking out
 purple_left=0.0
 purple_right=0.0
@@ -202,9 +201,6 @@ WALL_CLOSE = 0.3        # was 0.6 theirs, then 0.43 rescaled. Lowered again
                          # because the car was still reaching the wall before
                          # this fired: centred reads 0.215, so 0.35 is already
                          # well past the middle of the lane.
-WALL_NEAR = 0.5         # was 0.5  - "very close, override"
-PARK_WALL_TARGET = 0.8  # was 0.8  - the density to hold while parking
-PARK_ALIGN_TOTAL = 0.8  # was 0.8  - left+right sum that means "aligned"
 
 # --------------------------------------------------
 # SIGN FOLLOWING - THE VERTICAL AXIS WAS INVERTED BY THE PORT.
@@ -286,11 +282,30 @@ RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 #                         instead of 4x. Raise it further to react later still.
 # WHEN TO STOP STEERING FOR A GREEN CUBE. Both conditions must hold: it has to
 # be off to the side AND close. Set GREEN_RELEASE_X = 320 to never release.
-# PARKING REMOVED. The end-of-run parking search is off; the car finishes the
-# way the open challenge does - keep driving briefly after the 12th quadrant,
-# then stop. Set True to bring the whole parking algorithm back.
-PARKING_ENABLED = False
+# PARKING REMOVED. The end-of-run parking search is deleted outright - it is in
+# git if it is ever wanted back. The car keeps driving this long after the 12th
+# quadrant, then stops. The parking EXIT at the START is unaffected: that is
+# what chooses the lap direction, and it stays.
 FINISH_RUN_S = 3.0
+
+# ------------------------------------------------------------------
+# THE CORNER KICK - LATCHED, AND IT NO LONGER STOPS THE CYCLE.
+#
+# It used to be  servo(45); time.sleep(0.2)  in the middle of cycle(). Three
+# things were wrong with that:
+#   1. the sleep BLOCKED the vision loop for about 4 or 5 cycles, at a corner,
+#      which is exactly where blind time hurts most;
+#   2. the angle was overwritten anyway by the cycle's own servo() call at the
+#      bottom, immediately after the sleep - so the kick was always exactly the
+#      length of the sleep and nothing else;
+#   3. it fired on a SINGLE cycle's falling edge, so if that one cycle did not
+#      also satisfy the traffic-light condition the whole kick was lost.
+#
+# Now the edge arms a DEADLINE and every cycle until then steers the kick
+# through the normal path. Nothing blocks, nothing is overwritten, and the
+# vision loop keeps running the whole way through the corner.
+KICK_TIME = 0.2          # seconds the kick is held
+KICK_ANGLE = 45          # degrees; servo() clamps it to the linkage
 
 GREEN_MIN_AREA = 50
 RED_MIN_AREA = 400     # answers red at about 1.3x the calibration distance
@@ -324,9 +339,51 @@ PARK_EXIT_FRAMES = 8       # average the purple counts over this many frames
 PARK_EXIT_MIN_TOTAL = 2000 # below this the lot is not really in view
 PARK_EXIT_MIN_RATIO = 1.10 # below this the two sides are too close to call
 
+# ------------------------------------------------------------------
+# WHICH SIGN THE CAR IS DEALING WITH, AND HOW IT LETS GO OF IT
+#
+# `last_detected_traffic_light` is NOT "the last sign I saw". It is the sign
+# the car is currently STEERING FOR. It is set the moment a pillar grows past
+# SIGN_CLOSE_AREA - i.e. while still APPROACHING it, not after passing - and
+# everything downstream reads it: which wall the override watches, and whether
+# the corner kick fires.
+#
+# Each direction has a DEFAULT, and the other colour is a temporary override
+# that decays back to it:
+#       clockwise          default GREEN (1),  red overrides
+#       counter-clockwise  default RED   (0),  green overrides
+#
+# That default is why the original code had only ONE decay per direction. It
+# was not an oversight. Running both decays literally OSCILLATES: the moment
+# red decays to green, green's own timer is already older than the timeout, so
+# it flips straight back in the same cycle.
+#
+# So the decay is now ONE rule that works identically in both directions -
+# "hold the override until the pillar has been out of sight for SIGN_DECAY_S,
+# then fall back to this direction's default". Same behaviour as before, no
+# dead assignments, and no oscillation.
+SIGN_DECAY_S = 2.5
+
+# ------------------------------------------------------------------
+# THE PILLAR ORDER LIST
+# `pillars` records the obstacles in the order the car COMMITTED to them:
+#       [('R', 1, 3.20), ('G', 3, 12.44), ('G', 5, 21.07)]
+#        colour, quadrant, seconds since the run started
+#
+# It is EDGE triggered. cycle() runs at about 22 Hz, so appending whenever a
+# pillar is visible would record roughly fifty entries per pillar. An entry is
+# written the moment a pillar becomes CLOSE, and not again until either the
+# target has been gone for PILLAR_REARM_S or a DIFFERENT colour becomes close.
+#
+# The colour recorded is the pillar's REAL colour, taken from red_index /
+# green_index - not from the `in [1,2]` test used for steering. Those two are
+# not the same thing: when parking swaps red_index to 2, a physically RED
+# pillar is deliberately STEERED as if it were green. The steering test asks
+# "handle as green?"; this list must answer "what colour was it?".
+PILLAR_REARM_S = 0.5
+
 SIGN_CLOSE_AREA_CW = 500     # was 1000
 SIGN_CLOSE_AREA_CCW = 1005   # was 1500
-PARK_STOP_AREA = 2550        # was 3400
 # ==========================================================================
 
 OUTPUT = GPIO.OUT
@@ -335,7 +392,6 @@ INPUT = GPIO.IN
 pre_line = 0
 # Global variables
 STOP = False
-wall_aligment_state = 0
 mission_end_t = 0.0
 mission_end_not_activated = True
 cycle_count = 0
@@ -345,12 +401,21 @@ quadrant_count = 0
 red_index = 0
 green_index = 1
 
+# the corner kick's latch - see KICK_TIME
+_kick_until = 0.0        # deadline; the kick is live while now < this
+_kick_sign = 0           # +1 kicks right, -1 kicks left
+
+# the pillar order list and its edge-detector state - see PILLAR_REARM_S
+pillars = []
+_pillar_armed = False        # True while still on the pillar we last recorded
+_pillar_last_colour = None   # so a different colour can interrupt
+_pillar_lost_t = 0.0         # when the target went away, 0 = it has not
+
+sign_seen_t = None           # when the CURRENT override was last close
+
 R, G, B = 0, 0, 0
 
-traffic_index_not_changed_on_cycle_12 = True
 
-parking_near_outer_wall_setup_quadrant = 12
-parking_wall_detected_as_a_wall_quadrant_threshould = 14
 
 # Image variables
 raw_frame = np.empty((480, 640, 3), dtype=np.uint8)
@@ -406,6 +471,21 @@ LINE_BLANK_S = 1.2
 # way.
 LINE_SHAPE_FILTER = True
 LINE_MIN_WIDTH = 100
+
+# WIDTH ALONE IS NOT ENOUGH, because a pillar gets WIDER as the car approaches.
+# MEASURED at the calibration distance a cube is 36 x 44; three times closer it
+# is about 108 wide and would pass a 100 px width test. What does NOT change
+# with distance is the SHAPE:
+#       orange line   320 x 18   ratio 17.8
+#       blue line     303 x 38   ratio  8.0
+#       red cube       36 x 44   ratio  0.8      <- and 0.8 at ANY distance
+# So a blob must also be at least this many times wider than it is tall. That
+# separates lines from pillars however close the pillar gets.
+# 3.0, not 2.0: at 2.0 two cubes merging into one blob (about 110 x 44,
+# ratio 2.5) would be counted as a line. At 3.0 that is rejected while both
+# real lines keep margin - blue 8.0 is 2.7x the limit, orange 17.8 is 5.9x -
+# and a line crossed at an angle, which is taller in the box, still passes.
+LINE_MIN_ASPECT = 3.0
 
 blue_line_threshould = 750
 orange_line_threshould = 840
@@ -477,8 +557,8 @@ def print_config():
              else "RPi.GPIO SOFTWARE PWM - THIS BUZZES"))
     print("  camera     flip180=%s  exposure=%d us  gain=%.1f  crop_top=%d"
           % (CAM_FLIP_180, CAM_EXPOSURE_US, CAM_GAIN, CROP_TOP))
-    print("  walls      centred=%.3f  close=%.2f  near=%.2f"
-          % (WALL_CENTRED, WALL_CLOSE, WALL_NEAR))
+    print("  walls      centred=%.3f  close=%.2f"
+          % (WALL_CENTRED, WALL_CLOSE))
     if WALL_SHADOW_REJECT:
         print("             mask V<%d, or V<%d and S<%d; open %d; run >=%d"
               % (WALL_V_HARD, WALL_V_SOFT, WALL_S_MAX, WALL_OPEN_K,
@@ -498,12 +578,13 @@ def print_config():
           % (GREEN_STEER_MAX, RED_STEER_MAX, WALL_STEER_MAX, STEER_MAX))
     print("             aim clamp: green=%d red=%d px beyond the frame"
           % (GREEN_TARGET_CLAMP, RED_TARGET_CLAMP))
-    print("  parking    min area=%d  wall target=%.2f  align total=%.2f  "
-          "stop area=%d" % (PARKING_MIN_AREA, PARK_WALL_TARGET,
-                            PARK_ALIGN_TOTAL, PARK_STOP_AREA))
-    print("  parking    %s"
-          % ("ENABLED" if PARKING_ENABLED else
-             "REMOVED (finish %.1fs after 12 quadrants)" % FINISH_RUN_S))
+    print("  parking    REMOVED - stops %.1fs after the 12th quadrant"
+          % FINISH_RUN_S)
+    print("  kick       %.2fs at %d deg, non-blocking"
+          % (KICK_TIME, KICK_ANGLE))
+    print("  lines      shape filter %s: width>=%d and w>=%.1f*h"
+          % ("ON" if LINE_SHAPE_FILTER else "OFF",
+             LINE_MIN_WIDTH, LINE_MIN_ASPECT))
     print("  logging    logs/obstacle_<timestamp>.csv, every cycle")
     print("=" * 78)
 
@@ -702,7 +783,12 @@ def _line_pixels(m):
     n, _lab, st, _c = cv2.connectedComponentsWithStats(m.astype(np.uint8), 8)
     tot = 0
     for i in range(1, n):
-        if st[i, cv2.CC_STAT_WIDTH] >= LINE_MIN_WIDTH:
+        w = int(st[i, cv2.CC_STAT_WIDTH])
+        hgt = int(st[i, cv2.CC_STAT_HEIGHT])
+        # wide enough to be a line, AND line-SHAPED - see LINE_MIN_ASPECT.
+        # The aspect test is what keeps a close red pillar out of the orange
+        # count; the width test alone lets one through once it is near.
+        if w >= LINE_MIN_WIDTH and w >= LINE_MIN_ASPECT * max(1, hgt):
             tot += int(st[i, cv2.CC_STAT_AREA])
     return tot
 
@@ -757,11 +843,20 @@ def process_hsv(hsv_arr, red_data, green_data, purple_data):
     left_wall = float(np.count_nonzero(dark[:, :160]))
     right_wall = float(np.count_nonzero(dark[:, 160:]))
 
-    # REVERTED at the team's request: their v >= 70 filter. MEASURED, the
-    # wall's own brightness is V p01=45 p05=52 p50=67, so this discards more
-    # than half of the wall it is meant to make the car avoid.
-    if quadrant_count < parking_wall_detected_as_a_wall_quadrant_threshould and Zaid:
-        pw = purple_m & (v >= 70)
+    # THE PARKING WALLS ARE OBSTACLES DURING THE LAPS.
+    # The wall detector only counts DARK pixels, so a magenta wall reads as open
+    # space and the car drives into it. Adding the purple mask to the wall
+    # density is what keeps it away.
+    #
+    # Their v >= 70 filter is GONE. MEASURED on the wall itself, its brightness
+    # is V p01=45 p05=52 p50=67 p95=87 - so that filter kept only 77% of it and
+    # threw away the darker half of the very thing it exists to avoid. The
+    # purple mask already carries its own V floor.
+    #
+    # `Zaid` is set during the parking exit, so this counts for the whole run
+    # after the car has left the lot.
+    if Zaid:
+        pw = purple_m
         left_wall += 0.8 * float(np.count_nonzero(pw[:, :160]))
         right_wall += 0.8 * float(np.count_nonzero(pw[:, 160:]))
 
@@ -813,6 +908,49 @@ def process_traffic_contours(box, type_idx, min_area=0):
                     x = int(moments['m10'] / moments['m00'])
                     y = int(moments['m01'] / moments['m00'])
                     target = array('i', [x, y, int(area), type_idx])
+
+
+def pillar_colour():
+    """The REAL colour of the current target: 'R', 'G', or None.
+
+    Read from red_index / green_index rather than from the steering test,
+    because after the parking swap those disagree on purpose - see the
+    PILLAR ORDER LIST block at the top.
+    """
+    if target[3] == red_index:
+        return "R"
+    if target[3] == green_index:
+        return "G"
+    return None
+
+
+def register_pillar(now):
+    """Append to `pillars` the moment the car commits to a NEW pillar.
+
+    Edge triggered, so one pillar produces one entry no matter how many cycles
+    it is visible for. Re-arms when the target has been gone for
+    PILLAR_REARM_S, or immediately if a different colour becomes close.
+    """
+    global pillars, _pillar_armed, _pillar_last_colour, _pillar_lost_t
+
+    close_area = SIGN_CLOSE_AREA_CW if direction >= 0 else SIGN_CLOSE_AREA_CCW
+    colour = pillar_colour()
+
+    if colour is not None and target[2] > close_area:
+        if (not _pillar_armed) or colour != _pillar_last_colour:
+            pillars.append((colour, quadrant_count, round(now - _t0, 2)))
+            _pillar_armed = True
+            _pillar_last_colour = colour
+            print(">>> PILLAR %d: %s  quadrant %d  t=%.2fs  (order so far: %s)"
+                  % (len(pillars), colour, quadrant_count, now - _t0,
+                     "".join(c for c, _, _ in pillars)))
+        _pillar_lost_t = 0.0          # still on it
+    else:
+        # nothing close - start, or continue, the re-arm countdown
+        if _pillar_lost_t == 0.0:
+            _pillar_lost_t = now
+        elif now - _pillar_lost_t >= PILLAR_REARM_S:
+            _pillar_armed = False
 
 
 def process_parking_contours(box):
@@ -884,15 +1022,16 @@ def extra_imagery(hsv_arr):
 
 def cycle(picam2):
     global R, G, B, cycle_count, dir, target, parking, red_box, green_box, purple_box
-    global Err, last_detected_traffic_light, quadrant_count, direction ,green_start_timer
-    global red_index, green_index, traffic_index_not_changed_on_cycle_12 ,red_start_timer
-    global STOP, wall_aligment_state, raw_frame, frame, Zaid, pre_line
+    global Err, last_detected_traffic_light, quadrant_count, direction
+    global red_index, green_index
+    global sign_seen_t
+    global STOP, raw_frame, frame, Zaid, pre_line
     global mission_end_t, mission_end_not_activated
 
     R, G, B = 122, 122, 122
     cycle_count += 1
     dir = 0.0
-    global _dir_limit, _dir_hard
+    global _dir_limit, _dir_hard, _kick_until, _kick_sign
     _dir_limit = None            # PORTED: the 20 degree rule, unless a sign or
                                  # a manoeuvre below raises it for this cycle
     _dir_hard = False            # PORTED: True only for a deliberate hard
@@ -947,51 +1086,62 @@ def cycle(picam2):
     # block. Green stays effectively free; red is held near the frame.
     _gt_cw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CW + _d)
     _gt_ccw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CCW + _d)
+    # With parking deleted, red_index and green_index never change from 0 and
+    # 1, so the old `target[3] in [1,2]` / `in [0,3]` tests are now simply
+    # "is it green" / "is it red". Those lists existed only for the parking
+    # swap, where a RED pillar was deliberately STEERED as green.
     _rt = max(-RED_TARGET_CLAMP, RED_NEAR - _d)
     if direction >= 0:
-        if target[3] in [1, 2]:  # Green
+        if target[3] == green_index:      # GREEN
             Err = -(_gt_cw - target[0])
             # REVERTED at the team's request: their unconditional release.
             # NOTE what this does, measured on the CW logs: it zeroes the
             # steering on about 70% of the cycles a green target is held, at
             # ANY distance - down to x=221 with the cube close. The distance
             # condition that fixed that lives in git if it is wanted back.
-            if target[0] > 220:
+            if target[0] > 300:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
-        elif target[3] in [0, 3]:  # Red
+                sign_seen_t = time.time()
+        elif target[3] == red_index:      # RED
             Err = (target[0] - _rt)
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 0
-                red_start_timer =time.time()
+                sign_seen_t = time.time()
         else:
             Err = 0
     if direction < 0:
-        if target[3] in [1, 2]:  # Green
+        if target[3] == green_index:      # GREEN
             Err = -(_gt_ccw - target[0])
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 1
-                green_start_timer = time.time()
-        elif target[3] in [0, 3]:  # Red
+                sign_seen_t = time.time()
+        elif target[3] == red_index:      # RED
             Err = (target[0] - _rt)
             if target[0] < 90:
                 Err = 0
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 0
+                sign_seen_t = time.time()
 
         else:
             Err = 0
-    if last_detected_traffic_light == 0 and red_start_timer is not None and direction == 1:
-        if time.time() - red_start_timer >= 2.5:   # 5 seconds passed
-            last_detected_traffic_light = 1
-            print(time.time() - red_start_timer)
-            red_start_timer = None
-    if last_detected_traffic_light ==1 and green_start_timer is not None and direction ==-1:
-        if time.time() - green_start_timer >= 2.5:   # 5 seconds passed
-            last_detected_traffic_light = 0
-            green_start_timer = None
-            print("Traffic light back to Red (default)")
+    # ONE decay rule, identical in both directions - see SIGN_DECAY_S.
+    # Hold the override until its pillar has been out of sight for SIGN_DECAY_S,
+    # then fall back to this direction's default.
+    default_tl = 1 if direction >= 0 else 0        # CW -> GREEN, CCW -> RED
+    if (last_detected_traffic_light != default_tl
+            and sign_seen_t is not None
+            and time.time() - sign_seen_t >= SIGN_DECAY_S):
+        print(">>> sign decayed after %.1fs back to %s (the %s default)"
+              % (SIGN_DECAY_S, "GREEN" if default_tl == 1 else "RED",
+                 "CW" if direction >= 0 else "CCW"))
+        last_detected_traffic_light = default_tl
+        sign_seen_t = None
+
+    # record the pillar order - see the PILLAR ORDER LIST block at the top
+    register_pillar(time.time())
 
     if target[3] % 2 == 1:
         R, G, B = 0, 255, 0
@@ -1031,10 +1181,13 @@ def cycle(picam2):
                 dir = 30*left_wall
             elif right_wall > WALL_CLOSE:
                 dir =-30*right_wall
-        # REVERTED at the team's request: the original blocking kick, on ORANGE.
-        if last_detected_traffic_light ==1 and orange_line_state==2:
-            servo(45, limit=STEER_DEVIATION)     # PORTED: the corner kick
-            time.sleep(0.2)
+        # THE CORNER KICK, latched - see KICK_TIME. Arms a deadline instead of
+        # sleeping, so the vision loop keeps running through the corner.
+        if last_detected_traffic_light == 1 and orange_line_state == 2:
+            _kick_until = time.time() + KICK_TIME
+            _kick_sign = 1
+            print(">>> CORNER KICK right %.2fs (last sign GREEN, CW)"
+                  % KICK_TIME)
     else:
         if last_detected_traffic_light == 1:
             if left_wall > WALL_CLOSE:
@@ -1052,65 +1205,41 @@ def cycle(picam2):
                 dir = -30*right_wall
             elif left_wall > WALL_CLOSE:
                 dir = 30*left_wall
-        # REVERTED at the team's request: the original blocking kick.
-        if last_detected_traffic_light ==0 and blue_line_state==2:
-            servo(-45, limit=STEER_DEVIATION)    # PORTED: the corner kick
-            time.sleep(0.2)
+        # THE CORNER KICK, latched - see KICK_TIME.
+        if last_detected_traffic_light == 0 and blue_line_state == 2:
+            _kick_until = time.time() + KICK_TIME
+            _kick_sign = -1
+            print(">>> CORNER KICK left %.2fs (last sign RED, CCW)"
+                  % KICK_TIME)
     # PORTED: a wall correction gets its own ceiling, so it is never limited
     # by a sign's - see WALL_STEER_MAX.
     if left_wall > WALL_CLOSE or right_wall > WALL_CLOSE:
         _dir_limit = WALL_STEER_MAX
 
+    # HOLD THE CORNER KICK for its whole window - see KICK_TIME. This runs
+    # AFTER the sign and wall terms on purpose: while the kick is live it OWNS
+    # the steering, which is the entire point of a kick.
+    if time.time() < _kick_until:
+        dir = KICK_ANGLE * _kick_sign
+        _dir_limit = STEER_DEVIATION
+        _dir_hard = True
 
-    if (PARKING_ENABLED and
-            quadrant_count == parking_near_outer_wall_setup_quadrant and
-            traffic_index_not_changed_on_cycle_12 and abs(dir) < 15):
-        if direction == 1:
-            red_index = 2
-        if direction == -1:
-            green_index = 3
-        traffic_index_not_changed_on_cycle_12 = False
-        motor(60)  # Scale back to 0-255 range
 
-    # PORTED: PARKING REMOVED - see PARKING_ENABLED. The car now finishes the
-    # way the open challenge does: keep driving for FINISH_RUN_S after the 12th
-    # quadrant so it does not brake on the line, then stop.
-    if not PARKING_ENABLED:
-        if quadrant_count >= 12 and mission_end_not_activated:
-            mission_end_not_activated = False
-            mission_end_t = time.time() + FINISH_RUN_S
-            print(">>> 12 QUADRANTS - driving on %.1f s, then stopping"
-                  % FINISH_RUN_S)
-        if (not mission_end_not_activated) and time.time() >= mission_end_t:
-            STOP = True
+    # ---------------- FINISHING THE RUN ----------------
+    # PARKING IS GONE. The whole end-of-run parking search has been deleted -
+    # the quadrant-12 traffic-index swap, the wall alignment, the purple-area
+    # stop. The car simply keeps driving for FINISH_RUN_S after the 12th
+    # quadrant, so it does not brake on the line, and then stops.
+    # (The parking EXIT at the start is a different thing and is still there -
+    #  it is what decides the lap direction.)
+    if quadrant_count >= 12 and mission_end_not_activated:
+        mission_end_not_activated = False
+        mission_end_t = time.time() + FINISH_RUN_S
+        print(">>> 12 QUADRANTS at %.1fs - driving on %.1f s, then stopping"
+              % (time.time() - _t0, FINISH_RUN_S))
+    if (not mission_end_not_activated) and time.time() >= mission_end_t:
+        STOP = True
 
-    # Enter parking mode at quadrant >= 12
-    if PARKING_ENABLED and quadrant_count >= 12:
-        if wall_aligment_state == 0:
-            dir = 0
-            if left_wall + right_wall > PARK_ALIGN_TOTAL:
-                wall_aligment_state = 1
-        else:
-            # PORTED: their 0.8 and 0.5 rescaled to our densities, and the
-            # hard 45s allowed past the 20 degree rule because parking IS one
-            # of the manoeuvres the rule exists to make room for.
-            if direction >= 0:
-                dir = (left_wall - PARK_WALL_TARGET) * 50
-                if right_wall > WALL_NEAR:
-                    dir = 45
-                    _dir_limit = STEER_DEVIATION
-                    _dir_hard = True
-            else:
-                dir = (PARK_WALL_TARGET - right_wall) * 50
-                if left_wall > WALL_NEAR:
-                    dir = -45
-                    _dir_limit = STEER_DEVIATION
-                    _dir_hard = True
-
-            if parking[2] > PARK_STOP_AREA:
-                STOP = True
-
-            R, G, B = 255, 0, 255
     # PORTED: the 20 degree rule, then the smoothing. A MANOEUVRE (the corner
     # kick, parking) skips both - it is a deliberate hard command and lagging
     # it through an exponential average would blunt exactly the move that has
@@ -1169,7 +1298,7 @@ def cycle(picam2):
 
 def main():
     global STOP, cycle_count, raw_frame, frame, red_mask, green_mask, purple_mask, Zaid
-    global servo_pwm, motor_pwm, picam2, direction
+    global servo_pwm, picam2, direction
 
     global _t0
     Setup_GPIO()
@@ -1256,6 +1385,9 @@ def main():
     full_time = (end - start) * 1000.0
 
     print("\n")
+    print("pillars seen : %s" % (
+        "  ".join("%s(q%d,%.1fs)" % (c, q, t) for c, q, t in pillars)
+        if pillars else "none"))
     print(f"time         : {full_time / 1000.0:.3f} s")
     print(f"cycle amount : {cycle_count} cycles")
     print(f"speed        : {full_time / cycle_count if cycle_count else 0:.3f} ms / cycle")

@@ -75,8 +75,21 @@ OV = values_of(OPEN_PY)
 BV = values_of(OBS_PY)
 
 
+MISSING = []
+
+
 def v(d, name):
-    return d.get(name, "?")
+    """Look a tunable up in the parsed program.
+
+    A missing name used to render as "?" in the PDF, silently - which is how a
+    row for PARKING_ENABLED survived after that flag was deleted from the code.
+    The whole point of parsing the programs is that the document cannot drift,
+    so a miss is now recorded and reported at the end of the build.
+    """
+    if name not in d:
+        MISSING.append(name)
+        return "GONE"
+    return d[name]
 
 
 # ------------------------------------------------------------------ styles
@@ -369,12 +382,29 @@ story.append(tune_table([
      "Ceiling for a wall correction, so a sign's tighter limit cannot blunt it.", ""),
     ("STEER_MAX", v(BV, "STEER_MAX"),
      "Ordinary steering limit when nothing special is happening.", ""),
-    ("PARKING_ENABLED", v(BV, "PARKING_ENABLED"),
-     "End-of-run parking search. Currently OFF &mdash; the car finishes like "
-     "the open challenge.",
-     "Set True to bring the whole parking algorithm back."),
     ("FINISH_RUN_S", v(BV, "FINISH_RUN_S"),
-     "Seconds of driving after the 12th quadrant, with parking off.", ""),
+     "Seconds of driving after the 12th quadrant, then the car stops. The "
+     "end-of-run parking search is DELETED, not disabled.",
+     "The parking EXIT at the start is a different thing and is still there "
+     "&mdash; it is what chooses the lap direction."),
+    ("KICK_TIME", v(BV, "KICK_TIME"),
+     "Seconds the corner kick is held. It is latched, not a blocking sleep, "
+     "so the vision loop keeps running through the corner.", ""),
+    ("KICK_ANGLE", v(BV, "KICK_ANGLE"),
+     "Kick angle in degrees, clamped to the linkage by servo().", ""),
+    ("LINE_MIN_WIDTH", v(BV, "LINE_MIN_WIDTH"),
+     "A blob must be at least this wide to count as a line.", ""),
+    ("LINE_MIN_ASPECT", v(BV, "LINE_MIN_ASPECT"),
+     "And at least this many times wider than tall. Width alone is not "
+     "enough &mdash; a pillar gets WIDER as the car approaches.",
+     "Measured: orange line 17.8, blue line 8.0, a cube 0.8 at ANY distance."),
+    ("SIGN_DECAY_S", v(BV, "SIGN_DECAY_S"),
+     "Seconds an opposite-colour sign holds before falling back to the "
+     "direction's default (CW defaults GREEN, CCW defaults RED).", ""),
+    ("PILLAR_REARM_S", v(BV, "PILLAR_REARM_S"),
+     "How long the target must be gone before the NEXT pillar can be recorded "
+     "in the pillars list.",
+     "Stops one pillar producing fifty entries at 22 Hz."),
     ("blue_line_threshould", v(BV, "blue_line_threshould"),
      "Blue pixels needed to call it a line.", "From <b>line_audit.py</b>."),
     ("orange_line_threshould", v(BV, "orange_line_threshould"),
@@ -494,4 +524,11 @@ def footer(canvas, doc_):
 
 
 doc.build(story, onFirstPage=footer, onLaterPages=footer)
+if MISSING:
+    print("!! %d tunable(s) named in this document NO LONGER EXIST in the"
+          % len(set(MISSING)))
+    print("   programs: %s" % sorted(set(MISSING)))
+    print("   They render as GONE. Fix the rows above.")
+else:
+    print("every tunable in the document exists in the programs")
 print("wrote %s (%.0f KB)" % (OUT, os.path.getsize(OUT) / 1024.0))
