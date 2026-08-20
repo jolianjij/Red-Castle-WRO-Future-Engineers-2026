@@ -201,9 +201,6 @@ WALL_CLOSE = 0.3        # was 0.6 theirs, then 0.43 rescaled. Lowered again
                          # because the car was still reaching the wall before
                          # this fired: centred reads 0.215, so 0.35 is already
                          # well past the middle of the lane.
-WALL_NEAR = 0.5         # was 0.5  - "very close, override"
-PARK_WALL_TARGET = 0.8  # was 0.8  - the density to hold while parking
-PARK_ALIGN_TOTAL = 0.8  # was 0.8  - left+right sum that means "aligned"
 
 # --------------------------------------------------
 # SIGN FOLLOWING - THE VERTICAL AXIS WAS INVERTED BY THE PORT.
@@ -285,10 +282,10 @@ RED_TARGET_CLAMP = 30      # px beyond the frame edge - hold red near the frame
 #                         instead of 4x. Raise it further to react later still.
 # WHEN TO STOP STEERING FOR A GREEN CUBE. Both conditions must hold: it has to
 # be off to the side AND close. Set GREEN_RELEASE_X = 320 to never release.
-# PARKING REMOVED. The end-of-run parking search is off; the car finishes the
-# way the open challenge does - keep driving briefly after the 12th quadrant,
-# then stop. Set True to bring the whole parking algorithm back.
-PARKING_ENABLED = False
+# PARKING REMOVED. The end-of-run parking search is deleted outright - it is in
+# git if it is ever wanted back. The car keeps driving this long after the 12th
+# quadrant, then stops. The parking EXIT at the START is unaffected: that is
+# what chooses the lap direction, and it stays.
 FINISH_RUN_S = 3.0
 
 GREEN_MIN_AREA = 50
@@ -368,7 +365,6 @@ PILLAR_REARM_S = 0.5
 
 SIGN_CLOSE_AREA_CW = 500     # was 1000
 SIGN_CLOSE_AREA_CCW = 1005   # was 1500
-PARK_STOP_AREA = 2550        # was 3400
 # ==========================================================================
 
 OUTPUT = GPIO.OUT
@@ -377,7 +373,6 @@ INPUT = GPIO.IN
 pre_line = 0
 # Global variables
 STOP = False
-wall_aligment_state = 0
 mission_end_t = 0.0
 mission_end_not_activated = True
 cycle_count = 0
@@ -397,10 +392,7 @@ sign_seen_t = None           # when the CURRENT override was last close
 
 R, G, B = 0, 0, 0
 
-traffic_index_not_changed_on_cycle_12 = True
 
-parking_near_outer_wall_setup_quadrant = 12
-parking_wall_detected_as_a_wall_quadrant_threshould = 14
 
 # Image variables
 raw_frame = np.empty((480, 640, 3), dtype=np.uint8)
@@ -527,8 +519,8 @@ def print_config():
              else "RPi.GPIO SOFTWARE PWM - THIS BUZZES"))
     print("  camera     flip180=%s  exposure=%d us  gain=%.1f  crop_top=%d"
           % (CAM_FLIP_180, CAM_EXPOSURE_US, CAM_GAIN, CROP_TOP))
-    print("  walls      centred=%.3f  close=%.2f  near=%.2f"
-          % (WALL_CENTRED, WALL_CLOSE, WALL_NEAR))
+    print("  walls      centred=%.3f  close=%.2f"
+          % (WALL_CENTRED, WALL_CLOSE))
     if WALL_SHADOW_REJECT:
         print("             mask V<%d, or V<%d and S<%d; open %d; run >=%d"
               % (WALL_V_HARD, WALL_V_SOFT, WALL_S_MAX, WALL_OPEN_K,
@@ -548,12 +540,8 @@ def print_config():
           % (GREEN_STEER_MAX, RED_STEER_MAX, WALL_STEER_MAX, STEER_MAX))
     print("             aim clamp: green=%d red=%d px beyond the frame"
           % (GREEN_TARGET_CLAMP, RED_TARGET_CLAMP))
-    print("  parking    min area=%d  wall target=%.2f  align total=%.2f  "
-          "stop area=%d" % (PARKING_MIN_AREA, PARK_WALL_TARGET,
-                            PARK_ALIGN_TOTAL, PARK_STOP_AREA))
-    print("  parking    %s"
-          % ("ENABLED" if PARKING_ENABLED else
-             "REMOVED (finish %.1fs after 12 quadrants)" % FINISH_RUN_S))
+    print("  parking    REMOVED - stops %.1fs after the 12th quadrant"
+          % FINISH_RUN_S)
     print("  logging    logs/obstacle_<timestamp>.csv, every cycle")
     print("=" * 78)
 
@@ -807,11 +795,20 @@ def process_hsv(hsv_arr, red_data, green_data, purple_data):
     left_wall = float(np.count_nonzero(dark[:, :160]))
     right_wall = float(np.count_nonzero(dark[:, 160:]))
 
-    # REVERTED at the team's request: their v >= 70 filter. MEASURED, the
-    # wall's own brightness is V p01=45 p05=52 p50=67, so this discards more
-    # than half of the wall it is meant to make the car avoid.
-    if quadrant_count < parking_wall_detected_as_a_wall_quadrant_threshould and Zaid:
-        pw = purple_m & (v >= 70)
+    # THE PARKING WALLS ARE OBSTACLES DURING THE LAPS.
+    # The wall detector only counts DARK pixels, so a magenta wall reads as open
+    # space and the car drives into it. Adding the purple mask to the wall
+    # density is what keeps it away.
+    #
+    # Their v >= 70 filter is GONE. MEASURED on the wall itself, its brightness
+    # is V p01=45 p05=52 p50=67 p95=87 - so that filter kept only 77% of it and
+    # threw away the darker half of the very thing it exists to avoid. The
+    # purple mask already carries its own V floor.
+    #
+    # `Zaid` is set during the parking exit, so this counts for the whole run
+    # after the car has left the lot.
+    if Zaid:
+        pw = purple_m
         left_wall += 0.8 * float(np.count_nonzero(pw[:, :160]))
         right_wall += 0.8 * float(np.count_nonzero(pw[:, 160:]))
 
@@ -978,9 +975,9 @@ def extra_imagery(hsv_arr):
 def cycle(picam2):
     global R, G, B, cycle_count, dir, target, parking, red_box, green_box, purple_box
     global Err, last_detected_traffic_light, quadrant_count, direction
-    global red_index, green_index, traffic_index_not_changed_on_cycle_12
+    global red_index, green_index
     global sign_seen_t
-    global STOP, wall_aligment_state, raw_frame, frame, Zaid, pre_line
+    global STOP, raw_frame, frame, Zaid, pre_line
     global mission_end_t, mission_end_not_activated
 
     R, G, B = 122, 122, 122
@@ -1041,9 +1038,13 @@ def cycle(picam2):
     # block. Green stays effectively free; red is held near the frame.
     _gt_cw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CW + _d)
     _gt_ccw = min(320.0 + GREEN_TARGET_CLAMP, GREEN_NEAR_CCW + _d)
+    # With parking deleted, red_index and green_index never change from 0 and
+    # 1, so the old `target[3] in [1,2]` / `in [0,3]` tests are now simply
+    # "is it green" / "is it red". Those lists existed only for the parking
+    # swap, where a RED pillar was deliberately STEERED as green.
     _rt = max(-RED_TARGET_CLAMP, RED_NEAR - _d)
     if direction >= 0:
-        if target[3] in [1, 2]:  # Green
+        if target[3] == green_index:      # GREEN
             Err = -(_gt_cw - target[0])
             # REVERTED at the team's request: their unconditional release.
             # NOTE what this does, measured on the CW logs: it zeroes the
@@ -1055,7 +1056,7 @@ def cycle(picam2):
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 1
                 sign_seen_t = time.time()
-        elif target[3] in [0, 3]:  # Red
+        elif target[3] == red_index:      # RED
             Err = (target[0] - _rt)
             if target[2] > SIGN_CLOSE_AREA_CW:
                 last_detected_traffic_light = 0
@@ -1063,12 +1064,12 @@ def cycle(picam2):
         else:
             Err = 0
     if direction < 0:
-        if target[3] in [1, 2]:  # Green
+        if target[3] == green_index:      # GREEN
             Err = -(_gt_ccw - target[0])
             if target[2] > SIGN_CLOSE_AREA_CCW:
                 last_detected_traffic_light = 1
                 sign_seen_t = time.time()
-        elif target[3] in [0, 3]:  # Red
+        elif target[3] == red_index:      # RED
             Err = (target[0] - _rt)
             if target[0] < 90:
                 Err = 0
@@ -1163,55 +1164,21 @@ def cycle(picam2):
         _dir_limit = WALL_STEER_MAX
 
 
-    if (PARKING_ENABLED and
-            quadrant_count == parking_near_outer_wall_setup_quadrant and
-            traffic_index_not_changed_on_cycle_12 and abs(dir) < 15):
-        if direction == 1:
-            red_index = 2
-        if direction == -1:
-            green_index = 3
-        traffic_index_not_changed_on_cycle_12 = False
-        motor(60)  # Scale back to 0-255 range
+    # ---------------- FINISHING THE RUN ----------------
+    # PARKING IS GONE. The whole end-of-run parking search has been deleted -
+    # the quadrant-12 traffic-index swap, the wall alignment, the purple-area
+    # stop. The car simply keeps driving for FINISH_RUN_S after the 12th
+    # quadrant, so it does not brake on the line, and then stops.
+    # (The parking EXIT at the start is a different thing and is still there -
+    #  it is what decides the lap direction.)
+    if quadrant_count >= 12 and mission_end_not_activated:
+        mission_end_not_activated = False
+        mission_end_t = time.time() + FINISH_RUN_S
+        print(">>> 12 QUADRANTS at %.1fs - driving on %.1f s, then stopping"
+              % (time.time() - _t0, FINISH_RUN_S))
+    if (not mission_end_not_activated) and time.time() >= mission_end_t:
+        STOP = True
 
-    # PORTED: PARKING REMOVED - see PARKING_ENABLED. The car now finishes the
-    # way the open challenge does: keep driving for FINISH_RUN_S after the 12th
-    # quadrant so it does not brake on the line, then stop.
-    if not PARKING_ENABLED:
-        if quadrant_count >= 12 and mission_end_not_activated:
-            mission_end_not_activated = False
-            mission_end_t = time.time() + FINISH_RUN_S
-            print(">>> 12 QUADRANTS - driving on %.1f s, then stopping"
-                  % FINISH_RUN_S)
-        if (not mission_end_not_activated) and time.time() >= mission_end_t:
-            STOP = True
-
-    # Enter parking mode at quadrant >= 12
-    if PARKING_ENABLED and quadrant_count >= 12:
-        if wall_aligment_state == 0:
-            dir = 0
-            if left_wall + right_wall > PARK_ALIGN_TOTAL:
-                wall_aligment_state = 1
-        else:
-            # PORTED: their 0.8 and 0.5 rescaled to our densities, and the
-            # hard 45s allowed past the 20 degree rule because parking IS one
-            # of the manoeuvres the rule exists to make room for.
-            if direction >= 0:
-                dir = (left_wall - PARK_WALL_TARGET) * 50
-                if right_wall > WALL_NEAR:
-                    dir = 45
-                    _dir_limit = STEER_DEVIATION
-                    _dir_hard = True
-            else:
-                dir = (PARK_WALL_TARGET - right_wall) * 50
-                if left_wall > WALL_NEAR:
-                    dir = -45
-                    _dir_limit = STEER_DEVIATION
-                    _dir_hard = True
-
-            if parking[2] > PARK_STOP_AREA:
-                STOP = True
-
-            R, G, B = 255, 0, 255
     # PORTED: the 20 degree rule, then the smoothing. A MANOEUVRE (the corner
     # kick, parking) skips both - it is a deliberate hard command and lagging
     # it through an exponential average would blunt exactly the move that has
